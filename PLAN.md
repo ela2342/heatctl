@@ -51,7 +51,8 @@ Room sensors still arrive via MQTT regardless of this choice.
 - [ ] Hardware still missing: a 750-1606 (enough 0V terminals for all 12
       valves) and 2x 750-559 (drive all valves, plus spares). Currently
       only 2 valves are wired: Gästebad (hk01) and Wohnzimmer (hk02)
-- [ ] Configure modbus2mqtt on the dev host (or HA add-on for prototyping):
+- [~] NOT APPLICABLE - modbus2mqtt abandoned, see docs/MODBUS2MQTT.md. Was:
+      Configure modbus2mqtt on the dev host (or HA add-on for prototyping):
       poll input registers 12-27 (temps), write holding registers 12-19.
       Document the exact register map + topics in docs/MODBUS2MQTT.md
 - [x] Enable the coupler's Modbus watchdog. Was DISABLED as of
@@ -148,7 +149,10 @@ Room sensors still arrive via MQTT regardless of this choice.
       via MQTT (configurable topic), fall back to static vl_min_cooling_c
       when data is missing/stale (port of the existing HA automation
       "Climate: Prevent Condensation").
-- [ ] Room air sensors, interim: publish the two surviving legacy wall
+- [x] Room air sensors, interim (2026-07-26): all three available sources are
+      live - Arbeitszimmer subscribes to its sensor's own MQTT topic directly,
+      Gaestebad and Wohnzimmer are bridged from HA including their dial
+      setpoints. See docs/HA_INTEGRATION.md. Was: publish the two legacy wall
       units (Gästebad, Wohnzimmer - see docs/HARDWARE.md)
       to MQTT and set their `room_temp_topic` in config; validate cascade
       (room PID) vs fallback (return PID) switchover. Making them independent
