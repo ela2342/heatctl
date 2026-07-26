@@ -59,26 +59,38 @@ class Controller:
                 self.circuit_pids[circ["sensor"]] = PID(
                     pc["kp"], pc["ki"], pc["kd"], pc["out_min"], pc["out_max"])
 
-        self.return_sp = (c["return_temp_setpoint_heating_c"]
-                          if self.mode == "heating"
-                          else c["return_temp_setpoint_cooling_c"])
+        # Must run after the PIDs exist: mode decides their direction.
+        self._apply_mode(self.mode, reset=False)
 
         self.db = self._open_db(cfg["logging"]["state_db"])
         self._cycle = 0
+
+    def _apply_mode(self, mode: str, reset: bool = True) -> None:
+        """Apply a mode to BOTH the PID direction and the return setpoint.
+
+        These two must never be applied independently: setting the cooling
+        setpoint while leaving the PIDs in heating direction inverts the
+        control sense, so the controller closes valves when cooling is needed
+        and opens them when the slab is already too cold. This used to live
+        duplicated in __init__ and on_command, and __init__ was missing the
+        invert half - hence one function, called from both.
+        """
+        self.mode = mode
+        inv = mode == "cooling"
+        for pid in (*self.room_pids.values(), *self.circuit_pids.values()):
+            pid.invert = inv
+            if reset:
+                pid.reset()
+        c = self.cfg["control"]
+        self.return_sp = (c["return_temp_setpoint_heating_c"]
+                          if mode == "heating"
+                          else c["return_temp_setpoint_cooling_c"])
 
     # ---------- commands from MQTT (layer 2 / HA) ----------
     def on_command(self, kind: str, key: str, payload: str) -> None:
         if kind == "mode" and payload in ("heating", "cooling", "off"):
             log.info("mode -> %s", payload)
-            self.mode = payload
-            inv = payload == "cooling"
-            for pid in list(self.room_pids.values()) + list(self.circuit_pids.values()):
-                pid.invert = inv
-                pid.reset()
-            c = self.cfg["control"]
-            self.return_sp = (c["return_temp_setpoint_heating_c"]
-                              if payload == "heating"
-                              else c["return_temp_setpoint_cooling_c"])
+            self._apply_mode(payload)
         elif kind == "setpoint" and key in self.room_setpoints:
             sp = self.safety.clamp_setpoint(float(payload))
             self.room_setpoints[key] = sp
@@ -101,6 +113,9 @@ class Controller:
                     await self.failsafe("cycle_error")
                 await asyncio.sleep(max(0.05, interval - (time.monotonic() - t0)))
         finally:
+            # Order matters: mark ourselves offline while the client is still
+            # connected, only then tear the plane down.
+            await self.plane.stop()
             plane_task.cancel()
             await self.io.stop()
 
@@ -154,6 +169,11 @@ class Controller:
         for n, p in state.valves_pct.items():
             await self.plane.publish(f"valve/{n}", f"{p:.0f}")
         await self.plane.publish("mode", self.mode, retain=True)
+        # State side of the HA "number" entities. Retained so HA shows the
+        # right value after a restart; retaining STATE is fine, retaining
+        # anything under set/ is not (see docs/DESIGN.md 2.2).
+        for n, sp in self.room_setpoints.items():
+            await self.plane.publish(f"setpoint/{n}", f"{sp:.1f}", retain=True)
         for f in state.faults:
             await self.plane.publish(f"fault/{f}", "1")
 
