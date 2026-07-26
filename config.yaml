@@ -168,7 +168,17 @@ safety:
   frost_protect_c: 6.0         # below this return temp: force valve open
   sensor_fault_raw: [0x05DC, 0xFED4]  # wire-break / short-circuit saturation
   stale_data_timeout_s: 15     # no fresh input data -> failsafe
-  failsafe_valve_pct: 50       # failsafe: valves half open (frost > comfort)
+  # FAIL OPEN (changed 2026-07-26, was 50). Applies when knowledge is lost:
+  # sensor fault, stale data, crashed controller. The heat pump's own
+  # controller holds a return-water setpoint, so an unsupervised open circuit
+  # still receives water at a sane temperature - all that is lost is efficient
+  # distribution and per-room control, not safety.
+  # NOT a blanket policy: screed overtemp and below-dew-point cooling still
+  # drive valves CLOSED, because there the supply is *known* bad. See the
+  # policy docstring in heatctl/safety.py before changing either.
+  # Hardware limit: the actuators are NC, so loss of signal/power closes them
+  # whatever we command - this covers software failure, not power loss.
+  failsafe_valve_pct: 100
 
 logging:
   level: INFO

@@ -53,7 +53,9 @@ Extends the existing two-layer design (PLAN.md) by making the layering
 explicit across the whole plant, not just the floor circuits.
 
 ```
-Layer 0  Hardware failsafes.  WAGO Modbus watchdog; HP internal protections
+Layer 0  Hardware failsafes.  WAGO Modbus watchdog (fallback must drive
+         the analog outputs to FULL SCALE - valves are fail-open by design,
+         see docs/HARDWARE.md and heatctl/safety.py); HP internal protections
          (flow, pressure, anti-freeze, overtemp); stove thermal-discharge
          safety and return-raising valve (self-acting); FWS scald limit.
          Work without any software.

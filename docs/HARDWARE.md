@@ -61,6 +61,20 @@ series-connected measuring circuits). Fault saturation values:
 750-559 ch 1-8: Alpha 5 proportional actuators, 0-10V.
 Valve->circuit mapping: TODO verify (8 outputs, 10 active circuits)!
 
+**Only circuits 1 and 2 have an actuator fitted.** Every other circuit is
+open pipe, so water circulates through them whenever the pump runs, with no
+way to throttle them. Two consequences: the manifold cannot be balanced until
+the remaining actuators arrive, and a "closed" state only exists for 1 and 2.
+
+**These are NC (normally closed) actuators** - recorded as `stellantrieb: NC`
+for every output in the legacy system's database. So loss of signal or power
+CLOSES them. The project's fail-open policy (`safety.failsafe_valve_pct: 100`,
+see heatctl/safety.py) therefore covers software and bridge failure only; a
+genuine power loss still closes every valve. True hardware fail-open would
+need NO actuators. Consequently, **the coupler's Modbus watchdog fallback must
+be configured to drive the 750-559 outputs to FULL SCALE (10 V), not zero** -
+the WBM default of "outputs off" is the wrong direction for this design.
+
 ### Actuator dynamics (control-relevant - do not ignore)
 These are slow, open-loop actuators with **no position feedback**. The
 commanded analog value is a *request*, not a measurement:

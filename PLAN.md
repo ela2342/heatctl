@@ -54,7 +54,9 @@ Room sensors still arrive via MQTT regardless of this choice.
 - [ ] Configure modbus2mqtt on the dev host (or HA add-on for prototyping):
       poll input registers 12-27 (temps), write holding registers 12-19.
       Document the exact register map + topics in docs/MODBUS2MQTT.md
-- [ ] Enable the coupler's Modbus watchdog in the WBM; document behavior
+- [ ] Enable the coupler's Modbus watchdog in the WBM; document behavior.
+      Its output fallback must be FULL SCALE (10 V), not zero - valves are
+      fail-open by design and the actuators are NC. See docs/HARDWARE.md
 - [x] Local test run: `python -m heatctl.main ./config.yaml` (2026-07-26 -
       full run() loop against the real coupler and HA's Mosquitto; outputs
       parked closed afterwards)
