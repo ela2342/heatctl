@@ -296,6 +296,21 @@ reacts to supply overtemp and dew-point violation by commanding 0 %, which
 now means "and then wait minutes." For screed protection the slab's thermal
 mass makes that tolerable; **for condensation in cooling it is not** —
 minutes of chilled water past the dew point can wet the floor.
+**The heat pump's setpoint (P04) targets RETURN water, not supply.** Supply is
+therefore never directly commanded — it is whatever the machine produces while
+dragging return down to target, so the gap between them is the load-dependent
+ΔT across the loop, not a fixed offset. Two consequences, both learned the hard
+way on 2026-07-26:
+- **No constant clamp on P04 can guarantee supply stays above dew point.** Only
+  feedback on *measured* supply can. A clamp is a heuristic backstop; do not
+  document it as a guarantee.
+- **A low supply reading is not evidence of the pump undershooting.** With P04
+  at 7 and supply at 10, the machine was running flat out and *failing* to
+  reach 7 — the opposite reading of the same data.
+Measured that day while restoring cooling: supply reached 14.3 °C against a
+14.9 °C indoor dew point — an actual breach, because the setpoint had been
+wound down to a value that is safe as a *return* target but not as a supply one.
+
 Therefore: for cooling/dew-point violations the **source-side interlock is
 primary** (stop the chiller / raise P04) and valve closure is secondary
 backup — which matches the existing HA behavior noted in §3.5 ("stop + notify")
