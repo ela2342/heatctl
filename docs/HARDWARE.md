@@ -81,6 +81,28 @@ mask to 0x1001 - that write arms it, live. Stop again with 0x1008 (0x55AA or
 "schedule a reset" caveat noted earlier does not apply to the register route.
 Do NOT write 0x100B while experimenting - that makes the settings remanent.
 
+### Verified end-to-end on hardware 2026-07-26
+Armed and tripped deliberately with heatctl running as the HA App:
+
+| Observation | Result |
+|---|---|
+| heatctl arms it on start | `coupler watchdog armed: 10.0 s, mask 0x8020 (FC6+FC16)`, status 0x1006 -> 1 |
+| Stop heatctl -> trip | status 1 -> **2** after ~10 s |
+| During the trip | process-data reads **blocked** (FC4 -> exception 0x04, Slave Device Failure), while **0x1006 stays readable** |
+| heatctl restarted | detected exception 4, wrote the trigger, took the `stale_data` failsafe for that one cycle, and was back to `watchdog active` **1 s later** |
+
+Two things this settles:
+- The recovery design is sound *because* watchdog registers stay accessible
+  while process data is blocked. That was an assumption; it is now observed.
+- The failure surfaces as `stale_data`, not `cycle_error` - i.e. the
+  read_state-never-raises rule keeps a watchdog trip semantically distinct from
+  a bug, exactly as intended.
+
+NOT verified, and not verifiable this way: that the outputs were physically
+zeroed during the trip. Process-data reads are blocked precisely while it
+matters, so the manual's statement is the only evidence. Confirm by watching an
+actual valve if it ever matters.
+
 **heatctl MUST handle the trip, or one time-out disables control permanently.**
 After a time-out the coupler answers *all* subsequent MODBUS/TCP requests with
 exception 0x0004 (Slave Device Failure), and process-data writes stay blocked

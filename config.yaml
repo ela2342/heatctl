@@ -24,6 +24,19 @@ io:
     timeout_s: 2.0             # also bounds each reconnect attempt
     reconnect_delay_s: 1.0     # first retry delay after a lost connection
     reconnect_delay_max_s: 30  # exponential backoff ceiling
+    # Coupler Modbus watchdog - see docs/HARDWARE.md for the register map and
+    # the manual references. Type "Standard" with a WRITE-ONLY coding mask, so
+    # only real output writes retrigger it: a satisfied watchdog then means
+    # "outputs are being driven", not just "something is polling". heatctl's
+    # per-cycle valve write is therefore the heartbeat - no separate kick.
+    # On time-out the coupler zeroes the physical outputs; with NC actuators
+    # that closes the valves, which is the right direction for a DEAD
+    # controller (see the failure-policy docstring in heatctl/safety.py).
+    # NOTE arming needs no coupler reset, and heatctl clears a trip itself -
+    # without that recovery one transient trip would block writes forever.
+    watchdog_enabled: true
+    watchdog_timeout_s: 10.0
+    watchdog_mask: 0x8020      # FC6 (write single) + FC16 (write multiple)
 
   mqtt_io:                     # used by the mqtt backend
     # Topics produced/consumed by modbus2mqtt. Adjust templates to match

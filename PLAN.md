@@ -54,7 +54,7 @@ Room sensors still arrive via MQTT regardless of this choice.
 - [ ] Configure modbus2mqtt on the dev host (or HA add-on for prototyping):
       poll input registers 12-27 (temps), write holding registers 12-19.
       Document the exact register map + topics in docs/MODBUS2MQTT.md
-- [ ] Enable the coupler's Modbus watchdog. Confirmed DISABLED as of
+- [x] Enable the coupler's Modbus watchdog. Was DISABLED as of
       2026-07-26, so there is no hardware failsafe at all right now. Steps:
       (a) DONE 2026-07-26 from the manual: use Type **Standard** with coding
       mask 0x8020 in 0x1001 (FC6 + FC16). Standard evaluates the mask; it is
@@ -76,8 +76,11 @@ Room sensors still arrive via MQTT regardless of this choice.
       0x0004 and blocks process-data writes until a non-zero value is written
       to trigger register 0x1003. Without that, one transient trip disables
       control permanently. Detect status 0x1006 == 2 and re-arm;
-      (e) verify empirically: stop writing, read the output image at
-      0x0200 + word, record what the outputs really do.
+      (e) DONE 2026-07-26: armed, tripped and recovered on live hardware -
+      heatctl arms on start, the trip blocks process data while leaving the
+      watchdog registers readable, and heatctl clears it and resumes within one
+      cycle. Only remaining unknown is physical output zeroing during the trip,
+      which cannot be read back while process data is blocked.
       See docs/HARDWARE.md for the register values and page contents.
 - [x] Local test run: `python -m heatctl.main ./config.yaml` (2026-07-26 -
       full run() loop against the real coupler and HA's Mosquitto; outputs

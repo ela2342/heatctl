@@ -39,6 +39,15 @@ log = logging.getLogger("heatctl.io.modbus")
 
 RAW_FULLSCALE = 32767  # 750-559: 32767 = 10 V
 
+# Coupler Modbus watchdog registers. Authoritative source: 750-352 Handbuch
+# v1.2.0 sections 9.6 / 11.2.5 - see docs/HARDWARE.md, which also records which
+# of these were previously mislabelled here.
+WD_TIME = 0x1000        # R/W, time in units of 100 ms; writable only while stopped
+WD_MASK_1_16 = 0x1001   # R/W, coding mask FC1..16; writing non-zero ARMS it
+WD_TRIGGER = 0x1003     # R/W, toggle register; non-zero clears an error and starts it
+WD_STATUS = 0x1006      # R,   0 = inactive, 1 = active, 2 = expired
+WD_STATUS_INACTIVE, WD_STATUS_ACTIVE, WD_STATUS_EXPIRED = 0, 1, 2
+
 
 class ModbusDirectBackend(IOBackend):
     def __init__(self, cfg: dict):
@@ -50,6 +59,12 @@ class ModbusDirectBackend(IOBackend):
         self.timeout = m.get("timeout_s", 2.0)
         self.reconnect_delay = m.get("reconnect_delay_s", 1.0)
         self.reconnect_delay_max = m.get("reconnect_delay_max_s", 30.0)
+
+        self.wd_enabled = bool(m.get("watchdog_enabled", False))
+        # register unit is 100 ms
+        self.wd_time_units = int(round(float(m.get("watchdog_timeout_s", 10.0)) * 10))
+        self.wd_mask = int(m.get("watchdog_mask", 0x8020))
+        self._wd_armed_logged = False
         self.client: AsyncModbusTcpClient | None = None
         # current backoff and the earliest monotonic time we may retry
         self._backoff = self.reconnect_delay
@@ -114,6 +129,78 @@ class ModbusDirectBackend(IOBackend):
                     self.host, self.port, self._backoff)
         return False
 
+    async def _reg_read(self, addr: int) -> int | None:
+        """Single holding register, None on any failure. Never raises."""
+        assert self.client is not None
+        try:
+            rr = await self.client.read_holding_registers(addr, count=1)
+        except Exception as e:
+            log.debug("register read 0x%04X failed: %s", addr, e)
+            return None
+        return None if rr.isError() else rr.registers[0]
+
+    async def _reg_write(self, addr: int, value: int) -> bool:
+        """Single holding register, False on any failure. Never raises."""
+        assert self.client is not None
+        try:
+            wr = await self.client.write_register(addr, value)
+        except Exception as e:
+            log.debug("register write 0x%04X failed: %s", addr, e)
+            return False
+        return not wr.isError()
+
+    async def _watchdog_kick_after_error(self) -> None:
+        """Clear a possible watchdog trip. Safe to call on any I/O failure.
+
+        Writing a non-zero value to the trigger register both clears a pending
+        watchdog error *and* (re)starts the watchdog, so this is harmless when
+        the watchdog is simply running, and is the only way back when it has
+        expired: after a time-out the coupler blocks process-data writes until
+        the trigger register is written. Without this, one transient trip would
+        disable control permanently rather than for one cycle.
+        """
+        if not self.wd_enabled:
+            return
+        if await self._reg_write(WD_TRIGGER, 1):
+            log.warning("coupler watchdog trigger written after I/O failure "
+                        "(clears a trip; outputs were zeroed if it had expired)")
+
+    async def _watchdog_maintain(self) -> None:
+        """Arm the watchdog if it is not running. Called after a good read.
+
+        Type "Standard" with a write-only coding mask (FC6 + FC16), so ONLY
+        output writes retrigger it. That is the whole point: a satisfied
+        watchdog then means "outputs are genuinely being driven", not merely
+        "something is polling". heatctl's per-cycle valve write is therefore the
+        heartbeat and no separate kick is needed.
+
+        On time-out the coupler zeroes the physical outputs, which with NC
+        actuators closes the valves. That is deliberate and is the right
+        direction for a DEAD controller - see the failure-policy docstring in
+        safety.py for why it does not contradict fail-open.
+        """
+        if not self.wd_enabled:
+            return
+        st = await self._reg_read(WD_STATUS)
+        if st is None:
+            return
+        if st == WD_STATUS_EXPIRED:
+            await self._watchdog_kick_after_error()
+            return
+        if st == WD_STATUS_ACTIVE:
+            if not self._wd_armed_logged:
+                log.info("coupler watchdog active (%.1f s, mask 0x%04X)",
+                         self.wd_time_units / 10, self.wd_mask)
+                self._wd_armed_logged = True
+            return
+        # Inactive: set the time first - 0x1000 is writable only while stopped -
+        # then arm by writing a non-zero coding mask.
+        await self._reg_write(WD_TIME, self.wd_time_units)
+        if await self._reg_write(WD_MASK_1_16, self.wd_mask):
+            log.info("coupler watchdog armed: %.1f s, mask 0x%04X (FC6+FC16)",
+                     self.wd_time_units / 10, self.wd_mask)
+            self._wd_armed_logged = True
+
     async def read_state(self) -> IOState:
         # Returns the previous state untouched on any failure: last_read_ts is
         # deliberately NOT refreshed, so is_stale() stays honest (see module
@@ -126,9 +213,11 @@ class ModbusDirectBackend(IOBackend):
                 self.sensor_base, count=len(self.sensor_channels))
         except Exception as e:
             log.warning("modbus read failed: %s", e)
+            await self._watchdog_kick_after_error()
             return self.state
         if rr.isError():
             log.warning("modbus read error: %s", rr)
+            await self._watchdog_kick_after_error()
             return self.state
         regs = rr.registers
         self.state.faults.clear()
@@ -141,6 +230,7 @@ class ModbusDirectBackend(IOBackend):
             else:
                 self.state.temps[ch["name"]] = decode_pt1000(raw)
         self.state.last_read_ts = time.monotonic()
+        await self._watchdog_maintain()
         return self.state
 
     async def write_valve(self, name: str, pct: float) -> None:
