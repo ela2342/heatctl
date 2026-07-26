@@ -294,8 +294,12 @@ If valves need minutes to move, then **valve position is a slow lever and
 cannot be the primary protection for any fast limit.** `Safety.apply` today
 reacts to supply overtemp and dew-point violation by commanding 0 %, which
 now means "and then wait minutes." For screed protection the slab's thermal
-mass makes that tolerable; **for condensation in cooling it is not** —
-minutes of chilled water past the dew point can wet the floor.
+mass makes that tolerable. For condensation in cooling the exposure is real
+but bounded: **decided 2026-07-26 that a few minutes below dew point is
+acceptable** — the heat pump reacts to setpoint changes quickly and the screed's
+mass rules out a fast surface excursion. So the response is to raise the
+setpoint hard, not to stop circulation, and no inhibit-flag machinery is
+needed.
 **The heat pump's setpoint (P04) targets RETURN water, not supply.** Supply is
 therefore never directly commanded — it is whatever the machine produces while
 dragging return down to target, so the gap between them is the load-dependent
