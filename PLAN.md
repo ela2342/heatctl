@@ -54,9 +54,22 @@ Room sensors still arrive via MQTT regardless of this choice.
 - [ ] Configure modbus2mqtt on the dev host (or HA add-on for prototyping):
       poll input registers 12-27 (temps), write holding registers 12-19.
       Document the exact register map + topics in docs/MODBUS2MQTT.md
-- [ ] Enable the coupler's Modbus watchdog in the WBM; document behavior.
-      Its output fallback must be FULL SCALE (10 V), not zero - valves are
-      fail-open by design and the actuators are NC. See docs/HARDWARE.md
+- [ ] Enable the coupler's Modbus watchdog. Confirmed DISABLED as of
+      2026-07-26, so there is no hardware failsafe at all right now. Steps:
+      (a) confirm from the manual what Watchdog Type Standard vs Alternative
+      means, and use Alternative so only an explicit trigger-register write
+      kicks it - with Standard + mask 0xFFFF heatctl's own reads would keep it
+      alive even with a broken write path;
+      (b) check the WBM "IO config" / "Features" pages for an output
+      behaviour-on-failure option. If none exists, full-scale-on-timeout is not
+      configurable and fail-open remains software-only - accept and document;
+      (c) arming needs a coupler reset (brief I/O outage) - schedule it;
+      (d) then implement the heartbeat in modbus_direct: write the trigger
+      register each cycle ONLY after a successful valve write, so that a write
+      path that has stopped working actually trips the watchdog;
+      (e) verify empirically: stop writing, read the output image at
+      0x0200 + word, record what the outputs really do.
+      See docs/HARDWARE.md for the register values and page contents.
 - [x] Local test run: `python -m heatctl.main ./config.yaml` (2026-07-26 -
       full run() loop against the real coupler and HA's Mosquitto; outputs
       parked closed afterwards)
