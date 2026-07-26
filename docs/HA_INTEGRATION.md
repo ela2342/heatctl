@@ -54,3 +54,38 @@ editing this file; when it is unavoidable, back up and validate first.
 3. **Single-writer boundary.** The heat pump's registers are written by these HA
    automations, not by heatctl. Until WP-B migrates that, heatctl must not write
    them.
+
+## Pending cleanup: most of the legacy REST entities are dead
+Of the ~40 `rest:` sensors in `/config/configuration.yaml`, the majority read
+`null`/0 permanently because they are fed by the retired floor gateway. They are
+also now *superseded*, because heatctl publishes the real thing from the WAGO.
+Leaving them makes the entity list actively misleading - two sets of
+similarly-named sensors, only one of them true.
+
+**Safe to remove (dead and superseded):**
+- `sensor.rl_1` … `sensor.rl_12` - DS18B20 returns via the dead gateway, all
+  `null`. Superseded by `sensor.heatctl_return_circuit_*`.
+- `sensor.ventil_1..4, 6..10` - valve openings from the dead gateway's `outs`
+  API, all 0. Superseded by `sensor.heatctl_valve_*`.
+- `sensor.average_valve_opening` - min_max over those dead valve sensors.
+  Superseded by `sensor.installed_valve_demand`. **Check first that nothing
+  still references it**: it was the trigger for the two legacy pump automations,
+  which are turned off but not deleted.
+
+**MUST KEEP - removing these breaks live control:**
+- `sensor.raumtemperatur_gastebad` / `_wohnzimmer` - the room temperatures the
+  bridge publishes to heatctl.
+- `sensor.luftfeuchte_gastebad` / `_wohnzimmer` - inputs to
+  `sensor.system_dew_point_reference`, i.e. the condensation limit.
+- `sensor.solltemperatur_gastebad` / `_wohnzimmer` - the wall-unit dial
+  setpoints.
+
+**Leave dormant rather than delete:** the Elternschlafzimmer
+`raumtemperatur`/`luftfeuchte` pair. Currently `unavailable` because that wall
+unit is offline, and correctly skipped by the dew-point helper - but it comes
+back for free if the unit is ever revived.
+
+Note the whole `rest:` block dies with the legacy server anyway, so this cleanup
+is a step toward switching that machine off, not just tidying. Do it with a
+backup and `ha core check`, as before; YAML platform entities disappear on
+reload without needing registry surgery.

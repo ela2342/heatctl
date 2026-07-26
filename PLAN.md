@@ -160,6 +160,15 @@ Room sensors still arrive via MQTT regardless of this choice.
       which is also how their display/interval settings get configured - see
       the local notes outside this repository for the details. Only some units
       survived the overvoltage event, so this covers 2 rooms, not the house.
+- [ ] Clean up the dead legacy REST entities in HA. Most of the ~40 read
+      null/0 permanently (fed by the retired floor gateway) AND are superseded
+      by heatctl's own published sensors, so the entity list is now actively
+      misleading. docs/HA_INTEGRATION.md lists exactly which are safe to remove,
+      which MUST be kept because live control depends on them (the two rooms'
+      temperature, humidity and dial setpoint), and which to leave dormant.
+      Check nothing still references sensor.average_valve_opening first - the
+      two legacy pump automations are off but not deleted. Step toward switching
+      the legacy server off, not just tidying.
 - [ ] Room air sensors, target: Shelly H&T per room via MQTT (none bought
       yet). This is still the long-term plan; the legacy wall-unit bridge above
       is interim plumbing with a finite life. Rooms without either source
