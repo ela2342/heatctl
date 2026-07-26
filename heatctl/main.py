@@ -60,11 +60,19 @@ class Controller:
                 self.circuit_pids[circ["sensor"]] = PID(
                     pc["kp"], pc["ki"], pc["kd"], pc["out_min"], pc["out_max"])
 
+        # Where the per-circuit return target comes from - see
+        # _effective_return_sp() for why tracking the system return is the
+        # useful choice and a fixed absolute number mostly is not.
+        self.return_sp_source = c.get("return_setpoint_source", "fixed")
+        self.system_return_sensor = c.get("system_return_sensor", "rl_total")
+        self.system_return_bias = float(c.get("system_return_bias_c", 0.0))
+
         # Must run after the PIDs exist: mode decides their direction.
         self._apply_mode(self.mode, reset=False)
 
         self.db = self._open_db(cfg["logging"]["state_db"])
         self._cycle = 0
+        self._last_return_sp = self.return_sp   # for telemetry before first step
 
     def _apply_mode(self, mode: str, reset: bool = True) -> None:
         """Apply a mode to BOTH the PID direction and the return setpoint.
@@ -86,6 +94,41 @@ class Controller:
         self.return_sp = (c["return_temp_setpoint_heating_c"]
                           if mode == "heating"
                           else c["return_temp_setpoint_cooling_c"])
+
+    def _effective_return_sp(self, state) -> float:
+        """Return-temperature target for the per-circuit fallback PIDs.
+
+        With `return_setpoint_source: system_return` this tracks the mixed
+        system return (`rl_total`, sensor 14) instead of a fixed number, which
+        turns the inner loop into a *balancing* controller: a circuit returning
+        warmer than the system average gets more flow in cooling, colder gets
+        more flow in heating, so distribution evens out. The heat pump keeps
+        owning the absolute water temperature via its own return setpoint, so
+        this loop only decides *distribution* - which is exactly the job left
+        to heatctl while per-room air sensors are missing.
+
+        A fixed absolute target is close to useless in cooling: the slab return
+        sits below any plausible target even while the rooms are warm, because
+        the slab is always cooler than the air it is cooling. Measured
+        2026-07-26: returns 18.5-19.2 degC against a 20.0 target commanded 0 %
+        everywhere, i.e. no cooling at all, with rooms at 22-23 degC.
+
+        `system_return_bias_c` is applied in whichever direction *increases*
+        demand, so a positive bias always means "tend to open" in both modes.
+        It exists because a pure system-return target makes "all valves closed"
+        a valid equilibrium: with no flow every circuit equalises at slab
+        temperature, the error is zero everywhere, and a controller that starts
+        with an empty integrator therefore stays shut. Leave it at 0 only if
+        something else guarantees flow.
+        """
+        if self.return_sp_source != "system_return":
+            return self.return_sp
+        sys_rl = state.temps.get(self.system_return_sensor)
+        if sys_rl is None:
+            return self.return_sp      # sensor faulted or stale -> fixed value
+        if self.mode == "cooling":
+            return sys_rl - self.system_return_bias
+        return sys_rl + self.system_return_bias
 
     # ---------- commands from MQTT (layer 2 / HA) ----------
     def on_command(self, kind: str, key: str, payload: str) -> None:
@@ -127,6 +170,10 @@ class Controller:
             await self.failsafe("stale_data")
             return
 
+        # One target per cycle, shared by every circuit's fallback PID.
+        return_sp = self._effective_return_sp(state)
+        self._last_return_sp = return_sp
+
         for room in self.rooms:
             n = room["name"]
             room_t = self.plane.room_temp(n)
@@ -149,7 +196,7 @@ class Controller:
                     rl = state.temps.get(sensor)
                     proposed = (self.safety.failsafe_pct if rl is None else
                                 self.circuit_pids[sensor].step(
-                                    self.return_sp, rl, dt))
+                                    return_sp, rl, dt))
                 pct, reason = self.safety.apply(self.mode, state, sensor, proposed)
                 await self.io.write_valve(valve, pct)
                 if reason:
@@ -170,6 +217,7 @@ class Controller:
         for n, p in state.valves_pct.items():
             await self.plane.publish(f"valve/{n}", f"{p:.0f}")
         await self.plane.publish("mode", self.mode, retain=True)
+        await self.plane.publish("return_sp", f"{self._last_return_sp:.1f}")
         # State side of the HA "number" entities. Retained so HA shows the
         # right value after a restart; retaining STATE is fine, retaining
         # anything under set/ is not (see docs/DESIGN.md 2.2).

@@ -155,6 +155,25 @@ control:
   default_setpoint_cooling_c: 24.0   # otherwise interpreted as return temp target
   return_temp_setpoint_heating_c: 22.0
   return_temp_setpoint_cooling_c: 20.0
+  # Where the per-circuit return target comes from:
+  #   fixed          -> the two absolute values above
+  #   system_return  -> track the mixed system return (sensor 14, rl_total)
+  # system_return makes the inner loop a BALANCING controller: a circuit
+  # returning warmer than the system average gets more flow in cooling (colder
+  # -> more flow in heating), so distribution evens out. The heat pump owns the
+  # absolute water temperature via its own return setpoint, so this loop only
+  # decides distribution - which is heatctl's actual job until per-room air
+  # sensors exist. A fixed absolute target is near-useless in cooling: the slab
+  # return sits below any plausible target even with warm rooms (measured
+  # 2026-07-26: returns 18.5-19.2 vs a 20.0 target commanded 0 % everywhere).
+  return_setpoint_source: system_return
+  system_return_sensor: rl_total
+  # Applied in whichever direction INCREASES demand, so positive always means
+  # "tend to open", in both modes. Needed because a pure system-return target
+  # makes "all valves closed" a valid equilibrium: with no flow every circuit
+  # equalises at slab temperature, error is zero everywhere, and a controller
+  # starting with an empty integrator stays shut. See heatctl/main.py.
+  system_return_bias_c: 0.0
   pid_room:   {kp: 25.0, ki: 0.005, kd: 0.0, out_min: 0.0, out_max: 100.0}
   pid_return: {kp: 8.0,  ki: 0.02,  kd: 0.0, out_min: 0.0, out_max: 100.0}
 

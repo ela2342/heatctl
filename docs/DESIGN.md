@@ -208,6 +208,18 @@ inner loop (per circuit, ~1–3 min):
     clamp slew, clamp [min_stroke, max_cap], close below ~5 %
 ```
 
+- **Interim inner-loop target (implemented 2026-07-26):** until per-room air
+  sensors exist, `control.return_setpoint_source: system_return` makes each
+  circuit's target the *mixed system return* (`rl_total`) rather than an
+  absolute number, so the loop balances distribution instead of trying to set
+  an absolute temperature it cannot reach. The heat pump owns absolute water
+  temperature through its own return setpoint. This is a stepping stone to the
+  `RL_curve` below, not a replacement: it has no notion of weather or of how
+  much heat a room actually needs, and `all valves closed` is a valid
+  equilibrium (hence `system_return_bias_c`). Measured the day it landed: a
+  fixed 20 degC target commanded 0 % on every circuit with rooms at 22-23 degC,
+  while system-return tracking correctly singled out the one genuinely warm
+  circuit.
 - `RL_curve(AT_avg)`: linear in the *forecast-averaged* outdoor
   temperature (window configurable, default 0–5 h ahead) between two
   configurable points, e.g. (AT +20 → RL 22) and (AT −20 → RL 40).
