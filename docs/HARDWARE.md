@@ -29,7 +29,37 @@ wrote it to**:
 - The output process image is mirrored for reading at **0x0200 + word
   offset**: output word 12 reads back at 524 (0x020C), word 19 at 531.
   Verified by writing 16383 to HR12/13 and finding it at 524/525.
-- 0x1000 is not a valid address here (illegal-data-address exception).
+- **0x1000+ IS valid** - the watchdog configuration block lives there. An
+  earlier note in this file claimed otherwise; that was wrong, and only looked
+  that way because a 32-register block read spanned past the end of the block
+  and returned illegal-data-address for the whole request. Read these one or
+  two registers at a time.
+
+### Modbus watchdog registers (read live 2026-07-26)
+| Addr | Meaning (per WAGO docs - LABELS UNVERIFIED) | Value found |
+|------|--------------------------------------------|-------------|
+| 0x1000 | watchdog time, units of 100 ms | 100 -> **10 s** |
+| 0x1001 | coding mask: which function codes retrigger it | **0xFFFF = all** |
+| 0x1002 | watchdog trigger (write to retrigger) | 0xFFFF |
+| 0x1003 | minimum trigger time | 0 |
+| 0x1004 | status / stop | 0xFFFF |
+| 0x1005..0x1007 | stop / restart / config | 0 |
+| 0x1028 | fieldbus-failure behaviour (guess) | 4 |
+
+**The coding mask is the important finding.** At 0xFFFF *any* Modbus function
+retriggers the watchdog - including read-only polling. So as configured it
+cannot detect "controller alive and reading, but no longer writing outputs":
+heatctl reads every second, which would keep the watchdog happy even if its
+write path were broken. To make the watchdog mean "outputs are being actively
+driven", restrict the mask to the write function codes (FC6 / FC16).
+
+Still to determine, and it decides whether hardware fail-open is even possible:
+what the coupler does to the analog outputs on timeout. WAGO couplers typically
+offer "set outputs to zero" or "retain last value", not an arbitrary substitute.
+If a substitute value is not available then full-scale-on-timeout cannot be
+configured, "retain last value" is the closest approximation, and the fail-open
+policy remains a software-only property. Verify empirically by arming the
+watchdog, stopping writes, and reading the output image at 0x0200 + word.
 
 Consequence for anyone verifying valve output: read FC3 at `0x0200 + 12 + n`,
 never at `12 + n`. Worth knowing that a read-back check is also the only way
