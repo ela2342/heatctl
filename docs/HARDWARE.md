@@ -77,16 +77,43 @@ approximating it.
 "take effect after the next software or hardware reset", so arming it means a
 brief outage of all I/O - schedule it, do not do it mid-heating-season blind.
 
-**No output-behaviour setting exists on this page.** What the analog outputs do
-on timeout is therefore not configurable here, so the earlier claim in this file
-that the fallback "must be configured to drive outputs to FULL SCALE" may simply
-not be achievable. STILL TO CHECK: the WBM "IO config" and "Features" pages for
-a fieldbus-failure / substitute-value option (0x1028 reads 4 and may be related).
-If no such option exists, this coupler most likely clears outputs to 0 on
-timeout, which with NC actuators is fail-CLOSED - the exact opposite of the
-project's fail-open policy. In that case the policy stays software-only, the
-watchdog protects only against runaway outputs rather than providing fail-open,
-and that limitation must be accepted and documented rather than configured away.
+### Output behaviour on timeout is NOT configurable - RESOLVED 2026-07-26
+Checked every WBM page that could carry it: **Watchdog** (no such field),
+**Features** (only "Autoreset on system error", "BOOTP request before static
+IP", "Non-adaptive Kbus speed active" - all unchecked), **IO config** (a module
+listing only). There is no fieldbus-failure / substitute-value option anywhere.
+
+So **full-scale-on-timeout cannot be configured on this coupler.** An earlier
+version of this file asserted the fallback "must be configured to drive outputs
+to FULL SCALE"; that is not achievable and the claim is withdrawn. The documented
+behaviour is that outputs are cleared to 0 on timeout - i.e. with NC actuators,
+valves CLOSE. Still worth verifying empirically rather than trusting the manual.
+
+**This does not actually conflict with the fail-open policy, because the two
+cover different failures:**
+- Software fail-open (`safety.failsafe_valve_pct: 100`) applies when heatctl is
+  ALIVE but has lost knowledge - sensor fault, stale data. It can still reason,
+  and an open circuit fed by a heat pump holding a sane return setpoint is safe.
+- The watchdog applies when heatctl is DEAD. There, closing is the conservative
+  choice: the one genuinely fast hazard is condensation, and `safety.py` already
+  fails closed on `vl_undertemp` for exactly that reason. Leaving valves stuck
+  wherever a dying controller last left them - possibly 100 % open with
+  below-dew-point water - is strictly worse than closing them.
+
+**Crucially, a watchdog trip does not stop circulation today**: only circuits 1
+and 2 have actuators, the other eight are open pipe, so flow continues through
+them regardless. That is what makes fail-closed acceptable here.
+
+**REVISIT WHEN THE REMAINING ACTUATORS ARRIVE.** Once every circuit can close, a
+watchdog trip would shut all flow and leave the heat pump deadheading against a
+closed manifold - a real hazard (flow error / pressure). At that point either the
+heat-demand interlock must stop the pump when the watchdog fires, or a bypass /
+differential-pressure valve is needed. Do not carry today's "acceptable" verdict
+forward past that hardware change.
+
+Module count cross-check from IO config: 10 on terminalbus, 10 in I/O
+configuration - consistent, and matches the terminal layout above
+(16DI + 750-652 + 4x750-463 + 2x750-559 + 2x750-517 = 10).
 
 Still to determine, and it decides whether hardware fail-open is even possible:
 what the coupler does to the analog outputs on timeout. WAGO couplers typically

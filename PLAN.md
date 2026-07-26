@@ -60,9 +60,12 @@ Room sensors still arrive via MQTT regardless of this choice.
       means, and use Alternative so only an explicit trigger-register write
       kicks it - with Standard + mask 0xFFFF heatctl's own reads would keep it
       alive even with a broken write path;
-      (b) check the WBM "IO config" / "Features" pages for an output
-      behaviour-on-failure option. If none exists, full-scale-on-timeout is not
-      configurable and fail-open remains software-only - accept and document;
+      (b) DONE 2026-07-26: no output-behaviour option exists anywhere in the
+      WBM, so full-scale-on-timeout is NOT configurable. Outputs clear to 0 on
+      timeout, i.e. valves close. Accepted: when heatctl is dead, closing is the
+      conservative choice against condensation, and 8 of 10 circuits are open
+      pipe so circulation continues anyway. MUST be revisited once every circuit
+      has an actuator - then a trip would deadhead the heat pump;
       (c) arming needs a coupler reset (brief I/O outage) - schedule it;
       (d) then implement the heartbeat in modbus_direct: write the trigger
       register each cycle ONLY after a successful valve write, so that a write
