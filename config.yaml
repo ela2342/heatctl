@@ -116,7 +116,10 @@ rooms:
   - name: gaestebad
     label: "Gästebad"
     circuits: [{sensor: rl_hk01, valve: valve_hk01}]
-    room_temp_topic: ""        # e.g. shellies/shellyht-XXXX/sensor/temperature
+    # Legacy wall unit, bridged to MQTT by an HA automation (interim - that
+    # data only exists over HTTP on the old Mini Server). Target is a Shelly
+    # H&T publishing natively, e.g. shellies/shellyht-XXXX/sensor/temperature
+    room_temp_topic: "roomtemp/gaestebad"
   - name: wohnzimmer
     label: "Wohnzimmer"
     circuits:
@@ -124,7 +127,8 @@ rooms:
       - {sensor: rl_hk08, valve: ""}       # TODO: no valve channel assigned
       - {sensor: rl_hk09, valve: ""}       #       yet for HK 8/9/10 - only
       - {sensor: rl_hk10, valve: ""}       #       8 analog outputs exist
-    room_temp_topic: ""
+    # Legacy wall unit, bridged to MQTT by an HA automation (interim).
+    room_temp_topic: "roomtemp/wohnzimmer"
   - name: kind_natalie
     label: "Kinderzimmer Natalie"
     circuits: [{sensor: rl_hk03, valve: valve_hk03}]
@@ -145,14 +149,19 @@ rooms:
   - name: arbeitszimmer
     label: "Arbeitszimmer"
     circuits: [{sensor: rl_hk11, valve: valve_hk11}]
-    room_temp_topic: ""
+    # FineOffset WH32 via the rtl_433 bridge - a bare numeric payload on its
+    # own topic, so no Home Assistant in the path for this room.
+    room_temp_topic: "rtl_433/74930c0d-rtl433/devices/Fineoffset-WH32/245/temperature_C"
 
 # --- Control -------------------------------------------------------------
 control:
   mode: heating                # heating | cooling | off (overridable via MQTT)
   loop_interval_s: 1.0
   default_setpoint_heating_c: 21.0   # room temp if room sensor present,
-  default_setpoint_cooling_c: 24.0   # otherwise interpreted as return temp target
+  default_setpoint_cooling_c: 23.0   # otherwise interpreted as return temp target
+  # 23.0 (was 24.0): at 24 the rooms sat below target and commanded 0 %, i.e.
+  # no cooling at all. Only applies to rooms WITHOUT a wall-unit dial - for
+  # Gaestebad and Wohnzimmer the dial overrides this within a minute.
   return_temp_setpoint_heating_c: 22.0
   return_temp_setpoint_cooling_c: 20.0
   # Where the per-circuit return target comes from:

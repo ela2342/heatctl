@@ -147,6 +147,17 @@ class ControlPlane:
                 f"{self.disc_prefix}/{component}/heatctl/{uid}/config",
                 json.dumps(conf), retain=True)
 
+        async def undisc(component: str, uid: str) -> None:
+            """Remove a previously discovered entity.
+
+            Discovery configs are retained, so an entity we stop publishing
+            would otherwise linger in HA forever. An empty retained payload is
+            the documented way to delete one.
+            """
+            await self._client.publish(
+                f"{self.disc_prefix}/{component}/heatctl/{uid}/config",
+                b"", retain=True)
+
         async def sensor(uid: str, name: str, state_topic: str, unit: str,
                          device_class: str | None = None):
             conf = {"name": name, "state_topic": f"{self.base}/{state_topic}",
@@ -170,16 +181,49 @@ class ControlPlane:
             "options": ["heating", "cooling", "off"],
         })
 
-        # Setpoint bounds come from the same safety clamp that will reject
-        # out-of-range values anyway, so HA cannot even offer an invalid one.
+        # Per-room thermostats. A `climate` entity rather than a bare `number`:
+        # it shows current AND target temperature together and gets a proper
+        # thermostat card, which a slider with no notion of "now" cannot.
+        #
+        # Only for rooms that actually have a room temperature source. For the
+        # others the room setpoint is inert - they run the return-temperature
+        # fallback, which never reads it - so offering a control would be a lie.
+        #
+        # Bounds come from the same safety clamp that would reject an
+        # out-of-range value anyway, so HA cannot even offer an invalid one. And
+        # because temperature_state_topic is wired, HA displays what heatctl
+        # actually adopted after clamping rather than what was requested.
+        #
+        # NOTE mode is deliberately the GLOBAL heatctl mode on every room's
+        # thermostat: heatctl has one plant mode, not one per room, so changing
+        # it on any thermostat changes all of them. That is honest rather than
+        # convenient; do not fake per-room modes here.
         s = self.cfg["safety"]
         for room in self.cfg["rooms"]:
             n = room["name"]
-            await disc("number", f"sp_{n}", {
-                "name": f"Setpoint {room.get('label', n)}",
-                "state_topic": f"{self.base}/setpoint/{n}",
-                "command_topic": f"{self.base}/set/setpoint/{n}",
-                "min": s["setpoint_min_c"], "max": s["setpoint_max_c"],
-                "step": 0.5, "mode": "box",
-                "unit_of_measurement": "°C", "device_class": "temperature",
-            })
+            uid = f"sp_{n}"
+            if room.get("room_temp_topic"):
+                await disc("climate", uid, {
+                    "name": room.get("label", n),
+                    "current_temperature_topic": f"{self.base}/room/{n}/temp",
+                    "temperature_state_topic": f"{self.base}/setpoint/{n}",
+                    "temperature_command_topic": f"{self.base}/set/setpoint/{n}",
+                    "mode_state_topic": f"{self.base}/mode",
+                    "mode_state_template":
+                        "{{ 'heat' if value == 'heating'"
+                        " else 'cool' if value == 'cooling' else 'off' }}",
+                    "mode_command_topic": f"{self.base}/set/mode",
+                    "mode_command_template":
+                        "{{ 'heating' if value == 'heat'"
+                        " else 'cooling' if value == 'cool' else 'off' }}",
+                    "modes": ["off", "heat", "cool"],
+                    "min_temp": s["setpoint_min_c"],
+                    "max_temp": s["setpoint_max_c"],
+                    "temp_step": 0.5,
+                    "temperature_unit": "C",
+                })
+            else:
+                await undisc("climate", uid)
+            # The old number entity is superseded by the thermostat above.
+            # Clearing it is a one-time migration and harmless when repeated.
+            await undisc("number", uid)
