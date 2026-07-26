@@ -56,20 +56,26 @@ Room sensors still arrive via MQTT regardless of this choice.
       Document the exact register map + topics in docs/MODBUS2MQTT.md
 - [ ] Enable the coupler's Modbus watchdog. Confirmed DISABLED as of
       2026-07-26, so there is no hardware failsafe at all right now. Steps:
-      (a) confirm from the manual what Watchdog Type Standard vs Alternative
-      means, and use Alternative so only an explicit trigger-register write
-      kicks it - with Standard + mask 0xFFFF heatctl's own reads would keep it
-      alive even with a broken write path;
+      (a) DONE 2026-07-26 from the manual: use Type **Standard** with coding
+      mask 0x8020 in 0x1001 (FC6 + FC16). Standard evaluates the mask; it is
+      *Alternative* that resets on any telegram. An earlier note here advised
+      Alternative - that was backwards. With a write-only mask heatctl's normal
+      per-cycle valve write IS the heartbeat, so no extra trigger write needed;
       (b) DONE 2026-07-26: no output-behaviour option exists anywhere in the
       WBM, so full-scale-on-timeout is NOT configurable. Outputs clear to 0 on
       timeout, i.e. valves close. Accepted: when heatctl is dead, closing is the
       conservative choice against condensation, and 8 of 10 circuits are open
       pipe so circulation continues anyway. MUST be revisited once every circuit
       has an actuator - then a trip would deadhead the heat pump;
-      (c) arming needs a coupler reset (brief I/O outage) - schedule it;
-      (d) then implement the heartbeat in modbus_direct: write the trigger
-      register each cycle ONLY after a successful valve write, so that a write
-      path that has stopped working actually trips the watchdog;
+      (c) NO coupler reset needed via registers: write 0x1000 (time), then a
+      non-zero mask to 0x1001 arms it live; 0x1008 (0x55AA/0xAA55) stops it.
+      Fully reversible, no I/O outage. Do not write 0x100B (makes it remanent)
+      until settled;
+      (d) implement in modbus_direct: arm on start, and CRUCIALLY handle the
+      trip - after a time-out the coupler answers every request with exception
+      0x0004 and blocks process-data writes until a non-zero value is written
+      to trigger register 0x1003. Without that, one transient trip disables
+      control permanently. Detect status 0x1006 == 2 and re-arm;
       (e) verify empirically: stop writing, read the output image at
       0x0200 + word, record what the outputs really do.
       See docs/HARDWARE.md for the register values and page contents.

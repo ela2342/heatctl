@@ -35,93 +35,60 @@ wrote it to**:
   and returned illegal-data-address for the whole request. Read these one or
   two registers at a time.
 
-### Modbus watchdog registers (read live 2026-07-26)
-| Addr | Meaning (per WAGO docs - LABELS UNVERIFIED) | Value found |
-|------|--------------------------------------------|-------------|
-| 0x1000 | watchdog time, units of 100 ms | 100 -> **10 s** |
-| 0x1001 | coding mask: which function codes retrigger it | **0xFFFF = all** |
-| 0x1002 | watchdog trigger (write to retrigger) | 0xFFFF |
-| 0x1003 | minimum trigger time | 0 |
-| 0x1004 | status / stop | 0xFFFF |
-| 0x1005..0x1007 | stop / restart / config | 0 |
-| 0x1028 | fieldbus-failure behaviour (guess) | 4 |
+### Modbus watchdog - from the manual (750-352 Handbuch v1.2.0, sections 9.6 / 11.2.5)
+Authoritative, replacing three earlier guesses in this file that were wrong.
+Manual: /mnt/c/Users/Ela/Downloads/750-352.pdf (pp. 112-113, 171-177).
 
-### WBM Watchdogs page, read 2026-07-26 - CURRENT STATE: DISABLED
-`State Modbus Watchdog: Disabled`. **There is currently no hardware failsafe on
-this coupler at all.** The register values above are only the stored config, not
-an armed watchdog - do not mistake a populated 0x1000 for protection.
+| Addr | Access | Meaning | Default | Read live 2026-07-26 |
+|------|--------|---------|---------|----------------------|
+| 0x1000 | R/W | Watchdog time, x100 ms | 0x0064 = 10 s | 100 = 10 s |
+| 0x1001 | R/W | Coding mask, FC **1..16** | 0xFFFF | 0xFFFF |
+| 0x1002 | R/W | Coding mask, FC **17..32** | 0xFFFF | 0xFFFF |
+| 0x1003 | R/W | Watchdog **trigger** (toggle register) | - | 0 |
+| 0x1004 | R | **Minimum trigger time** | - | 0xFFFF |
+| 0x1005 | R/W | Stop watchdog (write 0xAAAA then 0x5555) | - | 0 |
+| 0x1006 | R | **Status**: 0 = not active, 1 = active, 2 = expired | 0x0000 | **0 -> not active** |
+| 0x1007 | R/W | Restart watchdog (write 0x1) | 0x0001 | 0 |
+| 0x1008 | R/W | Simple stop (write 0x55AA or 0xAA55) | 0x0000 | - |
+| 0x1009 | R/W | Close MODBUS socket on time-out (0/1) | - | - |
+| 0x100A | R/W | **Alternative watchdog** enable | 0x0000 | - |
+| 0x100B | W | Make 0x1000/0x1001/0x1002 remanent (0x55AA/0xAA55) | - | - |
+| 0x1028 | R/W | **Boot configuration** (NOT fieldbus-failure behaviour) | - | 4 |
 
-The page (Navigation -> Watchdog) offers:
+**Outputs ARE set to zero on time-out.** Confirmed twice: WBM table for Watchdog
+Timeout Value - "Nach Ablauf dieser Zeit ohne empfangenes MODBUS-Telegramm,
+werden die physikalischen Ausgaenge auf '0' gesetzt" - and the 0x100A
+description. With NC actuators that means valves close. Not configurable; see
+the fail-open discussion below.
 
-| Field | Value found | Note |
-|---|---|---|
-| Connection Timeout Value (100 ms) | 600 -> 60 s | Separate *TCP connection* watchdog, not the Modbus one. heatctl polls every 1 s so it never trips; and modbus_direct reconnects if it ever does. |
-| State Modbus Watchdog | **Disabled** | Read-only display |
-| Watchdog Type | **Standard** / Alternative | See below - Standard is the wrong choice for us |
-| Watchdog Timeout Value (100 ms) | 100 -> 10 s | Fine against a 1 s control loop: ~10 kicks per window |
-| Trigger Mask F1-F16 / F17-F32 | 0xFFFF / 0xFFFF | Every function code retriggers it |
+**Use Watchdog Type "Standard", NOT "Alternative".** An earlier note here
+advised the opposite; that was exactly backwards. Per the WBM table:
+- *Standard*: the coding mask decides which telegrams reset the timer.
+- *Alternative*: **any** MODBUS/TCP telegram resets it.
+So Alternative is the useless one for us - heatctl's once-per-second reads would
+keep it alive with a dead write path. Standard with a mask restricted to the
+write function codes gives the property we want.
 
-**Use "Alternative", not "Standard".** UNVERIFIED against the manual, but the
-distinction appears to be: Standard is retriggered by any Modbus function
-matching the trigger mask, Alternative only by an explicit write to the trigger
-register (0x1002). Standard with mask 0xFFFF is why the watchdog would be
-useless to us - heatctl reads every second, so reads alone would keep it alive
-even if the write path were completely broken, which is a failure mode heatctl
-can actually have (write_valve raising every cycle while read_state succeeds).
-Alternative gives a true heartbeat instead: heatctl kicks 0x1002 only *after* a
-successful valve write, so a broken write path lets the watchdog fire. That is
-better than narrowing the mask, because it expresses intent rather than
-approximating it.
+**Mask to use: 0x8020 in 0x1001** = FC6 (bit 5, write single register) + FC16
+(bit 15, write multiple). Then only actual output writes retrigger the watchdog,
+so "watchdog satisfied" means "outputs are being driven" - and heatctl needs no
+separate heartbeat, because its per-cycle valve write IS the heartbeat.
 
-**Enabling requires a coupler reset.** The page states Modbus Watchdog changes
-"take effect after the next software or hardware reset", so arming it means a
-brief outage of all I/O - schedule it, do not do it mid-heating-season blind.
+**Arming needs no coupler reset.** The WBM says its changes apply after a reset,
+but that is about its EEPROM copy. Over Modbus: set 0x1000, then write a non-zero
+mask to 0x1001 - that write arms it, live. Stop again with 0x1008 (0x55AA or
+0xAA55). So arming and testing is fully reversible without an I/O outage, and the
+"schedule a reset" caveat noted earlier does not apply to the register route.
+Do NOT write 0x100B while experimenting - that makes the settings remanent.
 
-### Output behaviour on timeout is NOT configurable - RESOLVED 2026-07-26
-Checked every WBM page that could carry it: **Watchdog** (no such field),
-**Features** (only "Autoreset on system error", "BOOTP request before static
-IP", "Non-adaptive Kbus speed active" - all unchecked), **IO config** (a module
-listing only). There is no fieldbus-failure / substitute-value option anywhere.
-
-So **full-scale-on-timeout cannot be configured on this coupler.** An earlier
-version of this file asserted the fallback "must be configured to drive outputs
-to FULL SCALE"; that is not achievable and the claim is withdrawn. The documented
-behaviour is that outputs are cleared to 0 on timeout - i.e. with NC actuators,
-valves CLOSE. Still worth verifying empirically rather than trusting the manual.
-
-**This does not actually conflict with the fail-open policy, because the two
-cover different failures:**
-- Software fail-open (`safety.failsafe_valve_pct: 100`) applies when heatctl is
-  ALIVE but has lost knowledge - sensor fault, stale data. It can still reason,
-  and an open circuit fed by a heat pump holding a sane return setpoint is safe.
-- The watchdog applies when heatctl is DEAD. There, closing is the conservative
-  choice: the one genuinely fast hazard is condensation, and `safety.py` already
-  fails closed on `vl_undertemp` for exactly that reason. Leaving valves stuck
-  wherever a dying controller last left them - possibly 100 % open with
-  below-dew-point water - is strictly worse than closing them.
-
-**Crucially, a watchdog trip does not stop circulation today**: only circuits 1
-and 2 have actuators, the other eight are open pipe, so flow continues through
-them regardless. That is what makes fail-closed acceptable here.
-
-**REVISIT WHEN THE REMAINING ACTUATORS ARRIVE.** Once every circuit can close, a
-watchdog trip would shut all flow and leave the heat pump deadheading against a
-closed manifold - a real hazard (flow error / pressure). At that point either the
-heat-demand interlock must stop the pump when the watchdog fires, or a bypass /
-differential-pressure valve is needed. Do not carry today's "acceptable" verdict
-forward past that hardware change.
-
-Module count cross-check from IO config: 10 on terminalbus, 10 in I/O
-configuration - consistent, and matches the terminal layout above
-(16DI + 750-652 + 4x750-463 + 2x750-559 + 2x750-517 = 10).
-
-Still to determine, and it decides whether hardware fail-open is even possible:
-what the coupler does to the analog outputs on timeout. WAGO couplers typically
-offer "set outputs to zero" or "retain last value", not an arbitrary substitute.
-If a substitute value is not available then full-scale-on-timeout cannot be
-configured, "retain last value" is the closest approximation, and the fail-open
-policy remains a software-only property. Verify empirically by arming the
-watchdog, stopping writes, and reading the output image at 0x0200 + word.
+**heatctl MUST handle the trip, or one time-out disables control permanently.**
+After a time-out the coupler answers *all* subsequent MODBUS/TCP requests with
+exception 0x0004 (Slave Device Failure), and process-data writes stay blocked
+until the watchdog error is cleared by writing a non-zero value to the trigger
+register 0x1003 (or 0x1007). Without that recovery step, a single transient trip
+leaves modbus_direct failing every read and write forever - staleness failsafe
+looping, no way back without manual intervention. Any implementation must detect
+status 0x1006 == 2 (or exception 4) and re-arm.
 
 Consequence for anyone verifying valve output: read FC3 at `0x0200 + 12 + n`,
 never at `12 + n`. Worth knowing that a read-back check is also the only way
