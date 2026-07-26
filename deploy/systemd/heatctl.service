@@ -1,0 +1,15 @@
+[Unit]
+Description=heatctl - self-sufficient floor heating/cooling control
+After=network-online.target mosquitto.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/heatctl/venv/bin/python -m heatctl.main /etc/heatctl/config.yaml
+WorkingDirectory=/opt/heatctl
+Restart=always
+RestartSec=5
+# Also enable the Pi hardware watchdog (package "watchdog") in production.
+
+[Install]
+WantedBy=multi-user.target

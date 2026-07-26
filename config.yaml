@@ -1,0 +1,141 @@
+# heatctl - configuration
+# Layer 1: self-sufficient base control. This file is the single source of
+# truth for hardware mapping and limits. In 30 years, start reading here.
+
+io:
+  # Backend for the WAGO node: "mqtt" (via modbus2mqtt) or "modbus_direct".
+  # Both backends expose identical semantics to the control core, so the
+  # bridge (modbus2mqtt) can be replaced or dropped without touching control
+  # logic. Keep modbus_direct working at all times - it is the insurance
+  # policy against the bridge project going unmaintained.
+  backend: mqtt
+
+  modbus:                      # used by modbus_direct AND documented for modbus2mqtt setup
+    host: 192.0.2.52       # WAGO 750-352, static DHCP lease
+    port: 502
+    poll_interval_s: 1.0       # 750-463 only refreshes ~1 Hz anyway
+    timeout_s: 2.0
+
+  mqtt_io:                     # used by the mqtt backend
+    # Topics produced/consumed by modbus2mqtt. Adjust templates to match
+    # your modbus2mqtt configuration; see docs/MODBUS2MQTT.md
+    temp_topic: "modbus/wago/temp/{name}"        # payload: raw register value
+    valve_topic: "modbus/wago/valve/{name}/set"  # payload: raw 0..32767
+    raw_scale: 32767            # 750-559: 32767 = 10 V
+    stale_after_s: 10           # per-topic staleness -> sensor treated as failed
+
+mqtt:                          # control-plane broker (telemetry, setpoints, Shellys)
+  host: 127.0.0.1              # Mosquitto on the dedicated machine, NOT on HA.
+  port: 1883                   # HA bridges to this broker.
+  username: ""
+  password: ""
+  base_topic: heatctl
+  ha_discovery: true
+  ha_discovery_prefix: homeassistant
+
+# --- WAGO node inputs ----------------------------------------------------
+# Process image: input registers 0-11 = 750-652 (RS485, unused),
+# 12-27 = 4x 750-463 (16x PT1000, value = degC * 10, two's complement)
+sensors:
+  base_register: 12
+  channels:
+    - {index: 1,  name: rl_hk01, label: "Return circuit 1"}
+    - {index: 2,  name: rl_hk02, label: "Return circuit 2"}
+    - {index: 3,  name: rl_hk03, label: "Return circuit 3"}
+    - {index: 4,  name: rl_hk04, label: "Return circuit 4"}
+    - {index: 5,  name: rl_hk05, label: "Return circuit 5", enabled: false}
+    - {index: 6,  name: rl_hk06, label: "Return circuit 6"}
+    - {index: 7,  name: rl_hk07, label: "Return circuit 7"}
+    - {index: 8,  name: rl_hk08, label: "Return circuit 8"}
+    - {index: 9,  name: rl_hk09, label: "Return circuit 9"}
+    - {index: 10, name: rl_hk10, label: "Return circuit 10"}
+    - {index: 11, name: rl_hk11, label: "Return circuit 11"}
+    - {index: 12, name: rl_hk12, label: "Return circuit 12", enabled: false}
+    - {index: 13, name: vl_total, label: "Supply total"}
+    - {index: 14, name: rl_total, label: "Return total"}
+    - {index: 15, name: reserve_15, label: "Reserve 15", enabled: false}
+    - {index: 16, name: reserve_16, label: "Reserve 16", enabled: false}
+
+# --- WAGO node outputs ---------------------------------------------------
+# Holding registers 0-11 = 750-652, 12-19 = 2x 750-559 (0-10V, 0..32767)
+valves:
+  base_register: 12
+  channels:
+    # NOTE: only 8 analog outputs for up to 12 circuits. Verify which
+    # circuits actually have a proportional actuator and fix this mapping!
+    - {index: 1, name: valve_hk01}
+    - {index: 2, name: valve_hk02}
+    - {index: 3, name: valve_hk03}
+    - {index: 4, name: valve_hk04}
+    - {index: 5, name: valve_hk06}
+    - {index: 6, name: valve_hk10}
+    - {index: 7, name: valve_hk11}
+    - {index: 8, name: valve_spare}
+
+# --- Rooms: the actual control unit -------------------------------------
+# A room groups one or more floor circuits and optionally a room air
+# temperature sensor (e.g. Shelly H&T via MQTT). Control strategy:
+#   - with room sensor: room air PID -> valve position for all circuits
+#   - without (yet):    return-temperature PID per circuit
+rooms:
+  - name: gaestebad
+    label: "Gästebad"
+    circuits: [{sensor: rl_hk01, valve: valve_hk01}]
+    room_temp_topic: ""        # e.g. shellies/shellyht-XXXX/sensor/temperature
+  - name: wohnzimmer
+    label: "Wohnzimmer"
+    circuits:
+      - {sensor: rl_hk02, valve: valve_hk02}
+      - {sensor: rl_hk07, valve: ""}       # TODO: which valves drive HK 7/8/9?
+      - {sensor: rl_hk08, valve: ""}
+      - {sensor: rl_hk09, valve: ""}
+    room_temp_topic: ""
+  - name: kind_natalie
+    label: "Kinderzimmer Natalie"
+    circuits: [{sensor: rl_hk03, valve: valve_hk03}]
+    room_temp_topic: ""
+  - name: kind_naomi
+    label: "Kinderzimmer Naomi"
+    circuits: [{sensor: rl_hk04, valve: valve_hk04}]
+    room_temp_topic: ""
+  - name: badezimmer
+    label: "Badezimmer"
+    circuits: [{sensor: rl_hk06, valve: valve_hk06}]
+    room_temp_topic: ""
+  # rl_hk05 = Badezimmer Handtuchhalter, reserve, not installed
+  - name: schlafzimmer
+    label: "Elternschlafzimmer"
+    circuits: [{sensor: rl_hk10, valve: valve_hk10}]
+    room_temp_topic: ""
+  - name: arbeitszimmer
+    label: "Arbeitszimmer"
+    circuits: [{sensor: rl_hk11, valve: valve_hk11}]
+    room_temp_topic: ""
+
+# --- Control -------------------------------------------------------------
+control:
+  mode: heating                # heating | cooling | off (overridable via MQTT)
+  loop_interval_s: 1.0
+  default_setpoint_heating_c: 21.0   # room temp if room sensor present,
+  default_setpoint_cooling_c: 24.0   # otherwise interpreted as return temp target
+  return_temp_setpoint_heating_c: 22.0
+  return_temp_setpoint_cooling_c: 20.0
+  pid_room:   {kp: 25.0, ki: 0.005, kd: 0.0, out_min: 0.0, out_max: 100.0}
+  pid_return: {kp: 8.0,  ki: 0.02,  kd: 0.0, out_min: 0.0, out_max: 100.0}
+
+safety:
+  # Hard limits - layer 2 may only set setpoints WITHIN these bounds
+  setpoint_min_c: 15.0
+  setpoint_max_c: 28.0
+  vl_max_heating_c: 45.0       # screed protection: close valves on hot supply
+  vl_min_cooling_c: 16.0       # condensation guard (static fallback; dew point
+                               # supervision via MQTT is a PLAN.md milestone)
+  frost_protect_c: 6.0         # below this return temp: force valve open
+  sensor_fault_raw: [0x05DC, 0xFED4]  # wire-break / short-circuit saturation
+  stale_data_timeout_s: 15     # no fresh input data -> failsafe
+  failsafe_valve_pct: 50       # failsafe: valves half open (frost > comfort)
+
+logging:
+  level: INFO
+  state_db: /data/heatctl.sqlite   # history for system identification
+  log_every_n_cycles: 60

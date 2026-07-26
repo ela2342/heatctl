@@ -1,0 +1,5 @@
+# hard dependencies (control core):
+pymodbus>=3.6,<4
+PyYAML>=6
+# mqtt paths (io backend "mqtt" and control plane):
+aiomqtt>=2,<3
