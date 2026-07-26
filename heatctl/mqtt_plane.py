@@ -32,13 +32,15 @@ log = logging.getLogger("heatctl.mqtt")
 class ControlPlane:
     def __init__(self, cfg: dict, on_command):
         m = cfg["mqtt"]
-        self.host, self.port = m["host"], m["port"]
-        # Credentials may come from the environment so they never have to be
-        # committed in config.yaml. In the target deployment mosquitto runs on
-        # the same machine and may well allow anonymous local connections, in
-        # which case both stay empty.
-        self.user = m.get("username") or os.environ.get("HEATCTL_MQTT_USERNAME") or None
-        self.pw = m.get("password") or os.environ.get("HEATCTL_MQTT_PASSWORD") or None
+        # Environment wins over the file for site-specific values, so the
+        # committed config.yaml can carry placeholders. See README.
+        self.host = os.environ.get("HEATCTL_MQTT_HOST") or m["host"]
+        self.port = int(os.environ.get("HEATCTL_MQTT_PORT") or m["port"])
+        # Credentials come from the environment so they are never committed.
+        # In the target deployment mosquitto runs on the same machine and may
+        # allow anonymous local connections, in which case both stay unset.
+        self.user = os.environ.get("HEATCTL_MQTT_USERNAME") or m.get("username") or None
+        self.pw = os.environ.get("HEATCTL_MQTT_PASSWORD") or m.get("password") or None
         self.base = m["base_topic"]
         self.disc = m.get("ha_discovery", True)
         self.disc_prefix = m.get("ha_discovery_prefix", "homeassistant")

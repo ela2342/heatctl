@@ -113,8 +113,8 @@ Room sensors still arrive via MQTT regardless of this choice.
       via MQTT (configurable topic), fall back to static vl_min_cooling_c
       when data is missing/stale (port of the existing HA automation
       "Climate: Prevent Condensation").
-- [ ] Room air sensors, interim: publish the two surviving Controme
-      Raumcontroller PRO units (Gästebad, Wohnzimmer - see docs/HARDWARE.md)
+- [ ] Room air sensors, interim: publish the two surviving legacy wall
+      units (Gästebad, Wohnzimmer - see docs/HARDWARE.md)
       to MQTT and set their `room_temp_topic` in config; validate cascade
       (room PID) vs fallback (return PID) switchover. Making them independent
       of the legacy server means serving the HTTP routes they already call,
@@ -122,7 +122,7 @@ Room sensors still arrive via MQTT regardless of this choice.
       the local notes outside this repository for the details. Only some units
       survived the overvoltage event, so this covers 2 rooms, not the house.
 - [ ] Room air sensors, target: Shelly H&T per room via MQTT (none bought
-      yet). This is still the long-term plan; the Controme RC bridge above
+      yet). This is still the long-term plan; the legacy wall-unit bridge above
       is interim plumbing with a finite life. Rooms without either source
       keep running on the return-temperature fallback.
 

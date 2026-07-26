@@ -42,7 +42,7 @@ Items marked `ASSUMPTION:` reflect the system description as of
   dew point (`sensor.fineoffset_wh65b_210_dew_point`), solar-relevant data.
 - PV production: usable as a free irradiance proxy for solar-gain
   estimation (large living-room windows → substantial gains).
-- Room air: 2× Controme RC wall units (interim), Shelly H&T (target);
+- Room air: 2x surviving legacy wall units (interim), Shelly H&T (target);
   rooms without either run on the return-temperature fallback.
 
 ---

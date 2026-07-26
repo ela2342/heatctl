@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 
 from pymodbus.client import AsyncModbusTcpClient
@@ -42,7 +43,10 @@ RAW_FULLSCALE = 32767  # 750-559: 32767 = 10 V
 class ModbusDirectBackend(IOBackend):
     def __init__(self, cfg: dict):
         m = cfg["io"]["modbus"]
-        self.host, self.port = m["host"], m["port"]
+        # Environment wins over the file for site-specific values, so the
+        # committed config.yaml can carry a placeholder address. See README.
+        self.host = os.environ.get("HEATCTL_MODBUS_HOST") or m["host"]
+        self.port = int(os.environ.get("HEATCTL_MODBUS_PORT") or m["port"])
         self.timeout = m.get("timeout_s", 2.0)
         self.reconnect_delay = m.get("reconnect_delay_s", 1.0)
         self.reconnect_delay_max = m.get("reconnect_delay_max_s", 30.0)

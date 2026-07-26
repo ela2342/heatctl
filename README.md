@@ -27,6 +27,22 @@ bridge is replaceable and the direct path stays as insurance.
     python -m venv venv && venv/bin/pip install -r requirements.txt
     venv/bin/python -m heatctl.main ./config.yaml
 
+## Configuration
+`config.yaml` is the single source of truth for register mapping, topology and
+safety limits, and is versioned. It carries **placeholder addresses**
+(`192.0.2.x`, RFC 5737) because this repository is public. Environment
+variables override the file, so point it at real hardware without editing a
+tracked file:
+
+    HEATCTL_MODBUS_HOST   WAGO coupler address      (default: config.yaml)
+    HEATCTL_MODBUS_PORT   default 502
+    HEATCTL_MQTT_HOST     control-plane broker
+    HEATCTL_MQTT_PORT     default 1883
+    HEATCTL_MQTT_USERNAME broker credentials - never put these in config.yaml
+    HEATCTL_MQTT_PASSWORD
+
+For systemd use an `EnvironmentFile`; see `deploy/systemd/README.md`.
+
 ## Deployment
 - Prototype: HA add-on, see `deploy/ha-addon/README.md`
 - Target: systemd on a dedicated machine, see `deploy/systemd/README.md`
