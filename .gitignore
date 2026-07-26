@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Local virtualenv (README quickstart creates ./venv)
+venv/
+.venv/
+
+# Runtime state. The real DB lives at logging.state_db (default /data/...),
+# but test runs and dev configs tend to drop one in the tree.
+*.sqlite
+*.sqlite-journal
+
+# Local coding-agent instructions, not part of the product
+CLAUDE.md
