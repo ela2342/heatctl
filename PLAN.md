@@ -6,6 +6,10 @@ Two-layer architecture for floor heating/cooling driven by a WAGO 750-352
 Modbus coupler, designed for 30-year maintainability and full independence
 from Home Assistant.
 
+The whole-system target design (buffer tank, wood stove, DHW, operating
+modes, physical model + estimation, planner) lives in `docs/DESIGN.md`;
+its work packages WP-A..WP-I extend the milestones below.
+
 - **Layer 1 (this repo, `heatctl/`)**: self-sufficient control core.
   Safety-critical. Minimal pinned dependencies. NEVER call HA APIs here.
 - **Layer 2 (to be built, `optimizer/`)**: setpoint optimization (weather,
@@ -14,13 +18,20 @@ from Home Assistant.
 
 ### I/O architecture (decided, do not relitigate)
 The control core is transport-agnostic via `heatctl/backends/`:
-- `mqtt` (default): WAGO I/O via a modbus2mqtt bridge; room sensors
-  (Shelly H&T) via MQTT anyway. Broker (mosquitto) + bridge + heatctl all
-  run on the SAME dedicated machine; HA bridges into that broker.
-- `modbus_direct`: fallback/insurance path, and mandatory transport for
-  future fast loops (DHW station, 100 ms) - those must not go through a
-  polling bridge.
-Bridge-specific topic knowledge lives ONLY in `backends/mqtt_io.py`.
+- `modbus_direct` (**ACTIVE, changed 2026-07-26**): direct Modbus TCP to the
+  WAGO. Also the mandatory transport for future fast loops (DHW station,
+  100 ms) - those must not go through a polling bridge.
+- `mqtt`: WAGO I/O via a modbus2mqtt bridge. Kept in the tree but NOT in use.
+  Bridge-specific topic knowledge lives ONLY in `backends/mqtt_io.py`.
+
+Why the change: the available HA modbus2mqtt add-on publishes one aggregated
+JSON document per device and cannot emit raw per-register values on flat
+topics, so it cannot meet the contract in `docs/MODBUS2MQTT.md` - see that
+file for the full investigation before reconsidering. This is the
+"insurance policy" in the original design paying out. Note heatctl's own
+control plane already publishes every sensor and valve to MQTT with HA
+discovery (`ControlPlane`), so dropping the bridge costs no HA visibility.
+Room sensors still arrive via MQTT regardless of this choice.
 
 ### Existing environment
 - WAGO 750-352 @ 192.0.2.52 (mapping: config.yaml + docs/HARDWARE.md)
@@ -34,19 +45,65 @@ Bridge-specific topic knowledge lives ONLY in `backends/mqtt_io.py`.
 
 ## Milestone 0 - bring-up (manual, no code)
 - [ ] Verify valve<->circuit mapping in config.yaml (8 analog outputs vs
-      10 active circuits; Wohnzimmer circuits 7/8/9 valve assignment TODO)
+      10 active circuits; Wohnzimmer circuits 7/8/9 valve assignment TODO).
+      Also resolve the hk07/hk10 conflict against the legacy Controme
+      mapping - see the cross-check table in docs/HARDWARE.md
+- [ ] Hardware still missing: a 750-1606 (enough 0V terminals for all 12
+      valves) and 2x 750-559 (drive all valves, plus spares). Currently
+      only 2 valves are wired: Gästebad (hk01) and Wohnzimmer (hk02)
 - [ ] Configure modbus2mqtt on the dev host (or HA add-on for prototyping):
       poll input registers 12-27 (temps), write holding registers 12-19.
       Document the exact register map + topics in docs/MODBUS2MQTT.md
 - [ ] Enable the coupler's Modbus watchdog in the WBM; document behavior
-- [ ] Local test run: `python -m heatctl.main ./config.yaml`
-- [ ] Verify HA MQTT discovery shows sensors + valves
+- [x] Local test run: `python -m heatctl.main ./config.yaml` (2026-07-26 -
+      full run() loop against the real coupler and HA's Mosquitto; outputs
+      parked closed afterwards)
+- [x] Verify HA MQTT discovery shows sensors + valves (2026-07-26 - 28
+      entities: 12 temperatures, 8 valve positions, plus `select.heatctl_mode`
+      and 7 `number.heatctl_setpoint_*` controls so HA can actually command
+      mode and setpoints instead of only displaying. Entities correctly go
+      `unavailable` when heatctl stops.)
+      NOTE: MQTT credentials come from `HEATCTL_MQTT_USERNAME` /
+      `HEATCTL_MQTT_PASSWORD` in the environment, never from config.yaml -
+      that file is committed. Currently reusing HA's own `homeassistant`
+      broker account; a dedicated credential would be tidier (see
+      deploy/systemd/README.md).
 
 ## Milestone 1 - harden layer 1
 - [ ] pytest suite: PID (step response, anti-windup, invert), Safety (frost,
       overtemp, sensor fault, stale), MqttIOBackend staleness promotion,
-      backend contract test run against both backends with fakes
-- [ ] Reconnect/backoff in modbus_direct (currently: crash -> restart)
+      backend contract test run against both backends with fakes.
+      Two regression tests this suite MUST include, both from real defects:
+      (a) starting in `mode: cooling` from config must invert the PIDs -
+      `Controller.__init__` applied the mode to the setpoints but not to
+      `pid.invert`, so config-configured cooling ran in the heating
+      direction (fixed 2026-07-26, found by hardware test, not by reading);
+      (b) modbus_direct reconnect/backoff behaviour, see below.
+- [ ] Valve output read-back verification: heatctl treats
+      `IOState.valves_pct` as the last *commanded* value and never reads the
+      coupler back, so it cannot notice that the WAGO Modbus watchdog has
+      fired and forced the outputs to their safe state. Read-back lives at
+      `0x0200 + word` (see docs/HARDWARE.md) - one extra FC3 read per cycle.
+- [x] Reconnect/backoff in modbus_direct (2026-07-26, promoted to
+      prerequisite when modbus_direct became the active backend):
+      `start()` no longer raises when the coupler is unreachable (the control
+      loop must come up so safety runs; stale-data failsafe covers the gap),
+      `read_state()` returns the previous state without refreshing
+      `last_read_ts` so staleness is reported honestly instead of surfacing
+      as a bogus "cycle_error", reconnects are rate-limited with exponential
+      backoff (`reconnect_delay_s` .. `reconnect_delay_max_s`) and each
+      attempt is bounded by `timeout_s` so the 1 s loop never stalls.
+      `write_valve()` still raises, per the IOBackend contract.
+      STILL MISSING: unit tests for this - see the pytest item above.
+- [ ] RL validity gating (present defect, do before WP-C): `Controller.step`
+      feeds the per-circuit return PID from `state.temps[sensor]` with no
+      check on valve position, but a closed circuit's RL sensor reads slab
+      ambient, not loop state. Since every `room_temp_topic` is still empty,
+      this fallback is currently the ONLY live control path, so the whole
+      controller acts on invalid RL whenever a valve is closed. Minimal fix:
+      don't trust RL below an opening threshold - hold last valid value or
+      fall back to the curve default. Full flush-and-remeasure scheme is
+      docs/DESIGN.md section 4.
 - [ ] Heat-demand logic: request heat pump when sum of valve openings > X
       (replaces the HA automations "Steuerung der Wasserpumpe..."').
       WARNING: while those HA automations are active, heatctl must NOT
@@ -56,8 +113,18 @@ Bridge-specific topic knowledge lives ONLY in `backends/mqtt_io.py`.
       via MQTT (configurable topic), fall back to static vl_min_cooling_c
       when data is missing/stale (port of the existing HA automation
       "Climate: Prevent Condensation").
-- [ ] Shelly room sensors: add real topics to config, validate cascade
-      (room PID) vs fallback (return PID) switchover
+- [ ] Room air sensors, interim: publish the two surviving Controme
+      Raumcontroller PRO units (Gästebad, Wohnzimmer - see docs/HARDWARE.md)
+      to MQTT and set their `room_temp_topic` in config; validate cascade
+      (room PID) vs fallback (return PID) switchover. Making them independent
+      of the legacy server means serving the HTTP routes they already call,
+      which is also how their display/interval settings get configured - see
+      the local notes outside this repository for the details. Only some units
+      survived the overvoltage event, so this covers 2 rooms, not the house.
+- [ ] Room air sensors, target: Shelly H&T per room via MQTT (none bought
+      yet). This is still the long-term plan; the Controme RC bridge above
+      is interim plumbing with a finite life. Rooms without either source
+      keep running on the return-temperature fallback.
 
 ## Milestone 2 - DHW station (fresh water) fast loop
 - [ ] Flow sensor with pulse output on a digital input (16DI terminal,
