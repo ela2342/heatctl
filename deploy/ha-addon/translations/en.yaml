@@ -1,0 +1,34 @@
+configuration:
+  config_file:
+    name: Config file
+    description: >-
+      Name of heatctl's own configuration file inside this App's config
+      directory (/addon_configs/<slug>/). Seeded from a template on first start
+      and never overwritten afterwards. This file is the single source of truth
+      for the register map, room topology and safety limits.
+  log_level:
+    name: Log level
+    description: Overrides logging.level in the config file.
+  modbus_host:
+    name: WAGO coupler address
+    description: >-
+      Address of the WAGO 750-352. Overrides io.modbus.host in the config file,
+      which ships as a placeholder - so this normally must be set.
+  modbus_port:
+    name: WAGO coupler port
+    description: Modbus TCP port, normally 502.
+  mqtt_host:
+    name: MQTT broker address
+    description: >-
+      Leave empty to use the broker Home Assistant already knows about. Set it
+      only to point at a different broker, such as the dedicated machine in the
+      target architecture.
+  mqtt_port:
+    name: MQTT broker port
+    description: Only used when an MQTT broker address is set explicitly.
+  mqtt_username:
+    name: MQTT username
+    description: Only used when an MQTT broker address is set explicitly.
+  mqtt_password:
+    name: MQTT password
+    description: Only used when an MQTT broker address is set explicitly.

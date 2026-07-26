@@ -1,0 +1,7 @@
+# Base images per architecture. Verified to exist on ghcr.io on 2026-07-26:
+# the plain ":3.12" tag does NOT exist (the previous Dockerfile referenced it
+# and could never have pulled) - the tags are "<python>-alpine<version>".
+# 3.12-alpine3.18 was the newest tag published for both supported architectures.
+build_from:
+  aarch64: ghcr.io/home-assistant/aarch64-base-python:3.12-alpine3.18
+  amd64: ghcr.io/home-assistant/amd64-base-python:3.12-alpine3.18

@@ -1,11 +1,65 @@
+# Home Assistant App (add-on) manifest for heatctl.
+#
+# NOTE: this is the *App manifest*, not heatctl's configuration. heatctl's own
+# config.yaml is far too large for the options schema below (register maps,
+# room topology, safety limits) and lives in this App's config directory
+# instead - see `map:` and the README.
 name: heatctl
-version: "0.2.0"
+version: "0.3.0"
 slug: heatctl
-description: "Self-sufficient floor heating/cooling control (prototype deployment)"
-arch: [aarch64, amd64, armv7]
+description: Self-sufficient hydronic floor heating/cooling control for a WAGO 750-352 node
+url: https://github.com/ela2342/heatctl
+# armv7 dropped: this HA Supervisor reports it as a deprecated arch value.
+arch:
+  - aarch64
+  - amd64
+
+# Single foreground process, supervised by the base image's s6.
 init: false
-startup: services
+# "application" (not "services"): heatctl is a consumer of the broker, so it
+# should come up after service-class Apps like Mosquitto.
+startup: application
 boot: auto
-map: [addon_config:rw]
-options: {}
-schema: {}
+
+# Mounts this App's own config directory (host: /addon_configs/<slug>/) at
+# /config in the container. heatctl's config.yaml lives there, so it survives
+# rebuilds and updates and stays editable via File editor or Samba.
+# 'app_config', not the legacy 'addon_config' - the Supervisor renamed add-ons
+# to Apps and warns on the old name.
+map:
+  - app_config:rw
+
+# Ask the Supervisor for the MQTT broker's connection details. "want" means
+# start even when no broker exists - heatctl's control plane is optional by
+# design and the control loop keeps running without it.
+services:
+  - mqtt:want
+
+# Layer 1 must never call Home Assistant APIs (see CLAUDE.md / PLAN.md). These
+# are the Supervisor defaults, set explicitly so the manifest states the rule.
+hassio_api: false
+homeassistant_api: false
+auth_api: false
+
+options:
+  config_file: config.yaml
+  log_level: info
+  modbus_host: ""
+  modbus_port: 502
+  mqtt_host: ""
+  mqtt_port: 1883
+  mqtt_username: ""
+  mqtt_password: ""
+
+schema:
+  config_file: str
+  log_level: list(debug|info|warning|error|critical)
+  # Site values. Left empty, heatctl falls back to whatever config.yaml says -
+  # and that ships with placeholder addresses, so at minimum set modbus_host.
+  modbus_host: str?
+  modbus_port: port?
+  # Leave the MQTT fields empty to use the broker the Supervisor offers.
+  mqtt_host: str?
+  mqtt_port: port?
+  mqtt_username: str?
+  mqtt_password: password?

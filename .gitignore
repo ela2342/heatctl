@@ -18,3 +18,4 @@ CLAUDE.md
 
 # Local, site-specific notes (real addresses, credentials) - never committed
 *.local.md
+dist/

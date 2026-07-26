@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import signal
 import sqlite3
 import sys
@@ -203,7 +204,11 @@ class Controller:
 def main() -> None:
     cfg_path = sys.argv[1] if len(sys.argv) > 1 else "/etc/heatctl/config.yaml"
     cfg = yaml.safe_load(Path(cfg_path).read_text())
-    logging.basicConfig(level=cfg["logging"]["level"],
+    # Environment wins over the file, same rule as the host/credential
+    # overrides, so a packaged deployment can set it without editing config.
+    level = (os.environ.get("HEATCTL_LOG_LEVEL")
+             or cfg["logging"]["level"]).upper()
+    logging.basicConfig(level=level,
                         format="%(asctime)s %(name)s %(levelname)s %(message)s")
     ctl = Controller(cfg)
     loop = asyncio.new_event_loop()
