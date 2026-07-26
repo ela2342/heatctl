@@ -111,6 +111,13 @@ Room sensors still arrive via MQTT regardless of this choice.
       WARNING: while those HA automations are active, heatctl must NOT
       write WSDEV0001 register 0 (two writers doing read-modify-write on a
       flag register = race). Migrate in one step, then disable them in HA.
+- [ ] Cooling: source-side interlock for a SUSTAINED supply-below-dew-point
+      breach - stop circulation, not just raise the setpoint. Needs a shared
+      inhibit flag that the pump-hold automation also respects, otherwise the
+      two fight. The HA automations currently only raise P04 (hard jump to
+      dew point + 6 on breach), which is fast but not a guarantee: P04 targets
+      RETURN water, so supply is never directly commanded. See docs/DESIGN.md
+      section 4.2.
 - [ ] Cooling: dew-point supervision. Subscribe weather-station dew point
       via MQTT (configurable topic), fall back to static vl_min_cooling_c
       when data is missing/stale (port of the existing HA automation
