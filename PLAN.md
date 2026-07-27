@@ -50,7 +50,17 @@ Room sensors still arrive via MQTT regardless of this choice.
       mapping - see the cross-check table in docs/HARDWARE.md
 - [ ] Hardware still missing: a 750-1606 (enough 0V terminals for all 12
       valves) and 2x 750-559 (drive all valves, plus spares). Currently
-      only 2 valves are wired: Gästebad (hk01) and Wohnzimmer (hk02)
+      only 2 valves are wired: Gästebad (hk01) and Wohnzimmer (hk02).
+      WHEN THEY ARE FITTED, two decisions expire together and must be
+      revisited in the same breath - both are safe today only because most
+      circuits are unthrottleable open pipe:
+      (a) the coupler watchdog's fail-closed trip, which would then shut every
+      circuit and deadhead the pump into Er03;
+      (b) heat-demand logic, which needs the minimum-flow figure - see the
+      Milestone 1 item and docs/DESIGN.md 4.3.
+      Also flip `fitted: true` per valve channel in config.yaml as each
+      actuator goes on, or heatctl will keep treating that circuit as open
+      pipe and skip RL validity gating for it.
 - [~] NOT APPLICABLE - modbus2mqtt abandoned, see docs/MODBUS2MQTT.md. Was:
       Configure modbus2mqtt on the dev host (or HA add-on for prototyping):
       poll input registers 12-27 (temps), write holding registers 12-19.
@@ -166,10 +176,31 @@ Room sensors still arrive via MQTT regardless of this choice.
       closed. Which is why the periodic flush, not the hold, is the
       load-bearing part of the fix.
       Full scheduled flush-and-remeasure remains docs/DESIGN.md section 4.
-- [ ] Heat-demand logic: request heat pump when sum of valve openings > X
-      (replaces the HA automations "Steuerung der Wasserpumpe..."').
-      WARNING: while those HA automations are active, heatctl must NOT
-      write WSDEV0001 register 0 (two writers doing read-modify-write on a
+- [ ] Heat-demand logic (replaces the HA automations "Steuerung der
+      Wasserpumpe..."). DESIGN REVISED 2026-07-27, owner's decision - see
+      docs/DESIGN.md 4.3 for the full reasoning. It is NOT "request the pump
+      when sum of valve openings > X": source demand and minimum-flow
+      protection are ONE problem. Aggregate per-ROOM deviation into a signed
+      house demand (too cold -> heating, too warm -> cooling) and engage the
+      source only when that demand is large enough that the valve openings it
+      implies keep flow above the pump's minimum. Below that, run nothing.
+      Compute demand from room deviation, NEVER from valve position: valves
+      also close for safety reasons, and gating on openings would read a
+      dew-point closure as "no demand", stop the source, and prevent the
+      supply from recovering. That is the same latch-up shape as the
+      condensation bug of 2026-07-26.
+      Mode selection needs a deadband and a long dwell or the plant flaps.
+      This is plant-level only - rooms keep one target each.
+      PREREQUISITE, not yet done: measure the minimum flow. Neither the number
+      of open circuits nor the total opening percentage the pump needs is
+      known, so the threshold can currently only be guessed.
+      Also note Er03 (the pump's own water-flow failsafe) is ALREADY firing -
+      25 times in the 10 days to 2026-07-27, ~10 s each, coincident with
+      compressor stops, while the pump runs at 100 % with seven of nine
+      circuits open pipe. So it is not valve-driven today, and whatever does
+      cause it should be understood before adding flow restriction on top.
+      WARNING unchanged: while those HA automations are active, heatctl must
+      NOT write WSDEV0001 register 0 (two writers doing read-modify-write on a
       flag register = race). Migrate in one step, then disable them in HA.
 - [x] Cooling: source-side response to a supply-below-dew-point breach.
       DECIDED 2026-07-26 (owner's call): raising P04 is sufficient - the heat
