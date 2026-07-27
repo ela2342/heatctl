@@ -1,10 +1,15 @@
 """RL validity gating.
 
-The defect being fixed is subtle enough to be worth restating: an ungated
-return PID hunts, because a closed circuit's RL drifts toward slab ambient,
-and slab ambient reads as "more demand" in BOTH modes. So these tests care
-about two things - that fiction is never fed to the controller, and that a
-gated circuit can still find its way back to a real measurement.
+The defect is subtle enough to be worth restating. The RL sensors are on the
+return pipes at the MANIFOLD, so a circuit with no flow is not measured at
+all: its sensor drifts toward the manifold cabinet's ambient, near the header
+temperature. With the interim system-return target that reads as "error zero,
+nothing to do", so a closed circuit manufactures its own evidence to stay
+closed - silent lock-out.
+
+Which is why the recovery tests below matter at least as much as the gating
+ones: holding alone would preserve the lock-out forever. The flush is the part
+that breaks it.
 """
 from __future__ import annotations
 

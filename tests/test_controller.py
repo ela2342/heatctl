@@ -158,6 +158,7 @@ async def test_safety_overrides_the_control_output(controller):
         temps={"rl_hk01": 24.0, "rl_hk02": 24.0, "rl_hk03": 24.0,
                "vl_total": 12.0},                # below dew-point guard
         room_temps={"gaestebad": 28.0},          # maximum cooling demand
+        dew_point=14.0,                          # limit 16.0
     )
     ctl.io.touch(time.monotonic())
     await ctl.step(1.0)
@@ -168,11 +169,9 @@ async def test_safety_overrides_the_control_output(controller):
 # ---------- RL validity gating (present defect, docs/DESIGN.md 4) ----------
 
 async def test_the_return_pid_is_not_fed_an_untrusted_rl(controller):
-    """The defect: a closed circuit's RL is slab ambient, not loop water.
-
-    Ungated, that reads as "more demand" in both modes, so the loop hunts on
-    actuators that take minutes per stroke.
-    """
+    """The defect: with no flow, the manifold-mounted RL sensor measures the
+    manifold cabinet, not its circuit. Integrating that is how the circuit
+    talks itself into staying shut."""
     ctl = controller(
         temps={"rl_hk01": 24.0, "rl_hk02": 5.0, "rl_hk03": 24.0,
                "vl_total": 30.0},

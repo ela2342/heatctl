@@ -153,12 +153,18 @@ Room sensors still arrive via MQTT regardless of this choice.
       deploy. Circuits with `fitted: false` are always trusted: open pipe
       flows regardless of what we command, so gating them would be a fiction
       of its own. Safety is deliberately NOT gated - it reads RL for frost
-      protection, and slab ambient is a fine frost indicator.
-      Worth recording WHY, because the symptom is not obvious: the error is
-      not merely inaccuracy. A closed circuit's RL drifts toward slab ambient,
-      which reads as "more demand" in BOTH modes, so the loop opens, sees the
-      real RL, closes, and repeats - a self-sustaining hunt on actuators that
-      take minutes per stroke.
+      protection, and a stagnant reading is still a real temperature from a
+      real place in the building.
+      Worth recording WHY, because the symptom is not the intuitive one. The
+      RL sensors are on the return pipes AT THE MANIFOLD, not in the slab
+      (docs/HARDWARE.md). A circuit with no flow is therefore not measured at
+      all: its sensor drifts toward the manifold cabinet's ambient, dominated
+      by the headers running past it, i.e. toward roughly system water
+      temperature. With the interim system-return target that reads as
+      "error zero, nothing to do" - so the failure is silent LOCK-OUT rather
+      than oscillation: a closed circuit manufactures its own evidence to stay
+      closed. Which is why the periodic flush, not the hold, is the
+      load-bearing part of the fix.
       Full scheduled flush-and-remeasure remains docs/DESIGN.md section 4.
 - [ ] Heat-demand logic: request heat pump when sum of valve openings > X
       (replaces the HA automations "Steuerung der Wasserpumpe..."').
@@ -187,6 +193,37 @@ Room sensors still arrive via MQTT regardless of this choice.
       `sensor.system_dew_point_reference` republished by an automation
       (docs/HA_INTEGRATION.md). The HA-side pump-request shutdown stays where
       it is - that is source-side, this is valve-side.
+      On a stale or missing reading heatctl STOPS COOLING
+      (`cooling_requires_dew_point`, default on) rather than trusting the
+      static `vl_min_cooling_c`. That value arrived undocumented in the
+      initial commit and is not conservative - a 26 degC room at 60 % RH has a
+      dew point of 17.6 degC, above it. It looks like a safe floor and is not
+      one. This is also the only protection left in the case the HA-side
+      automation cannot cover: a dew point missing *because HA died* takes its
+      source-side pump shutdown with it.
+      Same change fixed a rule-ORDER defect found while writing it: the
+      known-bad-supply checks now run BEFORE the fail-open one. They depend on
+      the supply sensor and are independent of the circuit's return sensor, so
+      checking fail-open first meant one faulted return sensor forced its
+      circuit open even while the supply was measurably below the dew point -
+      condensation protection defeated by an unrelated sensor fault.
+- [ ] DEFERRED, deliberately: put the dew-point margin on a proper footing.
+      `dew_point_margin_c: 2.0` is EMPIRICAL - it matches the margin the HA
+      supervisory loop has run at without condensation.
+      What it is NOT is a screed-gradient correction. The floor build-up is
+      vapour-permeable, so condensation happens throughout the slab and
+      directly on the PIPE WALL, which sits essentially at water temperature.
+      Supply temperature is therefore very nearly the surface that matters and
+      there is no hidden reserve standing behind it. So the margin has to
+      cover measurement uncertainty and the spread of indoor dew point between
+      rooms - not a thermal gradient. Sizing it means quantifying sensor error
+      and inter-room dew-point spread (we currently measure humidity in two
+      rooms), which is data we do not have yet. Not worth blocking on: the
+      empirical value has a track record. Revisit when more rooms report
+      humidity, or sooner if condensation is ever observed.
+      Note condensation inside the slab is INVISIBLE - no wet patch will
+      prompt anyone to intervene. That is a standing argument against relaxing
+      any of this.
 - [x] Room air sensors, interim (2026-07-26): all three available sources are
       live - Arbeitszimmer subscribes to its sensor's own MQTT topic directly,
       Gaestebad and Wohnzimmer are bridged from HA including their dial

@@ -90,6 +90,7 @@ def test_supply_overtemp_in_heating_fails_closed(cfg):
 def test_supply_undertemp_in_cooling_fails_closed(cfg):
     """Condensation guard. Must be 0, NOT the fail-open position."""
     s = Safety(cfg)
+    s.set_dew_point(14.0)                      # limit 16.0
     pct, reason = s.apply("cooling", state(rl_hk01=20.0, vl_total=15.9),
                           "rl_hk01", 100.0)
     assert (pct, reason) == (0.0, "vl_undertemp")
@@ -103,6 +104,7 @@ def test_supply_limits_are_mode_specific(cfg):
     cooling. Applying either rule in both modes would deadlock the plant.
     """
     s = Safety(cfg)
+    s.set_dew_point(11.0)
     # cold supply, heating mode -> no override
     assert s.apply("heating", state(rl_hk01=20.0, vl_total=15.9),
                    "rl_hk01", 55.0) == (55.0, None)
@@ -114,6 +116,7 @@ def test_supply_limits_are_mode_specific(cfg):
 def test_supply_thresholds_are_exclusive(cfg):
     """Exactly at the limit is still allowed; only beyond it trips."""
     s = Safety(cfg)
+    s.set_dew_point(14.0)                      # limit 16.0
     assert s.apply("heating", state(rl_hk01=25.0, vl_total=45.0),
                    "rl_hk01", 70.0) == (70.0, None)
     assert s.apply("cooling", state(rl_hk01=20.0, vl_total=16.0),
@@ -127,6 +130,7 @@ def test_missing_supply_sensor_does_not_trip_the_closed_rules(cfg):
     which is the wrong direction for lost knowledge.
     """
     s = Safety(cfg)
+    s.set_dew_point(11.0)
     assert s.apply("heating", state(rl_hk01=25.0), "rl_hk01", 60.0) == (60.0, None)
     assert s.apply("cooling", state(rl_hk01=25.0), "rl_hk01", 60.0) == (60.0, None)
 
@@ -183,6 +187,90 @@ def test_set_dew_point_ignores_none(cfg):
     s.set_dew_point(12.7)
     s.set_dew_point(None)
     assert s.cooling_supply_limit() == pytest.approx(14.7)
+
+
+def test_cooling_stops_when_the_dew_point_is_unknown(cfg):
+    """Condensation is the one limit that cannot be bounded without measuring
+    the air, so no reading means no cooling - NOT a fall back to the static
+    guess, which is not conservative anyway (a 26 degC room at 60 % RH has a
+    dew point of 17.6 degC, above the 16.0 static value).
+
+    This also covers the case the HA-side automation cannot: if the dew point
+    is missing because Home Assistant died, its source-side pump shutdown died
+    with it and this is the only protection left.
+    """
+    s = Safety(cfg)
+    st = state(rl_hk01=20.0, vl_total=25.0)    # supply nowhere near dew point
+    assert s.apply("cooling", st, "rl_hk01", 60.0) == (0.0, "dew_point_unknown")
+
+
+def test_a_stale_dew_point_also_stops_cooling(cfg):
+    """Stale must read as absent - a dew point from an hour ago says nothing
+    about the air now, and acting on it is how the guard gets defeated."""
+    s = Safety(cfg)
+    st = state(rl_hk01=20.0, vl_total=25.0)
+    s.set_dew_point(11.0)
+    assert s.apply("cooling", st, "rl_hk01", 60.0) == (60.0, None)
+    s._dew_ts -= cfg["safety"]["dew_point_max_age_s"] + 1
+    assert s.apply("cooling", st, "rl_hk01", 60.0) == (0.0, "dew_point_unknown")
+
+
+def test_an_unknown_dew_point_does_not_stop_heating(cfg):
+    """Heating has no condensation risk; stopping it would be a bug."""
+    s = Safety(cfg)
+    assert s.apply("heating", state(rl_hk01=20.0, vl_total=30.0),
+                   "rl_hk01", 60.0) == (60.0, None)
+
+
+def test_requiring_a_dew_point_can_be_switched_off(cfg):
+    """For a deployment with no dew-point source, the static limit is all
+    there is - the behaviour before 2026-07-27."""
+    cfg["safety"]["cooling_requires_dew_point"] = False
+    s = Safety(cfg)
+    st = state(rl_hk01=20.0, vl_total=25.0)
+    assert s.apply("cooling", st, "rl_hk01", 60.0) == (60.0, None)
+    assert s.apply("cooling", state(rl_hk01=20.0, vl_total=15.9),
+                   "rl_hk01", 60.0) == (0.0, "vl_undertemp")
+
+
+def test_frost_protection_still_outranks_the_dew_point_rule(cfg):
+    """A burst pipe is unrecoverable; a missing dew point is not."""
+    s = Safety(cfg)
+    assert s.apply("cooling", state(rl_hk01=2.0, vl_total=25.0),
+                   "rl_hk01", 0.0) == (100.0, "frost_protect")
+
+
+# ---------- rule ORDER: known-bad supply outranks a faulted circuit sensor ----------
+
+def test_a_faulted_circuit_sensor_does_not_defeat_the_condensation_guard(cfg):
+    """Real ordering defect, fixed 2026-07-27.
+
+    Fail-open used to be checked first, so one faulted return sensor forced
+    its circuit open even while the SUPPLY was measurably below the dew point.
+    The two sensors are unrelated: a dead return sensor says nothing about
+    whether the supply water is safe, and opening into water known to condense
+    is the actively harmful choice.
+    """
+    s = Safety(cfg)
+    s.set_dew_point(14.0)                      # limit 16.0
+    st = state(vl_total=15.0)                  # supply known bad
+    st.faults.add("rl_hk01")                   # and the circuit sensor is dead
+    assert s.apply("cooling", st, "rl_hk01", 50.0) == (0.0, "vl_undertemp")
+
+
+def test_a_faulted_circuit_sensor_does_not_defeat_screed_protection(cfg):
+    s = Safety(cfg)
+    st = state(vl_total=60.0)
+    st.faults.add("rl_hk01")
+    assert s.apply("heating", st, "rl_hk01", 50.0) == (0.0, "vl_overtemp")
+
+
+def test_a_faulted_sensor_still_fails_open_when_the_supply_is_fine(cfg):
+    """The reordering must not quietly turn fail-open into fail-closed."""
+    s = Safety(cfg)
+    st = state(vl_total=30.0)
+    st.faults.add("rl_hk01")
+    assert s.apply("heating", st, "rl_hk01", 50.0) == (100, "sensor_fault:rl_hk01")
 
 
 def test_the_condensation_guard_uses_the_live_limit(cfg):

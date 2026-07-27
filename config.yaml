@@ -224,11 +224,13 @@ control:
   pid_return: {kp: 8.0,  ki: 0.02,  kd: 0.0, out_min: 0.0, out_max: 100.0}
 
   # When is a circuit's return temperature worth believing?
-  # A CLOSED circuit's RL sensor measures the slab it is buried in, not the
-  # water, and it drifts in whichever direction reads as "more demand" - so an
-  # ungated return PID hunts, on actuators that take minutes per stroke. Only
-  # affects circuits with `fitted: true`; open pipe always flows.
-  # See heatctl/rl_gate.py and docs/DESIGN.md section 4.
+  # The RL sensors sit on the return pipes AT THE MANIFOLD. With no flow a
+  # sensor stops measuring its circuit and drifts toward the manifold
+  # cabinet's ambient, i.e. roughly the header/system water temperature -
+  # which, when the target IS the system return, reads as "error zero, nothing
+  # to do". A closed circuit thus manufactures its own evidence to stay
+  # closed: silent lock-out. Only affects circuits with `fitted: true`; open
+  # pipe always flows. See heatctl/rl_gate.py and docs/DESIGN.md section 4.
   rl_gating:
     enabled: true
     min_opening_pct: 15.0   # PROVISIONAL - the Alpha 5 deadband is not yet
@@ -244,8 +246,20 @@ safety:
   setpoint_min_c: 15.0
   setpoint_max_c: 28.0
   vl_max_heating_c: 45.0       # screed protection: close valves on hot supply
-  vl_min_cooling_c: 16.0       # condensation guard - STATIC FALLBACK, used
-                               # only when no fresh dew point is available
+  # STATIC FALLBACK ONLY, and only reachable with cooling_requires_dew_point
+  # off. TREAT WITH SUSPICION: it arrived undocumented in the initial commit
+  # and it is not actually conservative - a 26 degC room at 60 % RH has a dew
+  # point of 17.6 degC, above this value. It looks like a safe floor and is
+  # not one.
+  vl_min_cooling_c: 16.0
+  # Cooling needs a dew point to be safe at all: condensation is the one limit
+  # that cannot be bounded without measuring the air. So no fresh reading ->
+  # no cooling, rather than falling back on the number above. This also
+  # matters most in exactly the case where the HA-side condensation automation
+  # cannot help: if the dew point is missing BECAUSE Home Assistant died, then
+  # its source-side pump shutdown died with it and this is the only protection
+  # left. Set false only for a deployment with no dew-point source at all.
+  cooling_requires_dew_point: true
   # Live dew-point supervision (mqtt.dew_point_topic). The condensation limit
   # is not physically a constant: it is the dew point of the indoor air. With
   # a fresh reading the limit becomes dew_point + margin, which cuts BOTH
@@ -253,6 +267,14 @@ safety:
   # a 12.7 degC dew point against the 16.0 static limit was shutting circuits
   # in no danger at all) and forbids supply the static value would have
   # allowed when it is humid.
+  # EMPIRICAL - matches the margin the HA loop has run at without
+  # condensation. It is not a screed-gradient correction: the floor build-up
+  # is vapour-permeable, so condensation happens throughout the slab and
+  # directly on the pipe wall, which is essentially at water temperature.
+  # Supply temperature is therefore very nearly the surface that matters, with
+  # no hidden reserve behind it. The margin covers measurement error and the
+  # spread of indoor dew point between rooms. And note condensation inside the
+  # slab is INVISIBLE - nothing will prompt anyone to notice it.
   dew_point_margin_c: 2.0
   dew_point_max_age_s: 900     # older than this -> fall back to the static value
   vl_min_cooling_floor_c: 12.0 # hard floor on what a dew-point reading may

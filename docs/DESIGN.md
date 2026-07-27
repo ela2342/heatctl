@@ -178,11 +178,45 @@ The stove is manually fired; control can only *detect* it:
   owner for the logic).
 
 ### 3.5 Cooling safety (design gap to close, port of existing HA logic)
-- Chilled-water floor cooling requires dew-point supervision:
-  `VL_cool_min = max(config.vl_min_cooling_c, dew_point + margin)` with
-  the weather-station dew point via MQTT; stale data → fall back to the
-  static clamp, and if configured, stop cooling (current HA behavior:
-  stop + notify).
+- Chilled-water floor cooling requires dew-point supervision.
+  **IMPLEMENTED 2026-07-27, and deliberately NOT as first specified here.**
+  Two changes, both from measurement:
+
+  1. `VL_cool_min = dew_point + margin`, **not**
+     `max(config.vl_min_cooling_c, dew_point + margin)`. Taking the max makes
+     live data useless in the dry direction — it can only tighten the static
+     guess, never relax it. Measured: an 11.4 °C indoor dew point was being
+     clamped to 16.0 °C, holding circuits shut with 4.6 K of headroom spare.
+  2. **INDOOR dew point, not the weather station.** Outdoor is frequently
+     higher and would forbid cooling that is perfectly safe indoors. Source is
+     the highest indoor dew point across rooms reporting humidity, with
+     outdoor only as a last-resort fallback.
+
+  On a stale or missing reading heatctl now **stops cooling**
+  (`cooling_requires_dew_point`, default on) rather than falling back to the
+  static clamp. The static `vl_min_cooling_c` arrived undocumented in the
+  initial commit and is **not** conservative — a 26 °C room at 60 % RH has a
+  dew point of 17.6 °C, above it. It looks like a safe floor and is not one.
+  This also covers the case the HA-side automation cannot: if the dew point
+  is missing *because Home Assistant died*, its source-side pump shutdown
+  died with it, and the valve side is the only protection left.
+
+  The margin is empirical — it matches the HA loop that has run without
+  condensation. Note it is a margin on the *right* quantity, though:
+  **the floor build-up is vapour-permeable, so condensation is not confined
+  to the visible floor surface. Moist air reaches into the slab and condenses
+  throughout it, including directly on the pipe wall** — and the pipe wall
+  sits essentially at the water temperature. So supply water temperature is
+  very nearly the surface that matters, not a proxy for it standing off behind
+  a screed gradient. There is no hidden reserve to lean on.
+
+  Two consequences worth stating plainly:
+  - The margin covers measurement uncertainty and the spatial spread of indoor
+    dew point between rooms. It does not need to cover a screed gradient,
+    because there effectively is not one at the relevant surface.
+  - Condensation inside the slab is invisible. Nobody will notice a wet patch
+    and intervene, which is a further argument for stopping cooling outright
+    when the dew point is unknown rather than trusting a static guess.
 - The HP chilling setpoint (P04) follows the same rule; heatctl owns it
   post-migration.
 
@@ -227,23 +261,40 @@ inner loop (per circuit, ~1–3 min):
   match room loss ∝ (T_room − AT), i.e. `RL − T_room = m·(T_room − AT)`
   — the curve is just this line with a default slope; layer 2 can learn m
   per room from logged data (§7.3) and override via `rl_target`.
-- Observability rule: a closed circuit's RL sensor reads slab ambient, not
-  loop state. Periodically flush closed loops (interval scheduled by AT,
-  order of 1–5 h) and re-measure during a fixed open window before
-  trusting RL again. Without this, RL-based control acts on stale
-  fiction. (A slab temp sensor per zone would remove the need — §10.)
+- Observability rule: the RL sensors are on the return pipes **at the
+  manifold**, so a circuit with no flow is not measured at all — its sensor
+  drifts toward the manifold cabinet's ambient, which is dominated by the
+  flow/return headers and therefore sits near the system water temperature.
+  (Corrected 2026-07-27; this section previously said "slab ambient" and the
+  code reasoned from that, wrongly.)
 
-  **This is already a live defect, not only a WP-C feature.**
-  `Controller.step` in `heatctl/main.py` feeds `state.temps[sensor]` into the
-  per-circuit return PID unconditionally, with no gating on valve position.
-  And because every room currently has an empty `room_temp_topic`,
-  `ControlPlane.room_temp` always returns `None`, so *all* control today runs
-  through exactly that fallback path — i.e. the whole controller is presently
-  acting on RL readings that are invalid whenever a valve is closed. A
-  minimal mitigation (don't trust RL below some opening threshold; hold the
-  last valid value or fall back to the curve default instead) is worth doing
-  before WP-C, since the two wired PoC circuits will hit this immediately.
-  See PLAN.md Milestone 1.
+  The consequence is **lock-out, not oscillation**, and lock-out is worse
+  because it is silent: with the interim `system_return` target, a stagnant
+  sensor reads ≈ the header temperature ≈ the target, so the error is ≈ 0 and
+  the controller concludes there is nothing to do. A closed circuit
+  manufactures its own evidence to stay closed. This is the sensor-side view
+  of the same "all valves closed is a valid equilibrium" problem that
+  `system_return_bias_c` was added to paper over.
+
+  So periodically flush closed loops (interval scheduled by AT, order of
+  1–5 h) and re-measure during a fixed open window before trusting RL again.
+  The flush is the load-bearing part: holding the last good command alone
+  would preserve the lock-out forever. (A slab temp sensor per zone would
+  remove the need — §10.)
+
+  **RESOLVED 2026-07-27** in `heatctl/rl_gate.py` (PLAN.md Milestone 1). RL
+  counts only after the valve has been commanded past `min_opening_pct` for
+  `settle_s` — valve stroke *plus* hydraulic transport, per §4.1.5. Otherwise
+  the circuit holds its last known-good command and is re-opened every
+  `flush_interval_s` for one honest reading. Never-measured is treated as lost
+  knowledge, so the caller falls back to fail-open; that also makes start-up
+  self-healing without a special case, and avoids a multi-minute full-open on
+  every deploy. Circuits marked `fitted: false` in config.yaml are always
+  trusted — they are open pipe, so flow does not follow the command and
+  gating them would be a fiction of its own.
+
+  This was a live defect, not merely a WP-C gap: with every `room_temp_topic`
+  empty at the time, *all* control ran through this fallback path.
 - Fallbacks (each is the same controller with a input frozen, not a
   different mode): no room sensor → outer loop frozen at curve default
   (heat only if AT forecast says the room needs it); no RL sensor → outer

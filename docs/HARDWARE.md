@@ -145,6 +145,33 @@ outputs with its safe state - heatctl does not currently do this (it treats
 `IOState.valves_pct` as the last *commanded* value).
 
 ## Sensor assignment (750-463, channel n = input register 11+n)
+
+### Where these sensors physically are - READ THIS BEFORE USING RL IN CONTROL
+The per-circuit RL sensors are clamped to the **return pipes at the
+manifold**. They are NOT in the slab and not distributed through the floor.
+
+That placement decides what a reading means when its circuit is not flowing:
+the sensor stops measuring the circuit entirely and equilibrates toward the
+**manifold cabinet's ambient**, which is dominated by the flow and return
+headers running past it - so it drifts toward roughly the system water
+temperature, not toward slab or room temperature.
+
+Consequence, and it is not the intuitive one: this causes **lock-out, not
+oscillation**. With the interim `system_return` target (each circuit aims at
+the mixed system return), a stagnant sensor reads ≈ header temperature ≈ the
+target, so the error is ≈ 0 and the controller concludes there is nothing to
+do. A closed circuit manufactures its own evidence to stay closed, silently
+and indefinitely. This is the sensor-side view of the "all valves closed is a
+valid equilibrium" problem that `system_return_bias_c` papers over.
+
+Handled by `heatctl/rl_gate.py`: RL is only trusted after the circuit has been
+commanded open long enough for water to have travelled it, and a held-closed
+circuit is flushed periodically to take one honest reading. The flush is the
+load-bearing part - holding alone preserves the lock-out.
+
+(Recorded 2026-07-27 after the code and docs had asserted "a closed circuit's
+RL sensor reads slab ambient" and reasoned from it. That was wrong.)
+
 | Ch | Sensor    | Location                                   |
 |----|-----------|--------------------------------------------|
 | 1  | rl_hk01   | return, circuit 1 - Gästebad               |

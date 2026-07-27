@@ -1,18 +1,35 @@
 """Return-temperature validity gating.
 
-A closed circuit's RL sensor measures slab ambient, not loop water. Feeding
-that number to a return-temperature PID is not merely inaccurate, it is
-actively destabilising, and in the same direction in both modes:
+The sensors sit ON THE RETURN PIPE AT THE MANIFOLD, not in the slab. That
+detail decides the whole failure mode, so it is worth being precise about
+(corrected 2026-07-27; an earlier version of this file claimed slab ambient
+and reasoned from it, wrongly).
 
-  heating: valve closes -> RL drifts DOWN toward slab -> "too cold, needs
-           heat" -> valve opens -> real RL appears, warm -> valve closes ...
-  cooling: valve closes -> RL drifts UP toward slab   -> "too warm, needs
-           cooling" -> valve opens -> real RL appears, cold -> valve closes ...
+With no flow through its circuit, such a sensor stops measuring that circuit
+at all and equilibrates toward the manifold cabinet's ambient - which is
+dominated by the flow and return headers running past it, i.e. it drifts
+toward roughly the system water temperature.
 
-So the failure mode is a self-sustaining hunt on actuators that take minutes
-per stroke. This matters more than it looks: every `room_temp_topic` that is
-unset falls through to exactly this per-circuit path, so for most rooms it is
-the *only* control path there is.
+That produces LOCK-OUT, not oscillation, and lock-out is the worse of the
+two because it is silent:
+
+    target = mixed system return (`return_setpoint_source: system_return`)
+    stagnant sensor -> reads ~header temperature -> ~= the target
+    -> error ~= 0 -> "nothing to do" -> the circuit stays shut forever
+
+A closed circuit therefore manufactures its own evidence that it should stay
+closed. This is the same phenomenon `system_return_bias_c` was added to paper
+over - "all valves closed" being a valid equilibrium - seen from the sensor
+side. With a fixed target instead of system-return tracking it can fall
+either way depending on header temperature, but the stagnant reading is
+fiction in both cases.
+
+It matters more than it looks: every room whose `room_temp_topic` is unset
+falls through to exactly this per-circuit path, so for most of the house it
+is the *only* control path there is.
+
+The consequence for the design below: the periodic FLUSH is the load-bearing
+part, not the hold. Holding alone would preserve the lock-out.
 
 The rule implemented here: RL means something only after the valve has been
 commanded meaningfully open for long enough that water has actually travelled
@@ -33,9 +50,10 @@ Two deliberate choices:
   a fiction of its own. Config marks this per valve channel.
 
 Safety is NOT gated by any of this. `Safety.apply` reads RL for frost
-protection, and slab ambient is a perfectly good frost indicator - arguably a
-better one than loop water. Control proposes, safety decides, and safety keeps
-seeing the raw measurement.
+protection, and a manifold-ambient reading is still a real temperature from a
+real place in the building - if it is near freezing, something is wrong and
+opening is right. Control proposes, safety decides, and safety keeps seeing
+the raw measurement.
 """
 from __future__ import annotations
 

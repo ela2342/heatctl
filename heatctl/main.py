@@ -71,8 +71,9 @@ class Controller:
         # Must run after the PIDs exist: mode decides their direction.
         self._apply_mode(self.mode, reset=False)
 
-        # A closed circuit's RL sensor reads slab ambient, not loop water -
-        # see rl_gate.py for why feeding that to the PID makes it hunt.
+        # The RL sensors are at the manifold, so a circuit with no flow is not
+        # measured at all - see rl_gate.py for why feeding that to the PID
+        # locks the circuit shut.
         self.rl_gate = RLGate(cfg)
 
         self.db = self._open_db(cfg["logging"]["state_db"])
