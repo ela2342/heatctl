@@ -223,6 +223,34 @@ control:
   pid_room:   {kp: 25.0, ki: 0.005, kd: 0.0, out_min: 0.0, out_max: 100.0}
   pid_return: {kp: 8.0,  ki: 0.02,  kd: 0.0, out_min: 0.0, out_max: 100.0}
 
+  # Source demand and minimum flow - ONE decision, see docs/DESIGN.md 4.3.
+  # Aggregate per-ROOM deviation into a signed house demand (too cold ->
+  # heating, too warm -> cooling) and engage the source only when that demand
+  # is big enough that the resulting valve openings keep the pump above its
+  # minimum flow. Below that, run nothing and let the rooms coast.
+  source_demand:
+    # SHADOW MODE. heatctl computes and publishes this on heatctl/demand/#
+    # but acts on none of it. Two reasons to leave it off: the heat pump's
+    # register still has another writer (the HA automations - single-writer is
+    # a hard rule), and this logic should be watched against the real plant
+    # before it owns anything. Turn on as part of the WP-B migration, in one
+    # step, together with disabling those automations.
+    enabled: false
+    auto_mode: false        # also let it pick heating vs cooling
+    # Flow floor as MEAN opening across all water-carrying circuits, counting
+    # unactuated ones as 100 % (they are open pipe). 40 % is the owner's
+    # measured figure - below it the system runs into trouble and eventually
+    # the pump's own Er03 water-flow failsafe. Today the mean sits near 79 %
+    # because seven of nine circuits have no actuator, so no stall is
+    # possible; it falls naturally as actuators are fitted.
+    min_open_pct: 40.0
+    engage_deviation_c: 0.3 # how far off target before the source is worth it
+    mode_deadband_c: 1.0    # PLANT-level only - rooms keep one target each.
+                            # Without it the plant flaps around the average.
+    mode_dwell_s: 3600      # and the average must persist this long
+    min_on_s: 600           # anti-short-cycle. The compressor already cycles
+    min_off_s: 600          # ~10 min on / ~9 min off unaided.
+
   # When is a circuit's return temperature worth believing?
   # The RL sensors sit on the return pipes AT THE MANIFOLD. With no flow a
   # sensor stops measuring its circuit and drifts toward the manifold

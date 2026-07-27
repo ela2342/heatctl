@@ -176,8 +176,29 @@ Room sensors still arrive via MQTT regardless of this choice.
       closed. Which is why the periodic flush, not the hold, is the
       load-bearing part of the fix.
       Full scheduled flush-and-remeasure remains docs/DESIGN.md section 4.
-- [ ] Heat-demand logic (replaces the HA automations "Steuerung der
-      Wasserpumpe..."). DESIGN REVISED 2026-07-27, owner's decision - see
+- [~] Heat-demand logic (replaces the HA automations "Steuerung der
+      Wasserpumpe..."). **Logic built and running in SHADOW MODE 2026-07-27**
+      (`heatctl/demand.py`, `control.source_demand`, 21 tests). It computes
+      house deviation, the flow proxy, the mode it would pick and whether it
+      would run the source, and publishes all of it - including HA entities
+      `binary_sensor.heatctl_source_request_shadow`,
+      `sensor.heatctl_house_deviation`,
+      `sensor.heatctl_circuit_opening_flow_proxy` and
+      `sensor.heatctl_source_decision` - while acting on NOTHING.
+      First live cycle agreed with the plant: house -0.59 K, flow proxy 75 %,
+      "demand -0.59 K, flow 75%" -> source ON, and the real pump request was
+      also on.
+      Flow floor is the owner's measured 40 % mean opening, counting
+      unactuated circuits as 100 % because they are open pipe. That is why the
+      proxy reads ~75 % today and why no stall is possible yet.
+      REMAINING, and to be done as ONE migration with the owner present:
+      set `source_demand.enabled` (and `auto_mode` if wanted), have heatctl
+      write WSDEV0001 register 0 bit 0 - which needs a second Modbus client,
+      to the Waveshare RTU gateway, not the WAGO coupler - and disable
+      `Heat pump: circulation pump request` in HA in the same step. Watch the
+      shadow entities against `binary_sensor.heat_pump_pump_request` first;
+      they should track before anything is switched over.
+      DESIGN, owner's decision 2026-07-27 - see
       docs/DESIGN.md 4.3 for the full reasoning. It is NOT "request the pump
       when sum of valve openings > X": source demand and minimum-flow
       protection are ONE problem. Aggregate per-ROOM deviation into a signed

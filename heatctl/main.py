@@ -27,6 +27,7 @@ from pathlib import Path
 import yaml
 
 from .backends.base import make_backend
+from .demand import DemandController
 from .mqtt_plane import ControlPlane
 from .pid import PID
 from .rl_gate import FLUSH, MEASURE, RLGate
@@ -75,6 +76,13 @@ class Controller:
         # measured at all - see rl_gate.py for why feeding that to the PID
         # locks the circuit shut.
         self.rl_gate = RLGate(cfg)
+
+        # House demand / source engagement. SHADOW by default: it computes and
+        # publishes, and nothing acts on it. The heat pump still has another
+        # writer (the HA automations) until WP-B, and single-writer is a hard
+        # rule - see docs/DESIGN.md 2.1 and 4.3.
+        self.demand = DemandController(cfg)
+        self._last_demand = None
 
         self.db = self._open_db(cfg["logging"]["state_db"])
         self._cycle = 0
@@ -195,6 +203,17 @@ class Controller:
         self._last_return_sp = return_sp
 
         now = time.monotonic()
+
+        # House demand / source engagement. Computed from the PREVIOUS cycle's
+        # valve positions, which is correct: the flow proxy describes the
+        # manifold as it currently stands, not as this cycle is about to
+        # command it.
+        room_temps = {r["name"]: t for r in self.rooms
+                      if (t := self.plane.room_temp(r["name"])) is not None}
+        self._last_demand = self.demand.step(
+            self.mode, self.room_setpoints, room_temps,
+            state.valves_pct, now)
+
         for room in self.rooms:
             n = room["name"]
             room_t = self.plane.room_temp(n)
@@ -310,6 +329,22 @@ class Controller:
         for n in state.valve_mismatch:
             await self.plane.publish(
                 f"valve_mismatch/{n}", f"{state.valves_readback_pct[n]:.0f}")
+
+        # Demand telemetry. Published even while the demand controller is in
+        # shadow mode - that is the whole point of shadow mode: watch what it
+        # WOULD do against what the HA automations actually do, before it owns
+        # the heat pump.
+        d = self._last_demand
+        if d is not None:
+            await self.plane.publish("demand/source_request",
+                                     "1" if d.source_request else "0")
+            await self.plane.publish("demand/reason", d.reason)
+            await self.plane.publish("demand/mode", d.mode)
+            if d.mean_deviation_c is not None:
+                await self.plane.publish("demand/deviation",
+                                         f"{d.mean_deviation_c:+.2f}")
+            if d.open_pct is not None:
+                await self.plane.publish("demand/open_pct", f"{d.open_pct:.0f}")
 
     # ---------- history for system identification (layer 2) ----------
     def _open_db(self, path: str) -> sqlite3.Connection:

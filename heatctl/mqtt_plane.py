@@ -201,6 +201,28 @@ class ControlPlane:
         for ch in self.cfg["valves"]["channels"]:
             await sensor(ch["name"], ch["name"], f"valve/{ch['name']}", "%")
 
+        # --- house demand / source engagement (diagnostic) ---
+        # Discovered even while the demand controller is in shadow mode: the
+        # entire point of shadow mode is being able to plot what heatctl WOULD
+        # command against what the HA automations actually do, before it takes
+        # the heat pump over. Compare `heatctl_source_request` against
+        # `binary_sensor.heat_pump_pump_request`.
+        await disc("binary_sensor", "source_request", {
+            "name": "Source request (shadow)",
+            "state_topic": f"{self.base}/demand/source_request",
+            "payload_on": "1", "payload_off": "0",
+            "entity_category": "diagnostic",
+        })
+        await sensor("demand_deviation", "House deviation",
+                     "demand/deviation", "K")
+        await sensor("demand_open_pct", "Circuit opening (flow proxy)",
+                     "demand/open_pct", "%")
+        await disc("sensor", "demand_reason", {
+            "name": "Source decision",
+            "state_topic": f"{self.base}/demand/reason",
+            "entity_category": "diagnostic",
+        })
+
         # --- controls (write side of the MQTT contract) ---
         await disc("select", "mode", {
             "name": "Mode",
