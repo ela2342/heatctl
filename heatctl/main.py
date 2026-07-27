@@ -523,12 +523,19 @@ class Controller:
                 f"valve_mismatch/{n}", f"{state.valves_readback_pct[n]:.0f}")
 
         # The signals the evaluation in docs/DESIGN.md 4.5 is built on.
-        lw, rw = self.hp.status.get(0x8012), self.hp.status.get(0x800E)
+        # Leaving/return spread: the efficiency indicator. Maximising flow
+        # minimises it, which is the whole point of the distribution design.
+        # Decoded through the register map, NEVER with a hardcoded factor:
+        # return water is scaled 0.1 and leaving water 0.5, four registers
+        # apart. A first version of this used 0.5 for both and published 84 K
+        # when the true spread was 0 - a plausible-looking number, which is
+        # exactly the failure heatpump_map.py warns about.
+        lw_reg = hpm.by_name("leaving_water")
+        rw_reg = hpm.by_name("return_water")
+        lw, rw = self.hp.status.get(lw_reg.addr), self.hp.status.get(rw_reg.addr)
         if lw is not None and rw is not None:
-            # Leaving/return spread: the efficiency indicator. Maximising flow
-            # minimises this, which is the whole point of the distribution
-            # design (distribution.py).
-            await self.plane.publish("hp/spread", f"{rw * 0.5 - lw * 0.5:.1f}")
+            spread = hpm.decode(rw_reg, rw) - hpm.decode(lw_reg, lw)
+            await self.plane.publish("hp/spread", f"{spread:.1f}")
         amps = self.hp.status.get(0x8025)
         if amps is not None:
             # Rough electrical power. Compressor current x mains voltage - the

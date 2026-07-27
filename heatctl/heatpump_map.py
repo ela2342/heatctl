@@ -152,3 +152,13 @@ def encode(reg: Reg, value: float) -> int:
     """Engineering units -> raw register value, for writes."""
     raw = int(round(value / reg.scale))
     return raw & 0xFFFF if raw >= 0 else (raw + 0x10000) & 0xFFFF
+
+
+def by_name(name: str) -> Reg:
+    """Look a register up by name. Use this rather than hardcoding an address
+    and a scale at the call site - the scales are per register and getting one
+    wrong produces a plausible number rather than an obvious error."""
+    for reg in (*STATUS, *WRITABLE):
+        if reg.name == name:
+            return reg
+    raise KeyError(name)

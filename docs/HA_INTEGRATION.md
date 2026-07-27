@@ -169,3 +169,25 @@ block - so the absence of YAML is not evidence that recording is off. That
 mistake was made and corrected on 2026-07-27. Verified by querying Influx
 directly: heatctl circuits, setpoints and heat pump registers all landing at
 full resolution. Grafana add-on is installed alongside.
+
+## Dashboard
+
+`heatctl-overview` ("Heizung", in the sidebar). One screen, deliberately not a
+dump of the ~94 entities heatctl publishes. What it shows and why:
+
+| Section | Content | Why these |
+|---|---|---|
+| Badges | Heat pump fault and plant/pump mode conflict — **hidden unless active** — plus outdoor temperature and dew point | Faults must be impossible to miss but must not occupy space while everything is fine |
+| Status | Mode, house deviation, **spread**, and the two decision strings verbatim | The spread is the efficiency KPI (docs/DESIGN.md 4.5). The decision strings say *why* the plant is doing what it is doing, which no gauge can |
+| Ventile | Only circuits 1 and 2, labelled as the only ones with actuators | Showing twelve bars would imply twelve working valves. Ten of those commands go to outputs with nothing attached, so the number is real but the valve is not |
+| Räume | The three `climate.heatctl_*` with target-temperature control | The only rooms with an air sensor. Rooms without one are absent rather than shown inert |
+| Wärmepumpe | Fault, compressor, cooling setpoint (adjustable), leaving/return water, power estimate | Enough to see whether the source is working and to trim it by hand |
+| Verlauf | Room temperatures 24 h; water temperatures and dew point 24 h | The two questions history actually answers: is comfort being delivered, and is the water where it should be relative to the condensation limit |
+
+Deliberately NOT on it: the ~40 heat-pump diagnostic sensors, all twelve return
+temperatures, the raw registers, valve read-backs, the flow proxy and peak
+demand. They are recorded in InfluxDB and available for a graph when a question
+needs them — putting them here would bury the six things that matter.
+
+The power figure is `compressor current × 230 V` and is labelled as an
+estimate. It ignores fans and pump and is not metered.

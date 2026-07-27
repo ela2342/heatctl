@@ -353,3 +353,20 @@ async def test_sync_mode_refuses_before_the_config_has_been_read(hp):
     h, c, _ = hp()
     assert await h.sync_mode("cooling") is False
     assert c.writes == []
+
+
+def test_by_name_returns_the_register_with_its_own_scale():
+    """Real defect, 2026-07-27: the leaving/return spread was computed with a
+    hardcoded 0.5 for both registers and published 84 K when the true spread
+    was 0. Return water is 0.1 and leaving water 0.5, four registers apart -
+    a hardcoded factor gives a plausible-looking wrong answer, which is the
+    worst kind. Call sites look registers up instead."""
+    rw, lw = hm.by_name("return_water"), hm.by_name("leaving_water")
+    assert (rw.scale, lw.scale) == (0.1, 0.5)
+    # The live readings that exposed it: both are 21.0 degC, spread 0.
+    assert hm.decode(rw, 210) - hm.decode(lw, 42) == 0.0
+
+
+def test_by_name_rejects_an_unknown_register():
+    with pytest.raises(KeyError):
+        hm.by_name("no_such_register")
