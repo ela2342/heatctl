@@ -307,8 +307,9 @@ inner loop (per circuit, ~1–3 min):
 
 ### 4.3 Source demand and minimum flow
 
-**CORRECTED 2026-07-27 (owner).** The section below was written on a wrong
-model of the plant and is kept because the correction is the useful part.
+**CORRECTED 2026-07-27 (owner)**, replacing an earlier design built on a wrong
+model of the plant. What that design got wrong, and why, is recorded as D-016 -
+the reasoning is worth keeping even though the text is not.
 
 **The unit regulates itself.** It starts and stops its own compressor and
 varies its power from the spread between leaving and return water. **Powering
@@ -332,7 +333,7 @@ So the control hierarchy is:
 3. **The unit's own compressor control** — the fine modulation, which is not
    ours to do.
 
-Two consequences that invalidate the original design below:
+Two consequences, and they are what invalidated the earlier design:
 
 - **"Satisfied" is not a reason to stop.** The unit idles its own compressor
   and costs almost nothing; power-cycling a heat pump is expensive and slow.
@@ -342,72 +343,23 @@ Two consequences that invalidate the original design below:
   so the plant would have been switched off in response to heatctl's own
   decision.
 
-`source_demand` is therefore a *reconciler* — it holds the unit powered and
-only powers down on an explicit `off` — not a controller. Still to do:
-enforcing the flow floor as a valve floor. It does not bite yet, because eight
-of ten circuits have no actuator and cannot throttle at all, so the mean
-opening sits near 82 %.
+And one principle from that earlier design that survives it intact, because it
+is about the *input* rather than the mechanism:
 
----
-
-#### Original framing, superseded
-
-
-Owner's decision, 2026-07-27. Recorded here because the coupling is the whole
-point and it is easy to implement the two halves separately and get a plant
-that stalls.
-
-**The hazard.** The actuators are NC and every circuit will eventually have
-one. "All rooms satisfied" therefore means "every valve shut", which deadheads
-the only circulation pump in the system. The heat pump does have a last-resort
-failsafe for this — **Er03, water flow failure** — but designing up to it is
-wrong: it is an error state, it stops the compressor, and repeatedly tripping a
-protective cut-out is not a control strategy. Avoid it from the outset.
-
-  *Er03 is not hypothetical.* Observed 25 times in the 10 days to 2026-07-27,
-  each lasting ~10 s, coincident with compressor stops (at 08:02 it preceded
-  the stop by 10 s, i.e. it caused it). Note this is happening with the pump at
-  100 % and seven of nine circuits permanently open pipe — so today it is *not*
-  a valve-position problem, and something else (flow-switch behaviour around
-  compressor transitions, or genuinely marginal flow) is triggering it. Worth
-  understanding before adding valve-driven flow restriction on top.
-
-**The design.** Do not gate the source on valve openings alone, and do not pick
-the mode independently of whether the source will run. Instead:
-
-1. Aggregate the per-room deviations from target into a signed house demand:
-   too cold on average → heating, too warm on average → cooling.
-2. Engage the source **only when that demand is large enough that the valve
-   openings it implies keep flow above the pump's minimum.** Below that, run
-   nothing: a house that is 0.2 K off target does not need the plant on, and
-   trying to serve it is exactly the case that stalls the pump.
-3. Once engaged, hold enough total opening to stay above the flow floor.
-
-So the "should the source run" question and the "will there be flow" question
-have the same answer, by construction, instead of being two interlocks that can
-disagree.
-
-**Traps, all of them load-bearing:**
 - **Compute demand from ROOM deviation, never from valve position.** Valves
-  close for safety reasons (dew point, screed overtemp) that have nothing to do
-  with whether the house wants heat. Gating the source on Σ openings would read
-  a safety closure as "no demand", stop the source, and prevent the supply
-  temperature from ever recovering — a latch-up, and the same shape of bug as
-  the condensation latch that took cooling out on 2026-07-26.
-- **Mode selection needs a deadband and a long dwell**, or the plant flaps
-  between heating and cooling around a single average. Note this does NOT
-  reintroduce a per-room deadband — rooms keep one target each (owner's
-  decision); the deadband belongs to the plant-level mode choice.
-- **The coupler watchdog's fail-closed trip becomes a stall source** once every
-  circuit is actuated: a trip zeroes all outputs, NC actuators shut, pump
-  deadheads. Today it is safe only because most circuits are open pipe. This
-  must be revisited in the same breath as fitting the remaining actuators —
-  see ROADMAP.md Milestone 0.
-- **The minimum-flow figure is unknown.** Neither the number of circuits nor
-  the total opening percentage that satisfies the pump has been measured. It
-  has to be established before this logic can be tuned rather than guessed.
-- **Single-writer still applies**: heatctl must not write WSDEV0001 register 0
-  while the HA automations do. One atomic migration, then disable them.
+  also close for safety reasons — dew point, screed overtemp — which say
+  nothing about whether the house wants heat. Gating on valve openings would
+  read a condensation closure as "no demand", stop the source, and prevent the
+  supply from ever recovering: the same shape of latch-up as the condensation
+  bug that took cooling out of service on 2026-07-26.
+
+`source_demand` is therefore a *reconciler* — it holds the unit powered and
+only powers down on an explicit `off` — not a controller.
+
+Keeping flow up is **§4.4's** job, not this one's: normalising the demand set
+so the most-demanding circuit is fully open maximises flow as a matter of
+course, which is why the pump's minimum stopped needing a defensive mechanism
+at all.
 
 ### 4.4 Valve distribution — maximise flow, minimise spread
 
