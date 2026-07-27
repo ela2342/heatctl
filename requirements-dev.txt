@@ -1,0 +1,6 @@
+# Test-only dependencies. Deliberately NOT in requirements.txt: the runtime
+# dependency set is part of the 30-year-maintainability promise and stays at
+# pymodbus + PyYAML + aiomqtt.
+-r requirements.txt
+pytest>=8,<9
+pytest-asyncio>=0.24,<2

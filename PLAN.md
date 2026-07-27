@@ -98,15 +98,32 @@ Room sensors still arrive via MQTT regardless of this choice.
       deploy/systemd/README.md).
 
 ## Milestone 1 - harden layer 1
-- [ ] pytest suite: PID (step response, anti-windup, invert), Safety (frost,
-      overtemp, sensor fault, stale), MqttIOBackend staleness promotion,
-      backend contract test run against both backends with fakes.
-      Two regression tests this suite MUST include, both from real defects:
+- [x] pytest suite (2026-07-27, 88 tests, ~2 s): PID (direction, invert,
+      anti-windup, clamping), Safety (every rule, asserted by *direction* -
+      fail-open vs fail-closed), Controller (mode wiring, both control paths,
+      staleness, telemetry, system-return tracking), modbus_direct against a
+      fake coupler (availability rules, backoff, watchdog recovery, decoding),
+      and config.yaml self-consistency. Run: `pip install -r
+      requirements-dev.txt && pytest`.
+      Both mandated regressions are in and were **mutation-verified** - each
+      was re-broken and the suite confirmed to fail:
       (a) starting in `mode: cooling` from config must invert the PIDs -
       `Controller.__init__` applied the mode to the setpoints but not to
       `pid.invert`, so config-configured cooling ran in the heating
       direction (fixed 2026-07-26, found by hardware test, not by reading);
       (b) modbus_direct reconnect/backoff behaviour, see below.
+      Plus three more from real defects: the watchdog trigger toggle
+      (2026-07-27 outage), failsafe log throttling, and staleness honesty on
+      a failed read.
+      Still uncovered, deliberately: MqttIOBackend staleness promotion and a
+      shared backend contract test across both backends - `mqtt_io` is not in
+      use (docs/MODBUS2MQTT.md) and testing it now would pin down an
+      interface nobody exercises. Do it if that backend is ever revived.
+- [x] Writing the suite immediately found a latent defect (2026-07-27):
+      `read_state()` requested `len(channels)` registers but indexed the reply
+      by channel *index*, so any config.yaml listing a subset of channels
+      crashed the loop with IndexError every cycle - a `cycle_error`, not a
+      graceful degradation. Now reads up to the highest index.
 - [ ] Valve output read-back verification: heatctl treats
       `IOState.valves_pct` as the last *commanded* value and never reads the
       coupler back, so it cannot notice that the WAGO Modbus watchdog has

@@ -74,6 +74,14 @@ class ModbusDirectBackend(IOBackend):
         self.sensor_base = cfg["sensors"]["base_register"]
         self.sensor_channels = cfg["sensors"]["channels"]
         self.sensors = [c for c in self.sensor_channels if c.get("enabled", True)]
+        # Read as far as the highest channel INDEX, not as many registers as
+        # there are channel entries. Those differ the moment config.yaml lists
+        # a subset - e.g. only the channels that are wired - and indexing a
+        # short reply by channel index then raises IndexError, which surfaces
+        # as a per-cycle "cycle_error" crash rather than any sane degradation.
+        # config.yaml is hand-edited hardware truth; it must not be able to
+        # crash the loop by being terse.
+        self.sensor_count = max(c["index"] for c in self.sensor_channels)
 
         self.valve_base = cfg["valves"]["base_register"]
         self.valves = {c["name"]: c for c in cfg["valves"]["channels"]}
@@ -226,7 +234,7 @@ class ModbusDirectBackend(IOBackend):
         assert self.client is not None
         try:
             rr = await self.client.read_input_registers(
-                self.sensor_base, count=len(self.sensor_channels))
+                self.sensor_base, count=self.sensor_count)
         except Exception as e:
             log.warning("modbus read failed: %s", e)
             await self._watchdog_kick_after_error()

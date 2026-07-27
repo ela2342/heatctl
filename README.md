@@ -27,6 +27,15 @@ bridge is replaceable and the direct path stays as insurance.
     python -m venv venv && venv/bin/pip install -r requirements.txt
     venv/bin/python -m heatctl.main ./config.yaml
 
+## Tests
+    venv/bin/pip install -r requirements-dev.txt
+    venv/bin/pytest
+
+No hardware and no broker required — the coupler and the MQTT plane are faked.
+Every safety rule is tested by the *direction* of its failure (fail-open on
+lost knowledge, fail-closed on known-bad supply), and each regression test
+names the defect it came from.
+
 ## Configuration
 `config.yaml` is the single source of truth for register mapping, topology and
 safety limits, and is versioned. It carries **placeholder addresses**
