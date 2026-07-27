@@ -77,6 +77,26 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
       escalation is to stop the unit - the one place "measure of last resort"
       actually applies. Currently unimplemented: safety can starve the pump and
       nothing notices.
+- [ ] **Per-channel step test when fitting each actuator** - confirms fitment
+      AND mapping in one move, and costs one command step. Discovered by
+      accident 2026-07-27 while checking whether hk11 had an actuator.
+      Procedure: command channel n hard closed for ~5 min while the plant is
+      running with a spread, and watch `return_circuit_n`.
+        * ACTUATOR FITTED: flow stops, so the manifold-mounted return sensor
+          stops seeing its circuit and drifts UP toward header/cabinet
+          temperature - the stagnation signature rl_gate.py exists for. Clear
+          inflection within a couple of minutes.
+        * NOT FITTED (open pipe): the return keeps tracking supply with its
+          usual lag, straight through both edges, no inflection. This is what
+          hk11 did at 23:19:21 and 23:22:11 - the reason `fitted: false` is
+          corroborated by physics and not just by the flag.
+        * WRONG CHANNEL: a DIFFERENT circuit's return inflects. This is the
+          only cheap check that catches the index-shift class of bug (the one
+          that had the Arbeitszimmer PID driving circuit 7 until 2026-07-27),
+          and it catches it before the actuator is trusted rather than after.
+      Do it per channel as each actuator goes in, and flip `fitted: true` only
+      once the step test passes - not when the hardware is screwed on.
+
 - [ ] **The below-dew-point cooling limit has NO hysteresis, and it visibly
       limit-cycles.** Observed live 2026-07-27 23:19-23:23: supply fell through
       the limit (15.4 = dew 13.4 + 2.0), safety forced hk11 to 0, supply
