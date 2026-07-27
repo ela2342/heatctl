@@ -77,23 +77,25 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
       escalation is to stop the unit - the one place "measure of last resort"
       actually applies. Currently unimplemented: safety can starve the pump and
       nothing notices.
-- [ ] **Characterise the actuator, per TYPE not per valve.** Wanted:
-      `open_threshold_pct`, `settling_time_s`, and confirmation of
-      `full_open_pct`. Sequence, cheapest first:
-      (a) read the Alpha 5 datasheet for the voltage-to-position control range
-      - the top end is a device property and this is the only reliable source
-      for it (D-021);
-      (b) fit `open_threshold_pct` and `settling_time_s` PASSIVELY from logged
-      data (docs/DESIGN.md 7.3). No experiment, no disruption, and the
-      distribution design already sweeps each circuit's full range in normal
-      operation because the peak rotates between rooms;
-      (c) only if something is still missing, a dedicated sweep - watching the
-      HEAT PUMP's leaving/return spread rather than circuit RL, which saturates
-      early (D-021). Needs heating season for thermal contrast, and expect
-      cross-talk between circuits on the shared manifold.
-      **Do not lower `full_open_pct` from 100 without strong evidence** - the
-      error is asymmetric and too-low throws away flow (D-021).
-      Blocked on: actuators being fitted (only 2 of 12 today).
+- [~] **Actuator characterisation - LARGELY SETTLED from the datasheet
+      (2026-07-27, D-022).** The valves are Moehlenhoff Alpha 5
+      `APV 42505-00N`, and the APV variant has valve-travel detection: it
+      measures its own stroke and auto-adapts the active control-voltage
+      range, regulating internally for maximum stroke minus over-travel. So
+      the upper deadband the owner suspected is real but the DEVICE
+      compensates for it - `full_open_pct: 100` is correct physically, not
+      just the safe default. `open_threshold_pct: 5.0` comes from Umin
+      (0-0.5 V ignored to reject cable hum), and 30 s/mm x 5.0 mm = 150 s
+      full stroke confirms `rl_gating.settle_s: 300` has margin.
+      REMAINING, and much smaller than the original item: confirm on the real
+      plant once more actuators are fitted that the mapping behaves as the
+      datasheet says - a valve commanded 5 % should just begin to move, and
+      one commanded 100 % should be at its stop. Passive identification from
+      logged data (docs/DESIGN.md 7.3) is sufficient; no dedicated sweep.
+      Also worth knowing during build-out: a NEWLY fitted NC actuator holds
+      its valve OPEN via the First-Open function until it has determined its
+      closing point, regardless of what heatctl commands. Expect it; it is
+      not a fault.
 - [ ] **Tune `distribution.eps`.** The flow/discrimination trade-off, currently
       a guess at 5.0. First thing to revisit once there is recorded data - see
       the evaluation checklist in docs/DESIGN.md 4.5.

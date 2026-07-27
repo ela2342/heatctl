@@ -295,7 +295,15 @@ control:
     # once full_open_pct is a measured number, and there is a deadband at the
     # bottom that probably mirrors one at the top. Needs the actuators fitted
     # plus a characterisation run - see docs/DESIGN.md 4.5.
-    open_threshold_pct: 0.0
+    # MEASURED from the datasheet, not guessed (D-022). Moehlenhoff Alpha 5
+    # APV 42505-00N: 0-0.5 V is ignored to reject hum on long cables, so 5 %
+    # of the 0-10 V range does nothing at all. Above that the drive is active.
+    open_threshold_pct: 5.0
+    # 100 is correct for a PHYSICAL reason, not merely the safe default: the
+    # APV variant has valve-travel detection and auto-adapts its active
+    # control-voltage range, regulating internally for maximum stroke minus
+    # over-travel. The upper deadband is real and the device already
+    # compensates for it - do not subtract it a second time.
     full_open_pct: 100.0
 
   # Load compensation: house demand -> water temperature setpoint. The third

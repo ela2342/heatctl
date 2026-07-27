@@ -266,35 +266,49 @@ commanded analog value is a *request*, not a measurement:
   somewhere between the old and new value. Any RL reading taken during that
   window reflects neither.
 
-Measurement needed per valve TYPE - not per valve. The physics is a property
-of the Alpha 5, not of circuit 7, and a per-circuit sweep costs ~10 min per
-step (stroke plus hydraulic transport), so twelve circuits is ~20 h of
-disrupted control. Two or three done properly is enough.
-Tracked in `BACKLOG.md`; prerequisite for the distribution design (D-017).
+**Model: Möhlenhoff Alpha 5 `APV 42505-00N`** (owner, 2026-07-27). Datasheet
+facts, which largely settle the deadband question:
 
-**`open_threshold_pct` - ramp up, find where RL first responds.** Sound: at
-zero flow the sensor sits at manifold ambient, so the first real flow moves it
-sharply toward VL. Large, unambiguous signal.
+| Property | Value |
+|---|---|
+| Control | 0–10 V DC, 24 V DC supply | 
+| Stroke | 5.0 mm |
+| Closing force | 100 N +5 % |
+| Direction | NC (spring closes when de-energised) |
+| Mean running time | **30 s/mm → 150 s full stroke** |
+| `Ventilwegerkennung` (valve travel detection) | **yes** — this is what the APV prefix means; APR is the variant without |
 
-**`full_open_pct` - do NOT infer this from "RL stops changing" (D-021).**
-That is what an earlier version of this file said and it is systematically
-wrong. RL is not a flow measurement, it is a heat-exchange measurement:
+**The actuator linearises itself, which is why the identity mapping is right.**
+Per the datasheet, an APV variant *"ermittelt der Antrieb den Ventilweg und
+passt automatisch den aktiven Steuerspannungsbereich an"* — it measures the
+actual valve travel and auto-adapts the active control-voltage range. It also
+determines the valve closing point fully automatically on first power-up,
+stores it across power interruptions, and re-checks it during operation.
+Internally it regulates for *"Maximalhub abzüglich Überhub"* — maximum stroke
+**minus over-travel** — so the over-elevation range visible on the
+characteristic curve is compensated inside the device, not by us.
 
-    RL ~= T_slab + (VL - T_slab) * exp(-NTU),   NTU = UA / (m_dot * cp)
+Consequence: `full_open_pct = 100` is correct for a physical reason, not merely
+the safe default (D-021, D-022). Do not go looking for an upper deadband to
+subtract; the drive has already subtracted it.
 
-As flow rises, NTU falls, exp(-NTU) -> 1, and RL asymptotes to VL. So
-dRL/d(opening) -> 0 at high openings for purely hydraulic reasons - the valve
-is still moving, RL has simply stopped reporting it. The procedure would find
-the knee at perhaps 60 % and record that as full open, which **throws away
-flow** - precisely what docs/DESIGN.md 4.4 exists to maximise. Prefer, in
-order: the vendor datasheet's control range; passive identification from
-logged data (docs/DESIGN.md 7.3); a sweep watching the HEAT PUMP's
-leaving/return spread and DC pump speed, which keep responding after circuit
-RL has saturated.
+**The one real lower deadband is `Umin`.** *"Im Bereich von 0 bis 0,5 V
+(Modell-abhängig) bleibt der Antrieb im Ruhezustand, um Brummspannungen durch
+lange Leitungslängen zu ignorieren."* 0.5 V of 10 V is **5 %**, so commands
+below that do nothing at all — hence `open_threshold_pct: 5.0`.
 
-**`settling_time_s` - full 0->100 and 100->0 stroke; take the slower.** Size it
-from the RL response, not a datasheet, because it must include hydraulic
-transport through the loop, not just the actuator.
+**`Totzeit` is a dead TIME, not a dead band.** The datasheet says the drive
+opens *"nach Ablauf der Totzeit"* — after a delay, then moves evenly. It feeds
+`settling_time_s`, not the voltage mapping. With 150 s of stroke plus that
+delay plus hydraulic transport, the configured `rl_gating.settle_s: 300` has
+comfortable margin.
+
+**Commissioning note.** *"Im Auslieferungszustand halten NC- und NO-Antriebe
+das Ventil geöffnet"* — via the First-Open function a new NC actuator holds its
+valve **open** until the closing point has been determined after first power-up.
+So a freshly fitted actuator is open regardless of what heatctl commands, until
+it has self-calibrated. Expect that during build-out rather than treating it as
+a fault.
 
 **Preconditions for any thermal method.** It needs contrast between VL and the
 slab - if VL is near slab temperature there is no signal at all, which is

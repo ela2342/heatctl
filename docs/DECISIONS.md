@@ -197,3 +197,19 @@ therefore worse than no measurement. **Consequence:** the identity default is
 the safe one; prefer the datasheet or passive identification (§7.3) over a
 thermal sweep, and treat any measured value that lowers this as suspect until
 corroborated.
+
+## D-022 · The actuator self-calibrates, so the identity mapping is correct — not merely safe
+The valves are Möhlenhoff Alpha 5 **`APV 42505-00N`**, and the APV variant has
+`Ventilwegerkennung`: it measures its own valve travel and *auto-adapts the
+active control-voltage range*, determines its closing point automatically, and
+regulates internally for maximum stroke **minus over-travel**. **Why it
+matters:** the upper deadband is real — the characteristic curve names an
+"Over-elevation range" — but the device already compensates for it, so
+`full_open_pct = 100` is right for a physical reason rather than as the safe
+default D-021 settled for. **Supersedes** the plan to measure it. The one
+genuine lower deadband is `Umin`: 0 – 0.5 V is ignored to reject hum on long
+cables, i.e. **5 %**, now `distribution.open_threshold_pct`. **Also settled:**
+30 s/mm × 5.0 mm = 150 s full stroke, so `rl_gating.settle_s: 300` has margin.
+**Cost:** none — this replaced an experiment that would have cost hours of
+disrupted control and, done the obvious way, would have been biased low anyway.
+
