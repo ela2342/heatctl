@@ -363,12 +363,14 @@ Room sensors still arrive via MQTT regardless of this choice.
 Collected here because they were decided verbally and would otherwise exist
 only in a chat log. Each is small; none is urgent; all of them bite later.
 
-- [ ] **Seasonal lockout for `auto_mode`.** Nothing currently stops a July
-      switch to heating except a 1 K deadband sustained for an hour, on an
-      average of the three rooms that have sensors. An evening of ventilation
-      could do it. The pump reports outdoor ambient (`0x8011`), so the guard is
-      cheap: refuse heating above ~18 degC ambient, refuse cooling below
-      ~12 degC.
+- [~] ~~Seasonal lockout for `auto_mode`~~ - **PROPOSED AND REJECTED**
+      (owner, 2026-07-27): this site has seen below freezing in August, so an
+      outdoor-temperature guard would refuse heating exactly when a freak cold
+      snap needed it. The house average is the right signal precisely because
+      it does not care what month it is. Kept here rather than deleted so the
+      idea is not re-proposed. If a transient (an evening of ventilation) does
+      cause a spurious switch, the lever is a LONGER DWELL, not a lockout -
+      currently one hour, see D-020.
 - [ ] **Source-side last resort when safety costs us flow.** The distribution
       design guarantees flow only for the CONTROL proposal; `Safety.apply` runs
       afterwards and may close circuits for condensation or screed overtemp. If
