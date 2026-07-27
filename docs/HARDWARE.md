@@ -44,7 +44,7 @@ Manual: /mnt/c/Users/Ela/Downloads/750-352.pdf (pp. 112-113, 171-177).
 | 0x1000 | R/W | Watchdog time, x100 ms | 0x0064 = 10 s | 100 = 10 s |
 | 0x1001 | R/W | Coding mask, FC **1..16** | 0xFFFF | 0xFFFF |
 | 0x1002 | R/W | Coding mask, FC **17..32** | 0xFFFF | 0xFFFF |
-| 0x1003 | R/W | Watchdog **trigger** (toggle register) | - | 0 |
+| 0x1003 | R/W | Watchdog **trigger** (toggle register - see below) | - | 0 |
 | 0x1004 | R | **Minimum trigger time** | - | 0xFFFF |
 | 0x1005 | R/W | Stop watchdog (write 0xAAAA then 0x5555) | - | 0 |
 | 0x1006 | R | **Status**: 0 = not active, 1 = active, 2 = expired | 0x0000 | **0 -> not active** |
@@ -102,6 +102,32 @@ NOT verified, and not verifiable this way: that the outputs were physically
 zeroed during the trip. Process-data reads are blocked precisely while it
 matters, so the manual's statement is the only evidence. Confirm by watching an
 actual valve if it ever matters.
+
+### "Toggle register" is literal - verified the hard way 2026-07-27
+0x1003 clears a trip on a **change** of value, not on a non-zero write. Writing
+back the value it already holds is refused with **exception 0x03 (illegal data
+value)** and clears nothing:
+
+```
+status=2 trigger=1  write 0x1003=1 -> exception 0x03,  status stays 2, process data BLOCKED
+status=2 trigger=1  write 0x1003=0 -> ok,              status 2 -> 1,  process data restored
+```
+
+**Field failure this caused.** heatctl's first implementation wrote a constant
+1. That recovered exactly once - the first trip, when the register still held
+its power-on 0 - and never again. Overnight into 2026-07-27 the coupler tripped
+a second time and stayed blocked for ~3.5 h: every read and write answered with
+exception 0x04, valves held closed by the coupler's own safe state, heatctl
+looping on `stale_data` with no way back without manual intervention. Note that
+yesterday's end-to-end verification below passed *because* it was the first
+trip. **One successful recovery test proves nothing here - test twice.**
+
+Re-verified 2026-07-27 with the toggling implementation, two consecutive trips:
+
+| Trip | trigger before | after recovery | Result |
+|---|---|---|---|
+| 1 | 0 | 1 | status 2 -> 1, process data restored |
+| 2 | 1 | 0 | status 2 -> 1, process data restored (the case that used to be fatal) |
 
 **heatctl MUST handle the trip, or one time-out disables control permanently.**
 After a time-out the coupler answers *all* subsequent MODBUS/TCP requests with

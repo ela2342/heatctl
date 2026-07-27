@@ -73,6 +73,10 @@ class Controller:
         self.db = self._open_db(cfg["logging"]["state_db"])
         self._cycle = 0
         self._last_return_sp = self.return_sp   # for telemetry before first step
+        # Failsafe log throttling - see failsafe().
+        self._failsafe_reason: str | None = None
+        self._failsafe_since = 0.0
+        self._failsafe_logged = 0.0
 
     def _apply_mode(self, mode: str, reset: bool = True) -> None:
         """Apply a mode to BOTH the PID direction and the return setpoint.
@@ -137,8 +141,12 @@ class Controller:
             self._apply_mode(payload)
         elif kind == "setpoint" and key in self.room_setpoints:
             sp = self.safety.clamp_setpoint(float(payload))
+            # Log only real changes: the wall-unit bridge republishes the dial
+            # value every minute whether or not it moved, and logging each one
+            # buries everything else.
+            if sp != self.room_setpoints[key]:
+                log.info("setpoint %s -> %.1f degC", key, sp)
             self.room_setpoints[key] = sp
-            log.info("setpoint %s -> %.1f degC", key, sp)
 
     # ---------- main loop ----------
     async def run(self) -> None:
@@ -169,6 +177,7 @@ class Controller:
         if state.is_stale(self.safety.stale_timeout):
             await self.failsafe("stale_data")
             return
+        self._failsafe_cleared()
 
         # One target per cycle, shared by every circuit's fallback PID.
         return_sp = self._effective_return_sp(state)
@@ -207,9 +216,31 @@ class Controller:
         self._cycle += 1
 
     async def failsafe(self, reason: str) -> None:
-        log.warning("FAILSAFE: %s", reason)
+        # Log the transition, then only once a minute. A failsafe that persists
+        # (dead coupler, tripped watchdog) otherwise writes 3600 identical
+        # lines an hour and pushes the *cause* out of the log ring - which is
+        # exactly what happened on 2026-07-27. Staying in failsafe must remain
+        # visible, but it is one fact, not one fact per second.
+        now = time.monotonic()
+        if reason != self._failsafe_reason or now - self._failsafe_logged > 60:
+            if reason == self._failsafe_reason:
+                log.warning("FAILSAFE: %s (still, since %.0f s)", reason,
+                            now - self._failsafe_since)
+            else:
+                log.warning("FAILSAFE: %s", reason)
+                self._failsafe_since = now
+            self._failsafe_reason = reason
+            self._failsafe_logged = now
         await self.io.write_all_valves(self.safety.failsafe_pct)
         await self.plane.publish("override/global", reason)
+
+    def _failsafe_cleared(self) -> None:
+        """Called on a good cycle, so recovery is visible in the log."""
+        if self._failsafe_reason is not None:
+            log.info("failsafe cleared (was %s for %.0f s)",
+                     self._failsafe_reason,
+                     time.monotonic() - self._failsafe_since)
+            self._failsafe_reason = None
 
     async def telemetry(self, state) -> None:
         for n, t in state.temps.items():

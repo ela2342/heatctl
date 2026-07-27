@@ -152,18 +152,34 @@ class ModbusDirectBackend(IOBackend):
     async def _watchdog_kick_after_error(self) -> None:
         """Clear a possible watchdog trip. Safe to call on any I/O failure.
 
-        Writing a non-zero value to the trigger register both clears a pending
-        watchdog error *and* (re)starts the watchdog, so this is harmless when
-        the watchdog is simply running, and is the only way back when it has
-        expired: after a time-out the coupler blocks process-data writes until
-        the trigger register is written. Without this, one transient trip would
-        disable control permanently rather than for one cycle.
+        0x1003 is a TOGGLE register: it is the *change* of value that clears a
+        pending watchdog error and restarts the watchdog. Writing the value it
+        already holds is rejected with exception 0x03 (illegal data value) and
+        clears nothing.
+
+        This is not a detail. An earlier version wrote a constant 1, which
+        recovered exactly once - the first trip, when the register still held
+        its power-on 0 - and then never again, because the register stayed at
+        1. Field failure 2026-07-27: the coupler tripped overnight and stayed
+        blocked for ~3.5 h, every read and write answered with exception 0x04,
+        heatctl looping on the stale-data failsafe with no way back short of
+        manual intervention. Read the current value and write the other one.
         """
         if not self.wd_enabled:
             return
-        if await self._reg_write(WD_TRIGGER, 1):
-            log.warning("coupler watchdog trigger written after I/O failure "
-                        "(clears a trip; outputs were zeroed if it had expired)")
+        cur = await self._reg_read(WD_TRIGGER)
+        # If the read failed we cannot know the current value, so try both:
+        # one of them is guaranteed to be a change.
+        candidates = [1 - cur] if cur in (0, 1) else [1, 0]
+        for v in candidates:
+            if await self._reg_write(WD_TRIGGER, v):
+                log.warning("coupler watchdog trigger toggled %s -> %d after "
+                            "I/O failure (clears a trip; outputs were zeroed "
+                            "if it had expired)", cur, v)
+                return
+        log.error("coupler watchdog trigger write FAILED (was %s) - if the "
+                  "watchdog has expired, control cannot recover by itself",
+                  cur)
 
     async def _watchdog_maintain(self) -> None:
         """Arm the watchdog if it is not running. Called after a good read.
@@ -252,8 +268,24 @@ class ModbusDirectBackend(IOBackend):
         self.state.valves_pct[name] = pct
 
     async def write_all_valves(self, pct: float) -> None:
+        """Failsafe write to every valve. Never raises - best effort by design.
+
+        Failures are summarised into ONE line, without a traceback. This runs
+        once per second, so per-valve `log.exception` produced eight stack
+        traces a second while the bus was down: on 2026-07-27 that flushed 3.5
+        hours of history out of the container's log ring and destroyed the
+        evidence of what had started the incident. A repeating, fully
+        predictable failure must cost one line, not eight tracebacks.
+        """
+        failed: list[str] = []
+        first = ""
         for name in self.valves:
             try:
                 await self.write_valve(name, pct)
-            except Exception:
-                log.exception("failsafe write failed: %s", name)
+            except Exception as e:
+                failed.append(name)
+                first = first or str(e)
+        if failed:
+            log.warning("failsafe write to %.0f%% failed for %d/%d valves "
+                        "(%s): %s", pct, len(failed), len(self.valves),
+                        ",".join(failed), first)
