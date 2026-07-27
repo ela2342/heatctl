@@ -55,37 +55,74 @@ editing this file; when it is unavoidable, back up and validate first.
    automations, not by heatctl. Until WP-B migrates that, heatctl must not write
    them.
 
-## Pending cleanup: most of the legacy REST entities are dead
-Of the ~40 `rest:` sensors in `/config/configuration.yaml`, the majority read
-`null`/0 permanently because they are fed by the retired floor gateway. They are
-also now *superseded*, because heatctl publishes the real thing from the WAGO.
-Leaving them makes the entity list actively misleading - two sets of
-similarly-named sensors, only one of them true.
+## Legacy entity cleanup - DONE 2026-07-27
 
-**Safe to remove (dead and superseded):**
-- `sensor.rl_1` … `sensor.rl_12` - DS18B20 returns via the dead gateway, all
+Three separate paths carried the same legacy Controme data into HA. Two of
+them were dead or duplicated, and the resulting entity list was actively
+misleading - similarly named sensors, only some of them true.
+
+**Removed from `/config/configuration.yaml`** (backup taken, `ha core check`
+passed, registry orphans purged afterwards):
+- `sensor.rl_1` … `rl_12` - DS18B20 returns via the retired floor gateway, all
   `null`. Superseded by `sensor.heatctl_return_circuit_*`.
-- `sensor.ventil_1..4, 6..10` - valve openings from the dead gateway's `outs`
-  API, all 0. Superseded by `sensor.heatctl_valve_*`.
-- `sensor.average_valve_opening` - min_max over those dead valve sensors.
-  Superseded by `sensor.installed_valve_demand`. **Check first that nothing
-  still references it**: it was the trigger for the two legacy pump automations,
-  which are turned off but not deleted.
+- The entire `/get/json/v1/1/outs` REST block - `sensor.ventil_1..11`, all 0
+  from the same dead gateway. Superseded by `sensor.heatctl_valve_*`.
+- `sensor.average_valve_opening` (min_max over those). Superseded by
+  `sensor.installed_valve_demand`.
 
-**MUST KEEP - removing these breaks live control:**
-- `sensor.raumtemperatur_gastebad` / `_wohnzimmer` - the room temperatures the
-  bridge publishes to heatctl.
+**KEPT, because live control depends on them** - the eight remaining REST
+sensors, all reading real values:
+- `sensor.raumtemperatur_gastebad` / `_wohnzimmer` - room temperature into the
+  bridge, and thence heatctl's room PID.
 - `sensor.luftfeuchte_gastebad` / `_wohnzimmer` - inputs to
-  `sensor.system_dew_point_reference`, i.e. the condensation limit.
-- `sensor.solltemperatur_gastebad` / `_wohnzimmer` - the wall-unit dial
-  setpoints.
+  `sensor.system_dew_point_reference`, i.e. the condensation limit. heatctl
+  now STOPS COOLING without it, so these are load-bearing.
+- `sensor.solltemperatur_gastebad` / `_wohnzimmer` - the wall dials, which
+  define the room target.
+- The Elternschlafzimmer `raumtemperatur`/`luftfeuchte` pair, left dormant:
+  `unavailable` today, correctly skipped by the dew-point helper, free to
+  recover if that unit is ever revived.
 
-**Leave dormant rather than delete:** the Elternschlafzimmer
-`raumtemperatur`/`luftfeuchte` pair. Currently `unavailable` because that wall
-unit is offline, and correctly skipped by the dew-point helper - but it comes
-back for free if the unit is ever revived.
+### The third path: the Controme HomeKit bridge
+Easy to miss, because it is an integration rather than YAML. The Mini Server
+exposes a HomeKit bridge and `homekit_controller` imports 29 entities from it -
+a `climate`, a `current_temperature` sensor, a display-units `select` and an
+identify `button` per room, for seven rooms.
 
-Note the whole `rest:` block dies with the legacy server anyway, so this cleanup
-is a step toward switching that machine off, not just tidying. Do it with a
-backup and `ha core check`, as before; YAML platform entities disappear on
-reload without needing registry surgery.
+**Four of those rooms report a hardcoded 10 °C** (Bad, both Kinderzimmer,
+Elternschlafzimmer). That is Controme's placeholder for "no sensor", not a
+measurement - and HA presents it as a perfectly ordinary live value, which is
+worse than `unavailable` would be. Those four rooms' `climate` and
+`current_temperature` entities are now **disabled** (registry disable, not
+deletion - reversible from the UI).
+
+The remaining three (Gästebad, Wohnzimmer, Arbeitszimmer) report real values
+but merely duplicate what heatctl publishes itself. Left enabled for now as a
+cross-check; they go away with the Mini Server.
+
+**Deliberately NOT deleted: the HomeKit config entry itself.** Re-adding it
+needs a HomeKit pairing code, so removing it is not trivially reversible.
+Disable, do not delete, until the Mini Server is actually decommissioned.
+
+### Dashboard migration (the "Test" dashboard)
+It was the only consumer of the removed sensors, so it had to move first -
+otherwise the cleanup would have left a dashboard full of dead cards. Its two
+grids and three thermostat cards were repointed at heatctl:
+`sensor.rl_N` -> `sensor.heatctl_return_circuit_N`, `sensor.ventil_N` ->
+`sensor.heatctl_valve_hkNN`, `average_valve_opening` ->
+`installed_valve_demand`, and `climate.wohnzimmer_eg` / `gastebad_eg` ->
+`climate.heatctl_*`. Cards with no heatctl equivalent were dropped: circuits 5
+and 12 (out of service), valve channels for circuits 8-10 (no analog output
+assigned), and the Elternschlafzimmer thermostat (no room sensor, so heatctl
+publishes no thermostat for it). A small `heatctl` entities card was added.
+
+Note the ordering trap that made this worth checking first:
+`sensor.average_valve_opening` still appeared in a search of the LIVE pump
+reconciler - but only in its `description` prose, explaining why valve-demand
+gating is not used yet. Harmless. The two legacy pump automations that really
+did trigger on it are off but not deleted, and can no longer be meaningfully
+re-enabled; that is fine, since re-enabling them caused an outage on
+2026-07-26 and `sensor.installed_valve_demand` is the modern replacement.
+
+This whole `rest:` block dies with the Mini Server anyway, so the above is a
+step toward switching that machine off, not just tidying.
