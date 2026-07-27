@@ -296,7 +296,7 @@ control:
     # bottom that probably mirrors one at the top. Needs the actuators fitted
     # plus a characterisation run - see docs/DESIGN.md 4.5.
     # MEASURED from the datasheet, not guessed (D-022). Moehlenhoff Alpha 5
-    # APV 42505-00N: 0-0.5 V is ignored to reject hum on long cables, so 5 %
+    # APV 42505-00: 0-0.5 V is ignored to reject hum on long cables, so 5 %
     # of the 0-10 V range does nothing at all. Above that the drive is active.
     open_threshold_pct: 5.0
     # 100 is correct for a PHYSICAL reason, not merely the safe default: the

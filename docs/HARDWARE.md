@@ -266,17 +266,46 @@ commanded analog value is a *request*, not a measurement:
   somewhere between the old and new value. Any RL reading taken during that
   window reflects neither.
 
-**Model: Möhlenhoff Alpha 5 `APV 42505-00N`** (owner, 2026-07-27). Datasheet
+**Model: Möhlenhoff Alpha 5 `APV 42505-00`** (owner, 2026-07-27). Datasheet
 facts, which largely settle the deadband question:
 
 | Property | Value |
 |---|---|
-| Control | 0–10 V DC, 24 V DC supply | 
+| Control signal | **0 – 10 V**, direct acting |
+| Supply | 24 V **DC** |
 | Stroke | 5.0 mm |
-| Closing force | 100 N +5 % |
+| Closing force | 100 N |
 | Direction | NC (spring closes when de-energised) |
-| Mean running time | **30 s/mm → 150 s full stroke** |
-| `Ventilwegerkennung` (valve travel detection) | **yes** — this is what the APV prefix means; APR is the variant without |
+| Mean running time (`Mittlere Stellzeit`) | **30 s/mm → 150 s full stroke** |
+| `Ventilwegerkennung` (valve travel detection) | **yes** |
+
+**Read the type key before assuming anything about a replacement.** Every
+field above is encoded in the order code, and three of them are things heatctl
+would get silently wrong if a differently-coded actuator were fitted:
+
+    APV  4 2 5 05 - 00  [N00-1S]
+    │    │ │ │       └─ control characteristic
+    │    │ │ └───────── stroke: 4 = 4.0 mm, 5 = 5.0 mm
+    │    │ └─────────── 0 = 24 V AC NC, 1 = 24 V AC NO,
+    │    │              2 = 24 V DC NC, 3 = 24 V DC NO
+    │    └───────────── Alpha 5 OEM proportional family
+    └────────────────── APR = without valve travel detection
+                        APV = WITH valve travel detection
+                        (APP = pulse-proportional, APO = with feedback)
+
+    control characteristic:  00 = 0 – 10 V      01 = 2 – 10 V
+                             02 = 10 – 0 V      10 = 0 – 10 V (NO types)
+
+    trailing N00-1S = base version / colour / 1 m pluggable lead.
+    Shops truncate the code at various points; "APV 42505-00" and
+    "APV 42505-00N00-1S" are the same actuator.
+
+So our `-00` **is** the guarantee that the signal is 0–10 V direct-acting.
+A `-01` (2 – 10 V) would make `open_threshold_pct` 20, not 5, and a `-02`
+(10 – 0 V) is fully inverted — 0 % command would mean fully open. Likewise
+`42505` vs `43505` is the NC/NO bit. Verified against the full variant table
+in the Möhlenhoff *Technisches Datenblatt, OEM Antrieb 5: Proportional*
+(document `100727AA-24`); local capture in `docs/ALPHA5.local.md`.
 
 **The actuator linearises itself, which is why the identity mapping is right.**
 Per the datasheet, an APV variant *"ermittelt der Antrieb den Ventilweg und

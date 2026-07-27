@@ -79,7 +79,7 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
       nothing notices.
 - [~] **Actuator characterisation - LARGELY SETTLED from the datasheet
       (2026-07-27, D-022).** The valves are Moehlenhoff Alpha 5
-      `APV 42505-00N`, and the APV variant has valve-travel detection: it
+      `APV 42505-00`, and the APV variant has valve-travel detection: it
       measures its own stroke and auto-adapts the active control-voltage
       range, regulating internally for maximum stroke minus over-travel. So
       the upper deadband the owner suspected is real but the DEVICE

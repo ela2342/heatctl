@@ -79,10 +79,10 @@ class RLGate:
     def __init__(self, cfg: dict):
         g = dict(cfg["control"].get("rl_gating") or {})
         self.enabled = bool(g.get("enabled", True))
-        # PROVISIONAL. The Alpha 5 deadband has not been measured yet
-        # (docs/HARDWARE.md), so this is a conservative guess, not a fact.
-        # Replace it with the measured opening threshold once the remaining
-        # actuators are fitted and characterised.
+        # NOT the actuator deadband - that is 5 % (Umin, D-022) and lives in
+        # `distribution.open_threshold_pct`. This is a different question:
+        # how far open before there is enough FLOW for RL to mean anything.
+        # Still a conservative guess; only plant data can settle it.
         self.min_opening = float(g.get("min_opening_pct", 15.0))
         # Valve stroke PLUS hydraulic transport through the loop: water has to
         # travel the circuit before RL means anything (docs/DESIGN.md 4.1.5).
