@@ -260,6 +260,20 @@ class Controller:
             self.mode, self.room_setpoints, room_temps,
             state.valves_pct, now)
 
+        # Apply the mode the house asked for. Gated on auto_mode alone, NOT on
+        # source_demand.enabled: choosing the season and choosing whether to
+        # run are separate decisions, and conflating them would mean you
+        # cannot have one without the other. _apply_mode flips the PID
+        # direction and the return setpoint together; _sync_pump_mode further
+        # down then makes the heat pump follow.
+        if self.demand.auto_mode and self._last_demand.mode != self.mode:
+            log.warning("plant mode %s -> %s (house average %.2f K)",
+                        self.mode, self._last_demand.mode,
+                        self._last_demand.mean_deviation_c or 0.0)
+            self.log_event("mode", f"{self.mode} -> {self._last_demand.mode} "
+                                   f"(house {self._last_demand.mean_deviation_c})")
+            self._apply_mode(self._last_demand.mode)
+
         for room in self.rooms:
             n = room["name"]
             room_t = self.plane.room_temp(n)

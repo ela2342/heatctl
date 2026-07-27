@@ -305,12 +305,16 @@ control:
     # before it owns anything. Turn on as part of the WP-B migration, in one
     # step, together with disabling those automations.
     enabled: false
-    # heatctl now commands the pump's mode register (0x0004) to follow the
-    # plant mode, every cycle, as a no-op when they already agree. auto_mode
-    # is the further step of letting the HOUSE AVERAGE pick that plant mode
-    # rather than a person - still off, so the seasonal decision stays manual
-    # until the shadow output has been watched over a full day.
-    auto_mode: false
+    # heatctl commands the pump's mode register (0x0004) to follow the plant
+    # mode, every cycle, as a no-op when they already agree. auto_mode is the
+    # further step: the HOUSE AVERAGE picks that plant mode rather than a
+    # person. ON since 2026-07-27 (owner).
+    # Guarded by mode_deadband_c and mode_dwell_s below - the average must sit
+    # more than 1 K past the band for a full hour before the plant flips. That
+    # is deliberately sluggish: switching the whole plant is expensive and
+    # slow to undo, and only three of seven rooms have an air sensor, so the
+    # "house average" is an average of three.
+    auto_mode: true
     # Flow floor as MEAN opening across all water-carrying circuits, counting
     # unactuated ones as 100 % (they are open pipe). 40 % is the owner's
     # measured figure - below it the system runs into trouble and eventually

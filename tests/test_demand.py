@@ -24,7 +24,9 @@ def demand(cfg):
             "mode_dwell_s": 3600.0, "min_on_s": 600.0, "min_off_s": 600.0,
             **overrides,
         }
-        return DemandController(cfg)
+        # can_command_source_mode=True: these tests are about which mode the
+        # house asks for, not about whether heatctl is allowed to command it.
+        return DemandController(cfg, can_command_source_mode=True)
     return _make
 
 
@@ -251,11 +253,14 @@ def test_auto_mode_is_refused_while_the_pump_mode_cannot_be_commanded(cfg, caplo
     assert any("cannot command" in r.getMessage() for r in caplog.records)
 
 
-def test_auto_mode_is_left_alone_in_shadow_mode(cfg):
-    """Shadow acts on nothing, so computing a mode it would pick is safe -
-    and is exactly the thing worth watching before the migration."""
+def test_auto_mode_does_not_depend_on_the_source_enable(cfg):
+    """Two independent switches: `enabled` decides whether the plant runs,
+    `auto_mode` decides which mode it runs in. Conflating them would mean you
+    cannot have heatctl choose the season without also handing it the on/off
+    decision. What gates auto_mode is the CAPABILITY to command the pump."""
     cfg["control"]["source_demand"] = {"enabled": False, "auto_mode": True}
-    assert DemandController(cfg).auto_mode is True
+    assert DemandController(cfg, can_command_source_mode=True).auto_mode is True
+    assert DemandController(cfg, can_command_source_mode=False).auto_mode is False
 
 
 def test_auto_mode_is_allowed_once_the_pump_mode_can_be_commanded(cfg):

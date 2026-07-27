@@ -413,3 +413,36 @@ def test_ownership_is_derived_from_the_room_topology(controller):
     ctl = controller()
     assert set(ctl.owned_valves) == {"valve_hk01", "valve_hk02", "valve_hk03"}
     assert ctl.unowned_valves == []
+
+
+async def test_auto_mode_actually_applies_the_picked_mode(controller):
+    """Defect found on wiring auto_mode up, 2026-07-27: the demand controller
+    computed a mode into its shadow output and the controller never read it,
+    so turning the flag on would have done nothing at all."""
+    ctl = controller(
+        control={"mode": "heating"},
+        temps={"rl_hk01": 24.0, "rl_hk02": 24.0, "rl_hk03": 24.0,
+               "vl_total": 30.0},
+        room_temps={"gaestebad": 30.0},       # 9 K above target -> wants cooling
+    )
+    ctl.demand.auto_mode = True
+    ctl.demand.mode_dwell_s = 0.0             # skip the hour of dwell
+    ctl.io.touch(time.monotonic())
+    await ctl.step(1.0)
+    await ctl.step(1.0)                       # dwell needs a second observation
+    assert ctl.mode == "cooling"
+    assert all(p.invert for p in ctl.circuit_pids.values()), \
+        "mode applied without flipping the PID direction"
+
+
+async def test_auto_mode_off_leaves_the_mode_alone(controller):
+    ctl = controller(
+        control={"mode": "heating"},
+        temps={"rl_hk01": 24.0, "rl_hk02": 24.0, "rl_hk03": 24.0,
+               "vl_total": 30.0},
+        room_temps={"gaestebad": 30.0},
+    )
+    ctl.demand.auto_mode = False
+    ctl.io.touch(time.monotonic())
+    await ctl.step(1.0)
+    assert ctl.mode == "heating"

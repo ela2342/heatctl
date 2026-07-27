@@ -57,6 +57,11 @@ class DemandController:
         # Shadow by default: compute and publish, let nothing act on it. The
         # heat pump has another writer until WP-B, and this logic has to be
         # watched against the plant before it owns anything.
+        # TWO independent switches, deliberately:
+        #   enabled   - act on source_request, i.e. run or stop the plant
+        #   auto_mode - pick WHICH mode (heating vs cooling) from the house
+        # Conflating them would mean you cannot have heatctl choose the season
+        # without also handing it the on/off decision.
         self.enabled = bool(d.get("enabled", False))
         self.auto_mode = bool(d.get("auto_mode", False))
 
@@ -66,7 +71,7 @@ class DemandController:
         # not switching at all: the valve loop would drive the wrong direction
         # with the wrong water.
         self.can_command_source_mode = bool(can_command_source_mode)
-        if self.enabled and self.auto_mode and not self.can_command_source_mode:
+        if self.auto_mode and not self.can_command_source_mode:
             log.error("source_demand.auto_mode requested, but heatctl cannot "
                       "command the heat pump's mode - needs heatpump.enabled "
                       "and heatpump.allow_writes. Refusing; mode stays manual.")
