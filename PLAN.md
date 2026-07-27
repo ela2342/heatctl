@@ -124,11 +124,14 @@ Room sensors still arrive via MQTT regardless of this choice.
       by channel *index*, so any config.yaml listing a subset of channels
       crashed the loop with IndexError every cycle - a `cycle_error`, not a
       graceful degradation. Now reads up to the highest index.
-- [ ] Valve output read-back verification: heatctl treats
-      `IOState.valves_pct` as the last *commanded* value and never reads the
-      coupler back, so it cannot notice that the WAGO Modbus watchdog has
-      fired and forced the outputs to their safe state. Read-back lives at
-      `0x0200 + word` (see docs/HARDWARE.md) - one extra FC3 read per cycle.
+- [x] Valve output read-back verification (2026-07-27): one extra FC3 read
+      per cycle at `0x0200 + word` fills `IOState.valves_readback_pct` and
+      `valve_mismatch`, published on `heatctl/valve_mismatch/<name>` when they
+      disagree. This is observability, not correction - the per-cycle write
+      already heals a forced output within a second, which is precisely the
+      problem: a watchdog trip zeroes the outputs and then self-heals leaving
+      no trace at all. Auto-disables (one log line) if the mirror is not
+      readable, and a failure there can never break `read_state`.
 - [x] Reconnect/backoff in modbus_direct (2026-07-26, promoted to
       prerequisite when modbus_direct became the active backend):
       `start()` no longer raises when the coupler is unreachable (the control
@@ -140,15 +143,23 @@ Room sensors still arrive via MQTT regardless of this choice.
       attempt is bounded by `timeout_s` so the 1 s loop never stalls.
       `write_valve()` still raises, per the IOBackend contract.
       STILL MISSING: unit tests for this - see the pytest item above.
-- [ ] RL validity gating (present defect, do before WP-C): `Controller.step`
-      feeds the per-circuit return PID from `state.temps[sensor]` with no
-      check on valve position, but a closed circuit's RL sensor reads slab
-      ambient, not loop state. Since every `room_temp_topic` is still empty,
-      this fallback is currently the ONLY live control path, so the whole
-      controller acts on invalid RL whenever a valve is closed. Minimal fix:
-      don't trust RL below an opening threshold - hold last valid value or
-      fall back to the curve default. Full flush-and-remeasure scheme is
-      docs/DESIGN.md section 4.
+- [x] RL validity gating (2026-07-27, `heatctl/rl_gate.py`). RL counts only
+      after the valve has been commanded past `min_opening_pct` for
+      `settle_s` (stroke PLUS transport time). Otherwise the circuit holds its
+      last known-good command, and is re-opened every `flush_interval_s` to
+      take one honest reading. Never measured is treated as lost knowledge, so
+      the caller falls back to fail-open - which also makes start-up
+      self-healing with no special case and no forced full-open on every
+      deploy. Circuits with `fitted: false` are always trusted: open pipe
+      flows regardless of what we command, so gating them would be a fiction
+      of its own. Safety is deliberately NOT gated - it reads RL for frost
+      protection, and slab ambient is a fine frost indicator.
+      Worth recording WHY, because the symptom is not obvious: the error is
+      not merely inaccuracy. A closed circuit's RL drifts toward slab ambient,
+      which reads as "more demand" in BOTH modes, so the loop opens, sees the
+      real RL, closes, and repeats - a self-sustaining hunt on actuators that
+      take minutes per stroke.
+      Full scheduled flush-and-remeasure remains docs/DESIGN.md section 4.
 - [ ] Heat-demand logic: request heat pump when sum of valve openings > X
       (replaces the HA automations "Steuerung der Wasserpumpe..."').
       WARNING: while those HA automations are active, heatctl must NOT
@@ -162,10 +173,20 @@ Room sensors still arrive via MQTT regardless of this choice.
       P04 to dew point + 6 on breach rather than creeping 1 K/min, and that is
       the whole mechanism. Do not add a stop-the-pump path without revisiting
       this decision.
-- [ ] Cooling: dew-point supervision. Subscribe weather-station dew point
-      via MQTT (configurable topic), fall back to static vl_min_cooling_c
-      when data is missing/stale (port of the existing HA automation
-      "Climate: Prevent Condensation").
+- [x] Cooling: dew-point supervision (2026-07-27). `mqtt.dew_point_topic`
+      feeds `Safety.set_dew_point`; the cooling limit becomes
+      `dew point + dew_point_margin_c`, floored by `vl_min_cooling_floor_c`
+      to bound a stuck-low humidity sensor, and falls back to the static
+      `vl_min_cooling_c` when the reading is older than
+      `dew_point_max_age_s`. The fallback is deliberately NOT the max of the
+      two: the point is accuracy in both directions. Live on the plant the day
+      it landed - a 13.3 degC dew point gave a 15.3 degC limit where the
+      static value had been holding circuits shut at 16.0 for no reason.
+      INDOOR dew point, not the weather station: outdoor is frequently higher
+      and would forbid cooling that is perfectly safe indoors. Source is HA's
+      `sensor.system_dew_point_reference` republished by an automation
+      (docs/HA_INTEGRATION.md). The HA-side pump-request shutdown stays where
+      it is - that is source-side, this is valve-side.
 - [x] Room air sensors, interim (2026-07-26): all three available sources are
       live - Arbeitszimmer subscribes to its sensor's own MQTT topic directly,
       Gaestebad and Wohnzimmer are bridged from HA including their dial

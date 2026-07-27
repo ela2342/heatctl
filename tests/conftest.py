@@ -80,6 +80,9 @@ BASE_CFG: dict = {
         "setpoint_max_c": 28.0,
         "vl_max_heating_c": 45.0,
         "vl_min_cooling_c": 16.0,
+        "dew_point_margin_c": 2.0,
+        "dew_point_max_age_s": 900,
+        "vl_min_cooling_floor_c": 12.0,
         "frost_protect_c": 6.0,
         "sensor_fault_raw": [0x05DC, 0xFED4],
         "stale_data_timeout_s": 15,
@@ -153,12 +156,17 @@ class FakePlane:
     against a plane that never connects - which is exactly what this is.
     """
 
-    def __init__(self, room_temps: dict[str, float] | None = None):
+    def __init__(self, room_temps: dict[str, float] | None = None,
+                 dew_point: float | None = None):
         self.room_temps = dict(room_temps or {})
+        self.dew = dew_point
         self.published: list[tuple[str, str, bool]] = []
 
     def room_temp(self, room: str, max_age_s: float = 300) -> float | None:
         return self.room_temps.get(room)
+
+    def dew_point(self, max_age_s: float = 900) -> float | None:
+        return self.dew
 
     async def publish(self, suffix: str, payload, retain: bool = False) -> None:
         self.published.append((suffix, str(payload), retain))
@@ -187,13 +195,14 @@ def controller(cfg):
     """
     from heatctl.main import Controller
 
-    def _make(temps=None, faults=None, room_temps=None, **overrides):
+    def _make(temps=None, faults=None, room_temps=None, dew_point=None,
+              **overrides):
         c = copy.deepcopy(cfg)
         for section, values in overrides.items():
             c[section].update(values)
         ctl = Controller(c)
         ctl.io = FakeBackend(temps, faults)
-        ctl.plane = FakePlane(room_temps)
+        ctl.plane = FakePlane(room_temps, dew_point)
         return ctl
 
     return _make

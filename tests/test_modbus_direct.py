@@ -49,6 +49,7 @@ class FakeCoupler:
         self.regs = {WD_TIME: 100, WD_MASK_1_16: 0, WD_TRIGGER: 0,
                      WD_STATUS: wd_status}
         self.outputs: dict[int, int] = {}
+        self.mirror = True                        # coupler exposes 0x0200+
         self.connect_calls = 0
         self.reads = 0
 
@@ -82,7 +83,15 @@ class FakeCoupler:
     async def read_holding_registers(self, addr, count=1):
         if addr in self.regs:
             return Response([self.regs[addr]])
+        if addr == md.OUTPUT_MIRROR + 12:          # output read-back mirror
+            if not self.mirror:
+                return Response(error=True, exception_code=2)
+            return Response([self.outputs.get(12 + i, 0) for i in range(count)])
         return Response(error=True, exception_code=2)
+
+    def zero_outputs(self):
+        """What the coupler does to its outputs when the watchdog expires."""
+        self.outputs = {k: 0 for k in self.outputs}
 
     # -- watchdog --
     def _write_watchdog(self, addr, value):
@@ -433,6 +442,94 @@ async def test_failsafe_write_failure_is_one_line_not_eight_tracebacks(
     records = [r for r in caplog.records if "failsafe write" in r.getMessage()]
     assert len(records) == 1, f"{len(records)} records for one failsafe write"
     assert records[0].exc_info is None, "traceback attached to an expected error"
+
+
+# ---------- valve output read-back ----------
+
+async def test_read_back_reports_the_actual_output_positions(backend):
+    b, c = backend()
+    await b.write_valve("valve_hk01", 100.0)
+    await b.write_valve("valve_hk02", 50.0)
+    await b.read_state()
+    rb = b.state.valves_readback_pct
+    assert rb["valve_hk01"] == pytest.approx(100.0, abs=0.1)
+    assert rb["valve_hk02"] == pytest.approx(50.0, abs=0.1)
+    assert b.state.valve_mismatch == set()
+
+
+async def test_read_back_detects_the_watchdog_zeroing_the_outputs(backend):
+    """The case this exists for.
+
+    A watchdog trip forces every output to zero. heatctl's next write heals
+    it within a second, so without a read-back the event leaves no trace at
+    all - the command path still believes the valve is where it put it.
+    """
+    b, c = backend()
+    await b.write_valve("valve_hk01", 80.0)
+    await b.read_state()
+    assert b.state.valve_mismatch == set()
+
+    c.zero_outputs()                              # watchdog safe state
+    await b.read_state()
+
+    assert b.state.valve_mismatch == {"valve_hk01"}
+    assert b.state.valves_readback_pct["valve_hk01"] == 0.0
+    assert b.state.valves_pct["valve_hk01"] == 80.0   # command unchanged
+
+
+async def test_read_back_mismatch_is_logged_but_rate_limited(backend, caplog):
+    b, c = backend()
+    await b.write_valve("valve_hk01", 80.0)
+    c.zero_outputs()
+    with caplog.at_level("WARNING", logger="heatctl.io.modbus"):
+        for _ in range(30):
+            await b.read_state()
+    warned = [r for r in caplog.records if "output mismatch" in r.getMessage()]
+    assert len(warned) == 1, f"{len(warned)} warnings for one persistent fault"
+
+
+async def test_read_back_tolerates_rounding(backend):
+    """Percent -> raw -> percent never round-trips exactly."""
+    b, c = backend()
+    for pct in (0.0, 13.0, 37.0, 99.0, 100.0):
+        await b.write_valve("valve_hk01", pct)
+        await b.read_state()
+        assert b.state.valve_mismatch == set(), f"spurious mismatch at {pct} %"
+
+
+async def test_read_back_disables_itself_when_the_mirror_is_absent(backend,
+                                                                   caplog):
+    """A different coupler or node layout must cost one line, not a flood."""
+    b, c = backend()
+    c.mirror = False
+    with caplog.at_level("INFO", logger="heatctl.io.modbus"):
+        for _ in range(10):
+            await b.read_state()
+    notes = [r for r in caplog.records if "read-back unavailable" in r.getMessage()]
+    assert len(notes) == 1
+    assert b.readback is False
+
+
+async def test_read_back_can_be_switched_off(backend):
+    b, c = backend(valve_readback=False)
+    await b.write_valve("valve_hk01", 80.0)
+    c.zero_outputs()
+    await b.read_state()
+    assert b.state.valves_readback_pct == {}
+    assert b.state.valve_mismatch == set()
+
+
+async def test_read_back_failure_does_not_break_read_state(backend):
+    """Diagnostics must never take the control loop down with them."""
+    b, c = backend()
+
+    async def boom(addr, count=1):
+        raise OSError("mirror exploded")
+    c.read_holding_registers = boom
+
+    state = await b.read_state()
+    assert state.temps, "temperatures were lost to a read-back failure"
+    assert not state.is_stale(60)
 
 
 # ---------- configuration ----------

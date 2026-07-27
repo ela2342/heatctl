@@ -29,6 +29,7 @@ import yaml
 from .backends.base import make_backend
 from .mqtt_plane import ControlPlane
 from .pid import PID
+from .rl_gate import FLUSH, MEASURE, RLGate
 from .safety import Safety
 
 log = logging.getLogger("heatctl")
@@ -69,6 +70,10 @@ class Controller:
 
         # Must run after the PIDs exist: mode decides their direction.
         self._apply_mode(self.mode, reset=False)
+
+        # A closed circuit's RL sensor reads slab ambient, not loop water -
+        # see rl_gate.py for why feeding that to the PID makes it hunt.
+        self.rl_gate = RLGate(cfg)
 
         self.db = self._open_db(cfg["logging"]["state_db"])
         self._cycle = 0
@@ -179,10 +184,16 @@ class Controller:
             return
         self._failsafe_cleared()
 
+        # Dew point in, before safety runs: it sets the real condensation
+        # limit for this cycle. Absent or stale simply leaves safety on its
+        # static fallback, which is why layer 1 still works with no broker.
+        self.safety.set_dew_point(self.plane.dew_point(self.safety.dew_max_age))
+
         # One target per cycle, shared by every circuit's fallback PID.
         return_sp = self._effective_return_sp(state)
         self._last_return_sp = return_sp
 
+        now = time.monotonic()
         for room in self.rooms:
             n = room["name"]
             room_t = self.plane.room_temp(n)
@@ -200,20 +211,49 @@ class Controller:
                 if self.mode == "off":
                     proposed = 0.0
                 elif room_out is not None:
+                    # Room air drives the valve directly; RL is not consulted,
+                    # so its validity is irrelevant on this path.
                     proposed = room_out
                 else:
-                    rl = state.temps.get(sensor)
-                    proposed = (self.safety.failsafe_pct if rl is None else
-                                self.circuit_pids[sensor].step(
-                                    return_sp, rl, dt))
+                    proposed = self._return_control(
+                        valve, sensor, state, return_sp, dt, now)
                 pct, reason = self.safety.apply(self.mode, state, sensor, proposed)
                 await self.io.write_valve(valve, pct)
+                # Record what the plant actually received, not what control
+                # asked for - safety may have overridden it, and real flow is
+                # what decides whether RL will mean anything.
+                self.rl_gate.record_command(valve, pct, now)
                 if reason:
                     await self.plane.publish(f"override/{valve}", reason)
 
         await self.telemetry(state)
         self._log_db(state)
         self._cycle += 1
+
+    def _return_control(self, valve: str, sensor: str, state,
+                        return_sp: float, dt: float, now: float) -> float:
+        """Per-circuit return-temperature fallback, gated on RL validity.
+
+        Used whenever a room has no fresh air temperature - which today is
+        most of the house. See rl_gate.py for why the gating is not optional:
+        ungated, this loop hunts, because a closed circuit's RL always drifts
+        in the direction that reads as "more demand".
+        """
+        rl = state.temps.get(sensor)
+        if rl is None:
+            return self.safety.failsafe_pct       # lost knowledge -> fail open
+
+        action = self.rl_gate.action(valve, now)
+        if action is MEASURE:
+            out = self.circuit_pids[sensor].step(return_sp, rl, dt)
+            self.rl_gate.note_control(valve, out)
+            return out
+        if action is FLUSH:
+            return self.rl_gate.flush_pct
+        # Holding: never measured -> same fail-open policy as a dead sensor.
+        # The integrator is deliberately NOT stepped; integrating an invalid
+        # measurement is how the hunt builds up in the first place.
+        return self.rl_gate.held(valve, self.safety.failsafe_pct)
 
     async def failsafe(self, reason: str) -> None:
         # Log the transition, then only once a minute. A failsafe that persists
@@ -249,6 +289,13 @@ class Controller:
             await self.plane.publish(f"valve/{n}", f"{p:.0f}")
         await self.plane.publish("mode", self.mode, retain=True)
         await self.plane.publish("return_sp", f"{self._last_return_sp:.1f}")
+        if self.mode == "cooling":
+            # Publish the limit actually in force, not the configured one -
+            # they differ whenever a dew point is available, and "why did that
+            # valve shut" is unanswerable without it.
+            await self.plane.publish(
+                "cooling_supply_limit",
+                f"{self.safety.cooling_supply_limit():.1f}")
         # State side of the HA "number" entities. Retained so HA shows the
         # right value after a restart; retaining STATE is fine, retaining
         # anything under set/ is not (see docs/DESIGN.md 2.2).
@@ -256,6 +303,12 @@ class Controller:
             await self.plane.publish(f"setpoint/{n}", f"{sp:.1f}", retain=True)
         for f in state.faults:
             await self.plane.publish(f"fault/{f}", "1")
+        # Only published when it disagrees with the command - a mismatch means
+        # something other than heatctl moved the output, which is worth seeing
+        # even though the next write corrects it.
+        for n in state.valve_mismatch:
+            await self.plane.publish(
+                f"valve_mismatch/{n}", f"{state.valves_readback_pct[n]:.0f}")
 
     # ---------- history for system identification (layer 2) ----------
     def _open_db(self, path: str) -> sqlite3.Connection:

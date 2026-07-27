@@ -6,6 +6,7 @@ without MQTT command plane, without HA, without layer 2.
 from __future__ import annotations
 
 import logging
+import time
 
 log = logging.getLogger("heatctl.safety")
 
@@ -21,8 +22,54 @@ class Safety:
         self.stale_timeout = s["stale_data_timeout_s"]
         self.failsafe_pct = s["failsafe_valve_pct"]
 
+        # Dew-point supervision. `vl_min_cooling_c` alone is a fixed guess at
+        # a limit that is physically not fixed at all - it depends on indoor
+        # humidity. Measured 2026-07-27: a 12.7 degC dew point against a 16.0
+        # degC static limit shut circuits that were in no danger whatever.
+        self.dew_margin = s.get("dew_point_margin_c", 2.0)
+        self.dew_max_age = s.get("dew_point_max_age_s", 900)
+        # Hard floor on what a dew-point reading may authorise, bounding the
+        # damage from a stuck-low humidity sensor. Live data may relax the
+        # static limit, but only this far.
+        self.vl_min_cooling_floor = s.get("vl_min_cooling_floor_c", 12.0)
+        self._dew: float | None = None
+        self._dew_ts = 0.0
+        self._dew_logged: float | None = None
+
     def clamp_setpoint(self, sp: float) -> float:
         return max(self.setpoint_min, min(self.setpoint_max, sp))
+
+    def set_dew_point(self, dp: float | None, now: float | None = None) -> None:
+        """Feed the latest measured dew point. None simply means no update."""
+        if dp is None:
+            return
+        self._dew = dp
+        self._dew_ts = time.monotonic() if now is None else now
+
+    def cooling_supply_limit(self, now: float | None = None) -> float:
+        """Lowest supply temperature cooling may run at, right now.
+
+        With a fresh dew point this is `dew point + margin`, floored; without
+        one it is the static `vl_min_cooling_c`. Note the fallback is
+        deliberately NOT the maximum of the two: the whole point is accuracy
+        in both directions - permitting colder water when the air is dry, and
+        forbidding water the static limit would have allowed when it is
+        humid. Falling back on staleness is what keeps that safe.
+        """
+        now = time.monotonic() if now is None else now
+        if self._dew is None or now - self._dew_ts > self.dew_max_age:
+            if self._dew_logged is not None:
+                log.warning("dew point stale or absent, falling back to the "
+                            "static cooling supply limit %.1f degC",
+                            self.vl_min_cooling)
+                self._dew_logged = None
+            return self.vl_min_cooling
+        limit = max(self._dew + self.dew_margin, self.vl_min_cooling_floor)
+        if self._dew_logged is None or abs(self._dew - self._dew_logged) >= 0.5:
+            log.info("cooling supply limit %.1f degC (dew point %.1f + %.1f)",
+                     limit, self._dew, self.dew_margin)
+            self._dew_logged = self._dew
+        return limit
 
     def apply(self, mode: str, state, circuit_sensor: str,
               proposed_pct: float) -> tuple[float, str | None]:
@@ -63,7 +110,7 @@ class Safety:
         if mode == "heating" and vl is not None and vl > self.vl_max_heating:
             return 0.0, "vl_overtemp"    # screed protection
 
-        if mode == "cooling" and vl is not None and vl < self.vl_min_cooling:
+        if mode == "cooling" and vl is not None and vl < self.cooling_supply_limit():
             return 0.0, "vl_undertemp"   # condensation guard
 
         return proposed_pct, None

@@ -21,11 +21,21 @@ from dataclasses import dataclass, field
 
 @dataclass
 class IOState:
-    """Last known input state. temps in degC, valves_pct is the last setpoint."""
+    """Last known input state. temps in degC, valves_pct is the last setpoint.
+
+    Note the asymmetry between the two valve fields, it is the point of
+    having both: `valves_pct` is what heatctl last *commanded*, while
+    `valves_readback_pct` is what the coupler says its outputs are actually
+    at. They diverge when something other than heatctl moved the outputs -
+    the Modbus watchdog forcing its safe state being the case that matters.
+    A backend that cannot read its outputs back simply leaves these empty.
+    """
     temps: dict[str, float] = field(default_factory=dict)
     temps_raw: dict[str, int] = field(default_factory=dict)
     faults: set[str] = field(default_factory=set)
     valves_pct: dict[str, float] = field(default_factory=dict)
+    valves_readback_pct: dict[str, float] = field(default_factory=dict)
+    valve_mismatch: set[str] = field(default_factory=set)
     last_read_ts: float = 0.0
 
     def is_stale(self, timeout_s: float) -> bool:

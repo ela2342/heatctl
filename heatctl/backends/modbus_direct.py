@@ -39,6 +39,12 @@ log = logging.getLogger("heatctl.io.modbus")
 
 RAW_FULLSCALE = 32767  # 750-559: 32767 = 10 V
 
+# The coupler overlays the input and output process images in the same low
+# address range, so FC3 at the address you wrote returns the INPUT image
+# (temperatures), not your outputs. The output image is mirrored for reading
+# at 0x0200 + word offset - verified on hardware, see docs/HARDWARE.md.
+OUTPUT_MIRROR = 0x0200
+
 # Coupler Modbus watchdog registers. Authoritative source: 750-352 Handbuch
 # v1.2.0 sections 9.6 / 11.2.5 - see docs/HARDWARE.md, which also records which
 # of these were previously mislabelled here.
@@ -85,6 +91,10 @@ class ModbusDirectBackend(IOBackend):
 
         self.valve_base = cfg["valves"]["base_register"]
         self.valves = {c["name"]: c for c in cfg["valves"]["channels"]}
+        self.valve_count = max(c["index"] for c in cfg["valves"]["channels"])
+        self.readback = bool(m.get("valve_readback", True))
+        self.readback_tol = float(m.get("valve_readback_tolerance_pct", 2.0))
+        self._readback_warned = 0.0
 
         self.fault_raw = set(cfg["safety"]["sensor_fault_raw"])
         self.state = IOState()
@@ -225,6 +235,57 @@ class ModbusDirectBackend(IOBackend):
                      self.wd_time_units / 10, self.wd_mask)
             self._wd_armed_logged = True
 
+    async def _read_back_valves(self) -> None:
+        """Compare the coupler's actual outputs against what we commanded.
+
+        heatctl otherwise treats `valves_pct` as truth, but it is only the
+        last *command*. The gap matters: when the Modbus watchdog expires the
+        coupler forces its outputs to zero, and nothing in the command path
+        ever learns that happened. The per-cycle write does heal it within a
+        second, so this is about observability, not correction - a silent
+        self-healing failure is exactly the kind that goes unnoticed until it
+        stops being transient.
+
+        Failure here is not an error: a coupler without the mirror, or a
+        different node layout, should cost one log line and then stop trying,
+        never a per-cycle warning or a failed read_state.
+        """
+        if not self.readback:
+            return
+        assert self.client is not None
+        try:
+            rr = await self.client.read_holding_registers(
+                OUTPUT_MIRROR + self.valve_base, count=self.valve_count)
+        except Exception as e:
+            log.info("valve read-back unavailable (%s), disabling it", e)
+            self.readback = False
+            return
+        if rr.isError():
+            log.info("valve read-back unavailable (%s), disabling it", rr)
+            self.readback = False
+            return
+
+        self.state.valves_readback_pct.clear()
+        self.state.valve_mismatch.clear()
+        for name, ch in self.valves.items():
+            pct = rr.registers[ch["index"] - 1] / RAW_FULLSCALE * 100.0
+            self.state.valves_readback_pct[name] = pct
+            cmd = self.state.valves_pct.get(name)
+            if cmd is not None and abs(cmd - pct) > self.readback_tol:
+                self.state.valve_mismatch.add(name)
+
+        if self.state.valve_mismatch:
+            now = time.monotonic()
+            if now - self._readback_warned > 60:
+                self._readback_warned = now
+                detail = ", ".join(
+                    f"{n} commanded {self.state.valves_pct[n]:.0f}% "
+                    f"reads {self.state.valves_readback_pct[n]:.0f}%"
+                    for n in sorted(self.state.valve_mismatch))
+                log.warning("valve output mismatch (something other than "
+                            "heatctl moved these - watchdog safe state?): %s",
+                            detail)
+
     async def read_state(self) -> IOState:
         # Returns the previous state untouched on any failure: last_read_ts is
         # deliberately NOT refreshed, so is_stale() stays honest (see module
@@ -255,6 +316,7 @@ class ModbusDirectBackend(IOBackend):
                 self.state.temps[ch["name"]] = decode_pt1000(raw)
         self.state.last_read_ts = time.monotonic()
         await self._watchdog_maintain()
+        await self._read_back_valves()
         return self.state
 
     async def write_valve(self, name: str, pct: float) -> None:

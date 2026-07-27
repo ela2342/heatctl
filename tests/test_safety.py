@@ -8,6 +8,8 @@ one mistake that actually burns a screed or wets a floor.
 """
 from __future__ import annotations
 
+import pytest
+
 from heatctl.backends.base import IOState
 from heatctl.safety import Safety
 
@@ -135,3 +137,68 @@ def test_healthy_state_passes_control_through_untouched(cfg):
     s = Safety(cfg)
     st = state(rl_hk01=24.0, vl_total=32.0)
     assert s.apply("heating", st, "rl_hk01", 37.5) == (37.5, None)
+
+
+# ---------- dew-point supervision ----------
+
+def test_without_a_dew_point_the_static_limit_applies(cfg):
+    """Layer 1 must work with no broker at all - that is the whole premise."""
+    s = Safety(cfg)
+    assert s.cooling_supply_limit() == 16.0
+
+
+def test_a_fresh_dew_point_replaces_the_static_limit(cfg):
+    """It cuts BOTH ways, which is the point.
+
+    Dry air permits colder supply than the static guess allows (measured
+    2026-07-27: dew point 12.7 against a 16.0 static limit was shutting
+    circuits in no danger); humid air forbids supply the static value would
+    have permitted.
+    """
+    s = Safety(cfg)
+    s.set_dew_point(12.7)
+    assert s.cooling_supply_limit() == pytest.approx(14.7)   # relaxed
+    s.set_dew_point(15.5)
+    assert s.cooling_supply_limit() == pytest.approx(17.5)   # tightened
+
+
+def test_a_stale_dew_point_falls_back_to_the_static_limit(cfg):
+    s = Safety(cfg)
+    now = 10_000.0
+    s.set_dew_point(12.7, now=now)
+    assert s.cooling_supply_limit(now=now + 899) == pytest.approx(14.7)
+    assert s.cooling_supply_limit(now=now + 901) == 16.0
+
+
+def test_a_dew_point_cannot_authorise_below_the_hard_floor(cfg):
+    """Bounds the damage from a stuck-low humidity sensor."""
+    s = Safety(cfg)
+    s.set_dew_point(-40.0)
+    assert s.cooling_supply_limit() == cfg["safety"]["vl_min_cooling_floor_c"]
+
+
+def test_set_dew_point_ignores_none(cfg):
+    """'No new reading' must not erase the last good one."""
+    s = Safety(cfg)
+    s.set_dew_point(12.7)
+    s.set_dew_point(None)
+    assert s.cooling_supply_limit() == pytest.approx(14.7)
+
+
+def test_the_condensation_guard_uses_the_live_limit(cfg):
+    """End to end: the same supply is safe on dry air and not on humid air."""
+    s = Safety(cfg)
+    st = state(rl_hk01=20.0, vl_total=15.0)
+
+    s.set_dew_point(11.0)                      # limit 13.0 -> 15.0 is fine
+    assert s.apply("cooling", st, "rl_hk01", 60.0) == (60.0, None)
+
+    s.set_dew_point(14.0)                      # limit 16.0 -> 15.0 is not
+    assert s.apply("cooling", st, "rl_hk01", 60.0) == (0.0, "vl_undertemp")
+
+
+def test_dew_point_does_not_affect_heating(cfg):
+    s = Safety(cfg)
+    s.set_dew_point(25.0)                      # absurd, but heating ignores it
+    st = state(rl_hk01=20.0, vl_total=15.0)
+    assert s.apply("heating", st, "rl_hk01", 60.0) == (60.0, None)

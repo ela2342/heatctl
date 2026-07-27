@@ -52,6 +52,11 @@ class ControlPlane:
         self.room_temps: dict[str, float] = {}
         self.room_temp_ts: dict[str, float] = {}
 
+        # Optional. Without it, safety falls back to the static cooling limit.
+        self.dew_topic = m.get("dew_point_topic") or None
+        self._dew: float | None = None
+        self._dew_ts = 0.0
+
         self._client: aiomqtt.Client | None = None
 
     def room_temp(self, room: str, max_age_s: float = 300) -> float | None:
@@ -60,6 +65,17 @@ class ControlPlane:
         if ts is None or time.monotonic() - ts > max_age_s:
             return None
         return self.room_temps.get(room)
+
+    def dew_point(self, max_age_s: float = 900) -> float | None:
+        """Latest dew point if fresh enough, else None.
+
+        Freshness is judged by arrival time, so a retained message that stops
+        being republished correctly ages out instead of looking current
+        forever (docs/DESIGN.md 2.2).
+        """
+        if self._dew is None or time.monotonic() - self._dew_ts > max_age_s:
+            return None
+        return self._dew
 
     async def run(self) -> None:
         while True:
@@ -77,6 +93,8 @@ class ControlPlane:
                     await client.subscribe(f"{self.base}/set/#")
                     for topic in self.room_topics:
                         await client.subscribe(topic)
+                    if self.dew_topic:
+                        await client.subscribe(self.dew_topic)
                     log.info("control plane connected: %s", self.host)
                     async for msg in client.messages:
                         self._dispatch(str(msg.topic), msg.payload.decode())
@@ -86,6 +104,16 @@ class ControlPlane:
                 await asyncio.sleep(10)
 
     def _dispatch(self, topic: str, payload: str) -> None:
+        if self.dew_topic and topic == self.dew_topic:
+            try:
+                self._dew = float(payload)
+                self._dew_ts = time.monotonic()
+            except ValueError:
+                # HA publishes "unknown"/"unavailable" as plain strings when a
+                # source sensor drops out. Not an error - just no new value,
+                # so the existing one ages out and safety falls back.
+                log.debug("non-numeric dew point on %s: %r", topic, payload)
+            return
         room = self.room_topics.get(topic)
         if room is not None:
             try:

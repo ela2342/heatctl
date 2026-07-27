@@ -113,7 +113,14 @@ async def test_circuit_falls_back_to_return_pid_without_a_room_sensor(controller
         room_temps={},                           # no room sensors at all
     )
     ctl.io.touch(time.monotonic())
+    # Both circuits have been open long enough for RL to mean something -
+    # otherwise the validity gate correctly refuses to use it (test_rl_gate).
+    now = time.monotonic()
+    for v in ("valve_hk02", "valve_hk03"):
+        ctl.rl_gate.record_command(v, 100.0, now - 3600)
+
     await ctl.step(1.0)
+
     w = ctl.io.last_write
     # hk02 returns 18 C against a 22 C target in heating -> demand;
     # hk03 returns 24 C, already above target -> shut.
@@ -156,6 +163,85 @@ async def test_safety_overrides_the_control_output(controller):
     await ctl.step(1.0)
     assert ctl.io.last_write["valve_hk01"] == 0.0
     assert ctl.plane.topic("override/valve_hk01") == "vl_undertemp"
+
+
+# ---------- RL validity gating (present defect, docs/DESIGN.md 4) ----------
+
+async def test_the_return_pid_is_not_fed_an_untrusted_rl(controller):
+    """The defect: a closed circuit's RL is slab ambient, not loop water.
+
+    Ungated, that reads as "more demand" in both modes, so the loop hunts on
+    actuators that take minutes per stroke.
+    """
+    ctl = controller(
+        temps={"rl_hk01": 24.0, "rl_hk02": 5.0, "rl_hk03": 24.0,
+               "vl_total": 30.0},
+        room_temps={},
+    )
+    ctl.io.touch(time.monotonic())
+    pid = ctl.circuit_pids["rl_hk02"]
+
+    await ctl.step(1.0)                       # valve was never open
+
+    assert pid._i == 0.0, "integrated an RL reading that means nothing"
+
+
+async def test_a_settled_open_circuit_is_controlled_normally(controller):
+    """Gating must not disable control, only postpone it until RL is real."""
+    ctl = controller(
+        temps={"rl_hk01": 24.0, "rl_hk02": 18.0, "rl_hk03": 24.0,
+               "vl_total": 30.0},
+        room_temps={},
+    )
+    ctl.io.touch(time.monotonic())
+    now = time.monotonic()
+    # Pretend the circuit has been open and settled for an hour.
+    ctl.rl_gate.record_command("valve_hk02", 100.0, now - 3600)
+
+    await ctl.step(1.0)
+
+    assert ctl.io.last_write["valve_hk02"] > 0
+    assert ctl.circuit_pids["rl_hk02"]._i != 0.0
+
+
+async def test_an_unmeasured_circuit_fails_open(controller):
+    """No trustworthy RL is lost knowledge - same policy as a dead sensor."""
+    ctl = controller(
+        temps={"rl_hk01": 24.0, "rl_hk02": 24.0, "rl_hk03": 24.0,
+               "vl_total": 30.0},
+        room_temps={},
+    )
+    ctl.io.touch(time.monotonic())
+    await ctl.step(1.0)
+    assert ctl.io.last_write["valve_hk02"] == 100
+
+
+async def test_the_gate_records_what_safety_wrote_not_what_control_proposed(
+        controller):
+    """Safety changes real flow, so it must drive the validity clock too."""
+    ctl = controller(
+        control={"mode": "cooling"},
+        temps={"rl_hk01": 24.0, "rl_hk02": 24.0, "rl_hk03": 24.0,
+               "vl_total": 12.0},              # condensation guard -> force 0
+        room_temps={"gaestebad": 28.0},        # control wants 100 %
+    )
+    ctl.io.touch(time.monotonic())
+    await ctl.step(1.0)
+    assert ctl.io.last_write["valve_hk01"] == 0.0
+    # Safety wrote 0, so the circuit must NOT be counted as opening.
+    assert ctl.rl_gate._circuit("valve_hk01").open_since is None
+
+
+async def test_the_room_pid_path_is_unaffected_by_gating(controller):
+    """With a room sensor, RL is not consulted at all."""
+    ctl = controller(
+        temps={"rl_hk01": 24.0, "rl_hk02": 24.0, "rl_hk03": 24.0,
+               "vl_total": 30.0},
+        room_temps={"gaestebad": 15.0},        # far below target -> full demand
+    )
+    ctl.io.touch(time.monotonic())
+    await ctl.step(1.0)
+    assert ctl.io.last_write["valve_hk01"] == 100.0
 
 
 # ---------- staleness / failsafe ----------

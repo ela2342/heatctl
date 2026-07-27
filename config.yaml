@@ -24,6 +24,14 @@ io:
     timeout_s: 2.0             # also bounds each reconnect attempt
     reconnect_delay_s: 1.0     # first retry delay after a lost connection
     reconnect_delay_max_s: 30  # exponential backoff ceiling
+    # Read the outputs back each cycle (FC3 at 0x0200 + word) and compare
+    # against what we commanded. `valves_pct` is only the last COMMAND, so
+    # without this heatctl cannot tell that the coupler's watchdog forced the
+    # outputs to their safe state - the per-cycle write heals it in a second
+    # and nothing ever records that it happened. Auto-disables itself if the
+    # mirror is not readable, so it is safe to leave on.
+    valve_readback: true
+    valve_readback_tolerance_pct: 2.0
     # Coupler Modbus watchdog - see docs/HARDWARE.md for the register map and
     # the manual references. Type "Standard" with a WRITE-ONLY coding mask, so
     # only real output writes retrigger it: a satisfied watchdog then means
@@ -62,6 +70,14 @@ mqtt:                          # control-plane broker (telemetry, setpoints, She
   base_topic: heatctl
   ha_discovery: true
   ha_discovery_prefix: homeassistant
+  # Indoor dew point, driving the cooling condensation limit (see safety
+  # below). INTERIM source: Home Assistant's `sensor.system_dew_point_reference`
+  # helper, the highest indoor dew point across the rooms that report humidity,
+  # republished onto this topic. Empty disables supervision and leaves safety
+  # on its static fallback, which is the correct degradation - do NOT point
+  # this at an outdoor dew point, which is often higher and would forbid
+  # cooling that is perfectly safe indoors.
+  dew_point_topic: "heatctl/env/dew_point"
 
 # --- WAGO node inputs ----------------------------------------------------
 # Process image: input registers 0-11 = 750-652 (RS485, unused),
@@ -98,14 +114,22 @@ valves:
     # Wohnzimmer HK 2). Channel 6 was named valve_hk10 while circuits 7/10
     # were transposed; renamed to valve_hk07 to match the corrected room
     # mapping above - the physical channel is still to be confirmed.
-    - {index: 1, name: valve_hk01}
-    - {index: 2, name: valve_hk02}
-    - {index: 3, name: valve_hk03}
-    - {index: 4, name: valve_hk04}
-    - {index: 5, name: valve_hk06}
-    - {index: 6, name: valve_hk07}
-    - {index: 7, name: valve_hk11}
-    - {index: 8, name: valve_spare}
+    #
+    # `fitted` says whether an actuator is PHYSICALLY on that circuit. It is
+    # not cosmetic: an unfitted circuit is open pipe, so its flow does not
+    # follow our command and its return temperature is always valid, whereas
+    # a fitted one reads slab ambient whenever it is closed (see
+    # heatctl/rl_gate.py). Flip these to true as actuators are installed -
+    # marking a circuit fitted before it is will make heatctl hold or flush a
+    # circuit that is in fact wide open.
+    - {index: 1, name: valve_hk01, fitted: true}
+    - {index: 2, name: valve_hk02, fitted: true}
+    - {index: 3, name: valve_hk03, fitted: false}
+    - {index: 4, name: valve_hk04, fitted: false}
+    - {index: 5, name: valve_hk06, fitted: false}
+    - {index: 6, name: valve_hk07, fitted: false}
+    - {index: 7, name: valve_hk11, fitted: false}
+    - {index: 8, name: valve_spare, fitted: false}
 
 # --- Rooms: the actual control unit -------------------------------------
 # A room groups one or more floor circuits and optionally a room air
@@ -199,13 +223,40 @@ control:
   pid_room:   {kp: 25.0, ki: 0.005, kd: 0.0, out_min: 0.0, out_max: 100.0}
   pid_return: {kp: 8.0,  ki: 0.02,  kd: 0.0, out_min: 0.0, out_max: 100.0}
 
+  # When is a circuit's return temperature worth believing?
+  # A CLOSED circuit's RL sensor measures the slab it is buried in, not the
+  # water, and it drifts in whichever direction reads as "more demand" - so an
+  # ungated return PID hunts, on actuators that take minutes per stroke. Only
+  # affects circuits with `fitted: true`; open pipe always flows.
+  # See heatctl/rl_gate.py and docs/DESIGN.md section 4.
+  rl_gating:
+    enabled: true
+    min_opening_pct: 15.0   # PROVISIONAL - the Alpha 5 deadband is not yet
+                            # measured (docs/HARDWARE.md). Below this we
+                            # assume no meaningful flow.
+    settle_s: 300           # valve stroke PLUS transport time through the
+                            # loop - water must actually arrive at the sensor
+    flush_interval_s: 3600  # a held-closed circuit is re-opened this often
+    flush_pct: 100.0        # to take one honest reading
+
 safety:
   # Hard limits - layer 2 may only set setpoints WITHIN these bounds
   setpoint_min_c: 15.0
   setpoint_max_c: 28.0
   vl_max_heating_c: 45.0       # screed protection: close valves on hot supply
-  vl_min_cooling_c: 16.0       # condensation guard (static fallback; dew point
-                               # supervision via MQTT is a PLAN.md milestone)
+  vl_min_cooling_c: 16.0       # condensation guard - STATIC FALLBACK, used
+                               # only when no fresh dew point is available
+  # Live dew-point supervision (mqtt.dew_point_topic). The condensation limit
+  # is not physically a constant: it is the dew point of the indoor air. With
+  # a fresh reading the limit becomes dew_point + margin, which cuts BOTH
+  # ways - it permits colder supply when the air is dry (measured 2026-07-27:
+  # a 12.7 degC dew point against the 16.0 static limit was shutting circuits
+  # in no danger at all) and forbids supply the static value would have
+  # allowed when it is humid.
+  dew_point_margin_c: 2.0
+  dew_point_max_age_s: 900     # older than this -> fall back to the static value
+  vl_min_cooling_floor_c: 12.0 # hard floor on what a dew-point reading may
+                               # authorise, bounding a stuck-low humidity sensor
   frost_protect_c: 6.0         # below this return temp: force valve open
   sensor_fault_raw: [0x05DC, 0xFED4]  # wire-break / short-circuit saturation
   stale_data_timeout_s: 15     # no fresh input data -> failsafe
