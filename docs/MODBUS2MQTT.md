@@ -3,7 +3,7 @@
 **Decision taken 2026-07-26: `io.backend` is now `modbus_direct`.** This
 document is kept as the record of why, and as the spec any future bridge
 would have to satisfy. Reconnect/backoff in `modbus_direct` was implemented
-in the same change (PLAN.md Milestone 1). Nothing below is a pending task.
+in the same change (ROADMAP.md Milestone 1). Nothing below is a pending task.
 
 Goal: bridge the WAGO 750-352 to MQTT so heatctl's `mqtt` io backend and
 any other consumer see uniform topics.
@@ -100,7 +100,7 @@ more time trying to configure it into compliance.
   Milestone 0 item, unchanged.
 
 ### Consequence if `modbus_direct` becomes the primary path
-`Reconnect/backoff in modbus_direct` (PLAN.md Milestone 1) is currently
+`Reconnect/backoff in modbus_direct` (ROADMAP.md Milestone 1) is currently
 listed as hardening; it becomes a **prerequisite**. Today
 `ModbusDirectBackend.read_state()` raises on a failed read and there is no
 reconnect logic, so the documented behavior is "crash -> restart". In

@@ -56,7 +56,7 @@ io:
 
 mqtt:                          # control-plane broker (telemetry, setpoints, Shellys)
   # CURRENT state: HA's Mosquitto add-on is the broker, because the dedicated
-  # machine does not exist yet. TARGET (PLAN.md Milestone 4): mosquitto on the
+  # machine does not exist yet. TARGET (ROADMAP.md Milestone 4): mosquitto on the
   # dedicated machine at 127.0.0.1, with HA bridging into it - flip this back
   # to 127.0.0.1 then.
   host: 192.0.2.230

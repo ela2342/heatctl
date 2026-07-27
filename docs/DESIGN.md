@@ -5,7 +5,7 @@ for the full hydronic system (three heat sources, stratified buffer, DHW,
 floor heating/cooling), the physical model and estimator behind it, and an
 ordered implementation/validation roadmap. It is written so that each
 numbered work package can be handed to an implementing agent with no
-further context than this file, `PLAN.md`, `config.yaml` and
+further context than this file, `ROADMAP.md`, `config.yaml` and
 `docs/HARDWARE.md`.
 
 Notation: VL = Vorlauf (supply), RL = Rücklauf (return), AT = outdoor
@@ -32,7 +32,7 @@ Items marked `ASSUMPTION:` reflect the system description as of
 |---|---|---|
 | Buffer tank 1000 L, stratified | 5 temperature sensors (top→bottom), 8 kW element | Supports layered charging. Top zone serves DHW, mid/bottom serves floor heating and HP charging. |
 | Floor heating manifold | Per-circuit RL sensors + proportional valves (WAGO 750-352; see `config.yaml`) | Feed: pump + 3-way mixing valve from buffer. 10 active circuits, 7 rooms. |
-| FWS (DHW) | Pump + plate HX drawing from buffer top | On-demand; fast loop (100 ms) planned — PLAN.md Milestone 2; needs flow sensor. |
+| FWS (DHW) | Pump + plate HX drawing from buffer top | On-demand; fast loop (100 ms) planned — ROADMAP.md Milestone 2; needs flow sensor. |
 | HP return mixer | Mixing valve on HP return | ASSUMPTION: conditions the HP water-side return temperature (protect envelope / stabilize operation). Confirm intended function. |
 | Mode selection valves | Multi-way valves | Switch HP between (a) charging buffer with hot water and (b) cooling the floor directly (bypassing buffer). |
 | Solar PV | Existing small system; production visible in HA | No battery. PV surplus is the trigger for the 8 kW element and for load shifting. |
@@ -49,7 +49,7 @@ Items marked `ASSUMPTION:` reflect the system description as of
 
 ## 2. Control architecture: three layers
 
-Extends the existing two-layer design (PLAN.md) by making the layering
+Extends the existing two-layer design (ROADMAP.md) by making the layering
 explicit across the whole plant, not just the floor circuits.
 
 ```
@@ -171,7 +171,7 @@ The stove is manually fired; control can only *detect* it:
 ### 3.4 DHW
 - Guarantee: buffer top zone ≥ configurable minimum (e.g. 47 °C) during
   comfort hours; `DHW_BOOST` entered below hysteresis.
-- FWS: fast loop per PLAN.md Milestone 2 — feed-forward pump speed from
+- FWS: fast loop per ROADMAP.md Milestone 2 — feed-forward pump speed from
   flow, PID trims outlet temp; scald clamp is a safety rule.
 - Legionella: weekly boost of top zone (HP disinfection function exists on
   the PW58321 — P17–P21 — but running it via our own schedule keeps one
@@ -282,7 +282,7 @@ inner loop (per circuit, ~1–3 min):
   would preserve the lock-out forever. (A slab temp sensor per zone would
   remove the need — §10.)
 
-  **RESOLVED 2026-07-27** in `heatctl/rl_gate.py` (PLAN.md Milestone 1). RL
+  **RESOLVED 2026-07-27** in `heatctl/rl_gate.py` (ROADMAP.md Milestone 1). RL
   counts only after the valve has been commanded past `min_opening_pct` for
   `settle_s` — valve stroke *plus* hydraulic transport, per §4.1.5. Otherwise
   the circuit holds its last known-good command and is re-opened every
@@ -402,7 +402,7 @@ disagree.
   circuit is actuated: a trip zeroes all outputs, NC actuators shut, pump
   deadheads. Today it is safe only because most circuits are open pipe. This
   must be revisited in the same breath as fitting the remaining actuators —
-  see PLAN.md Milestone 0.
+  see ROADMAP.md Milestone 0.
 - **The minimum-flow figure is unknown.** Neither the number of circuits nor
   the total opening percentage that satisfies the pump has been measured. It
   has to be established before this logic can be tuned rather than guessed.
@@ -747,7 +747,7 @@ State everything in kWh with temperature-window constraints:
 | Slab thermal mass (all rooms) | ~1–2 kWh/K per room, several K usable | floor circuits | passive to rooms | room comfort band ± tolerance, screed ≤ 45 °C VL |
 | (no battery) | — | — | — | PV surplus is use-it-or-lose-it |
 
-Planner v1 (heuristic, no MPC — matches PLAN.md Milestone 3):
+Planner v1 (heuristic, no MPC — matches ROADMAP.md Milestone 3):
 ordered rules evaluated every 10–15 min, e.g.:
 1. Comfort floors first: DHW zone below min → schedule `DHW_BOOST` at the
    best COP slot within the allowed delay.
@@ -769,7 +769,7 @@ allowed to emit the same clamped MQTT requests.
 
 ## 9. Implementation roadmap (work packages with validation gates)
 
-Extends PLAN.md; Milestones 0–2 there stay unchanged and come first.
+Extends ROADMAP.md; Milestones 0–2 there stay unchanged and come first.
 Each WP lists: deliverable → validation gate (must pass before the next
 WP builds on it). An implementing agent should do exactly one WP per
 branch/PR.

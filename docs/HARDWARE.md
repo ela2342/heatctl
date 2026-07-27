@@ -266,7 +266,8 @@ commanded analog value is a *request*, not a measurement:
   somewhere between the old and new value. Any RL reading taken during that
   window reflects neither.
 
-TODO measure per valve type (one-off, cheap, and needed before WP-C):
+Measurement needed per valve type (tracked in `BACKLOG.md`; needed
+before WP-C, and a prerequisite for the distribution design, D-017):
 1. `open_threshold_pct` - ramp the output up in small steps, dwelling long
    enough at each, and find where RL first responds (loop starts flowing).
 2. `full_open_pct` - where further increase stops changing RL.
@@ -295,7 +296,7 @@ alive. What matters for *this* hardware map:
   WiFi. They are currently the only working room-air temperature source in the
   house, covering Gästebad and Wohnzimmer only (the others were lost in the
   same event). Mains-powered, so no battery/sleep constraints. They are an
-  **interim** source; per-room Shelly H&T is the target (see PLAN.md).
+  **interim** source; per-room Shelly H&T is the target (see ROADMAP.md).
 - The old server also still exposes a read-only JSON API that Home Assistant
   polls today via hand-written `rest:` sensors in its `configuration.yaml`.
   Those are the entities heatctl's own MQTT discovery eventually replaces.

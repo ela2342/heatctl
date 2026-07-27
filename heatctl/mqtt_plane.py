@@ -255,13 +255,10 @@ class ControlPlane:
         })
 
         # --- house demand / source engagement (diagnostic) ---
-        # Discovered even while the demand controller is in shadow mode: the
-        # entire point of shadow mode is being able to plot what heatctl WOULD
-        # command against what the HA automations actually do, before it takes
-        # the heat pump over. Compare `heatctl_source_request` against
-        # `binary_sensor.heat_pump_pump_request`.
+        # What heatctl is holding the heat pump's power at. It is a
+        # reconciler, so in normal operation this simply reads on (D-016).
         await disc("binary_sensor", "source_request", {
-            "name": "Source request (shadow)",
+            "name": "Source request",
             "state_topic": f"{self.base}/demand/source_request",
             "payload_on": "1", "payload_off": "0",
             "entity_category": "diagnostic",

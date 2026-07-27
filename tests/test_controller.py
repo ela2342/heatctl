@@ -11,7 +11,7 @@ import time
 import pytest
 
 
-# ---------- REGRESSION (a), mandated by PLAN.md Milestone 1 ----------
+# ---------- REGRESSION (a), mandated by ROADMAP.md Milestone 1 ----------
 
 def test_starting_in_cooling_from_config_inverts_the_pids(controller):
     """Real defect, 2026-07-26, found by a hardware test.

@@ -1,3 +1,17 @@
+# Roadmap
+
+**What this is:** where the system is going, milestone by milestone, and the
+record of what has already been done and why. Completed items keep their full
+rationale — that history is the point, not clutter.
+
+**What this is NOT:** the list of things to do. That is `BACKLOG.md`, which is
+the single source of truth for open work. Each milestone below names the
+backlog items belonging to it rather than restating them, so nothing is
+tracked in two places.
+
+See also `docs/DECISIONS.md` for decisions that established a principle or
+reversed an earlier one, referenced by stable ID (`D-nnn`).
+
 # heatctl - development plan (to be executed with Claude Code)
 
 ## Context for the model
@@ -53,6 +67,8 @@ Room sensors still arrive via MQTT regardless of this choice.
   circuits 5 and 12 out of service).
 
 ## Milestone 0 - bring-up (manual, no code)
+
+
 - [x] Verify valve<->circuit mapping (2026-07-27, owner): **it is 1:1 with
       the circuit number** - analog output n drives circuit n, and input n is
       that circuit's return sensor. Also resolved the Wohnzimmer 8/9/10 valve
@@ -64,27 +80,6 @@ Room sensors still arrive via MQTT regardless of this choice.
       fitted there. See docs/HARDWARE.md.
       The hk07/hk10 room mapping was settled separately on 2026-07-26 from the
       Controme database and is unaffected.
-- [~] Hardware: the **2x 750-559 arrived and are fitted** (2026-07-27,
-      positions 9 and 10), so there are now 16 analog outputs - enough for all
-      12 circuits plus spares. Still open: the 750-1606 (enough 0V terminals
-      for all 12 valves) status is unconfirmed, and **only 2 actuators are
-      physically on the manifold** - Gästebad (circuit 1) and Wohnzimmer
-      (circuit 2). A module arriving is not an actuator being fitted; keep
-      `fitted:` in config.yaml honest about the difference.
-      WHEN THEY ARE FITTED, two decisions expire together and must be
-      revisited in the same breath - both are safe today only because most
-      circuits are unthrottleable open pipe:
-      (a) the coupler watchdog's fail-closed trip, which would then shut every
-      circuit and deadhead the pump into Er03;
-      (b) heat-demand logic, which needs the minimum-flow figure - see the
-      Milestone 1 item and docs/DESIGN.md 4.3.
-      Also flip `fitted: true` per valve channel in config.yaml as each
-      actuator goes on, or heatctl will keep treating that circuit as open
-      pipe and skip RL validity gating for it.
-- [~] NOT APPLICABLE - modbus2mqtt abandoned, see docs/MODBUS2MQTT.md. Was:
-      Configure modbus2mqtt on the dev host (or HA add-on for prototyping):
-      poll input registers 12-27 (temps), write holding registers 12-19.
-      Document the exact register map + topics in docs/MODBUS2MQTT.md
 - [x] Enable the coupler's Modbus watchdog. Was DISABLED as of
       2026-07-26, so there is no hardware failsafe at all right now. Steps:
       (a) DONE 2026-07-26 from the manual: use Type **Standard** with coding
@@ -127,8 +122,11 @@ Room sensors still arrive via MQTT regardless of this choice.
       broker account; a dedicated credential would be tidier (see
       deploy/systemd/README.md).
 
+
 ## Milestone 1 - harden layer 1
-- [x] pytest suite (2026-07-27, 88 tests, ~2 s): PID (direction, invert,
+
+
+- [x] pytest suite (2026-07-27, 232 tests, ~5 s by the end of that day): PID (direction, invert,
       anti-windup, clamping), Safety (every rule, asserted by *direction* -
       fail-open vs fail-closed), Controller (mode wiring, both control paths,
       staleness, telemetry, system-return tracking), modbus_direct against a
@@ -196,53 +194,6 @@ Room sensors still arrive via MQTT regardless of this choice.
       closed. Which is why the periodic flush, not the hold, is the
       load-bearing part of the fix.
       Full scheduled flush-and-remeasure remains docs/DESIGN.md section 4.
-- [~] Heat-demand logic (replaces the HA automations "Steuerung der
-      Wasserpumpe..."). **Logic built and running in SHADOW MODE 2026-07-27**
-      (`heatctl/demand.py`, `control.source_demand`, 21 tests). It computes
-      house deviation, the flow proxy, the mode it would pick and whether it
-      would run the source, and publishes all of it - including HA entities
-      `binary_sensor.heatctl_source_request_shadow`,
-      `sensor.heatctl_house_deviation`,
-      `sensor.heatctl_circuit_opening_flow_proxy` and
-      `sensor.heatctl_source_decision` - while acting on NOTHING.
-      First live cycle agreed with the plant: house -0.59 K, flow proxy 75 %,
-      "demand -0.59 K, flow 75%" -> source ON, and the real pump request was
-      also on.
-      Flow floor is the owner's measured 40 % mean opening, counting
-      unactuated circuits as 100 % because they are open pipe. That is why the
-      proxy reads ~75 % today and why no stall is possible yet.
-      REMAINING, and to be done as ONE migration with the owner present:
-      set `source_demand.enabled` (and `auto_mode` if wanted), have heatctl
-      write WSDEV0001 register 0 bit 0 - which needs a second Modbus client,
-      to the Waveshare RTU gateway, not the WAGO coupler - and disable
-      `Heat pump: circulation pump request` in HA in the same step. Watch the
-      shadow entities against `binary_sensor.heat_pump_pump_request` first;
-      they should track before anything is switched over.
-      DESIGN, owner's decision 2026-07-27 - see
-      docs/DESIGN.md 4.3 for the full reasoning. It is NOT "request the pump
-      when sum of valve openings > X": source demand and minimum-flow
-      protection are ONE problem. Aggregate per-ROOM deviation into a signed
-      house demand (too cold -> heating, too warm -> cooling) and engage the
-      source only when that demand is large enough that the valve openings it
-      implies keep flow above the pump's minimum. Below that, run nothing.
-      Compute demand from room deviation, NEVER from valve position: valves
-      also close for safety reasons, and gating on openings would read a
-      dew-point closure as "no demand", stop the source, and prevent the
-      supply from recovering. That is the same latch-up shape as the
-      condensation bug of 2026-07-26.
-      Mode selection needs a deadband and a long dwell or the plant flaps.
-      This is plant-level only - rooms keep one target each.
-      PREREQUISITE, not yet done: measure the minimum flow. Neither the number
-      of open circuits nor the total opening percentage the pump needs is
-      known, so the threshold can currently only be guessed.
-      Also note Er03 (the pump's own water-flow failsafe) is ALREADY firing -
-      25 times in the 10 days to 2026-07-27, ~10 s each, coincident with
-      compressor stops, while the pump runs at 100 % with seven of nine
-      circuits open pipe. So it is not valve-driven today, and whatever does
-      cause it should be understood before adding flow restriction on top.
-      WARNING unchanged: while those HA automations are active, heatctl must
-      NOT write WSDEV0001 register 0 (two writers doing read-modify-write on a
-      flag register = race). Migrate in one step, then disable them in HA.
 - [x] Cooling: source-side response to a supply-below-dew-point breach.
       DECIDED 2026-07-26 (owner's call): raising P04 is sufficient - the heat
       pump reacts to setpoint changes quickly, and a few minutes of supply
@@ -279,23 +230,6 @@ Room sensors still arrive via MQTT regardless of this choice.
       checking fail-open first meant one faulted return sensor forced its
       circuit open even while the supply was measurably below the dew point -
       condensation protection defeated by an unrelated sensor fault.
-- [ ] DEFERRED, deliberately: put the dew-point margin on a proper footing.
-      `dew_point_margin_c: 2.0` is EMPIRICAL - it matches the margin the HA
-      supervisory loop has run at without condensation.
-      What it is NOT is a screed-gradient correction. The floor build-up is
-      vapour-permeable, so condensation happens throughout the slab and
-      directly on the PIPE WALL, which sits essentially at water temperature.
-      Supply temperature is therefore very nearly the surface that matters and
-      there is no hidden reserve standing behind it. So the margin has to
-      cover measurement uncertainty and the spread of indoor dew point between
-      rooms - not a thermal gradient. Sizing it means quantifying sensor error
-      and inter-room dew-point spread (we currently measure humidity in two
-      rooms), which is data we do not have yet. Not worth blocking on: the
-      empirical value has a track record. Revisit when more rooms report
-      humidity, or sooner if condensation is ever observed.
-      Note condensation inside the slab is INVISIBLE - no wet patch will
-      prompt anyone to intervene. That is a standing argument against relaxing
-      any of this.
 - [x] Room air sensors, interim (2026-07-26): all three available sources are
       live - Arbeitszimmer subscribes to its sensor's own MQTT topic directly,
       Gaestebad and Wohnzimmer are bridged from HA including their dial
@@ -322,11 +256,6 @@ Room sensors still arrive via MQTT regardless of this choice.
       with no equivalent rather than faking them.
       Full detail in docs/HA_INTEGRATION.md. Step toward switching the legacy
       server off, not just tidying.
-- [ ] Room air sensors, target: Shelly H&T per room via MQTT (none bought
-      yet). This is still the long-term plan; the legacy wall-unit bridge above
-      is interim plumbing with a finite life. Rooms without either source
-      keep running on the return-temperature fallback.
-
 - [x] Load compensation: house demand -> water setpoint (2026-07-27,
       `heatctl/setpoint.py`). Until this existed the water temperature was a
       constant that only ever moved upward, defensively, when the condensation
@@ -358,74 +287,29 @@ Room sensors still arrive via MQTT regardless of this choice.
       are deliberately NOT discovered - 312 diagnostic entities would bury
       everything useful.
 
-## Open items raised but not yet scheduled
 
-Collected here because they were decided verbally and would otherwise exist
-only in a chat log. Each is small; none is urgent; all of them bite later.
-
-- [~] ~~Seasonal lockout for `auto_mode`~~ - **PROPOSED AND REJECTED**
-      (owner, 2026-07-27): this site has seen below freezing in August, so an
-      outdoor-temperature guard would refuse heating exactly when a freak cold
-      snap needed it. The house average is the right signal precisely because
-      it does not care what month it is. Kept here rather than deleted so the
-      idea is not re-proposed. If a transient (an evening of ventilation) does
-      cause a spurious switch, the lever is a LONGER DWELL, not a lockout -
-      currently one hour, see D-020.
-- [ ] **Source-side last resort when safety costs us flow.** The distribution
-      design guarantees flow only for the CONTROL proposal; `Safety.apply` runs
-      afterwards and may close circuits for condensation or screed overtemp. If
-      it closes enough of them, flow is genuinely lost and the correct
-      escalation is to stop the unit - the one place "measure of last resort"
-      actually applies. Currently unimplemented: safety can starve the pump and
-      nothing notices.
-- [ ] **Measure the actuator deadband, both ends.** `open_threshold_pct` and
-      `full_open_pct` are identity placeholders. "Normalise so the peak circuit
-      is fully open" only means what it says once `full_open_pct` is measured,
-      and the owner suspects an upper deadband mirroring the lower one. Needs
-      actuators fitted plus a characterisation run (docs/DESIGN.md 4.1.2, 4.5).
-- [ ] **Tune `distribution.eps`.** The flow/discrimination trade-off, currently
-      a guess at 5.0. First thing to revisit once there is recorded data - see
-      the evaluation checklist in docs/DESIGN.md 4.5.
-- [ ] **A decision log.** Several decisions have now been reversed - register 0
-      bit 0 is power not the water pump, the condensation guard scoped back to
-      cooling, the source stays on rather than tracking demand, the valve
-      mapping is 1:1, InfluxDB was recording all along. Those reversals live
-      only in commit messages, which is the least discoverable place in a
-      project whose premise is thirty years. The rationale is well recorded at
-      the point of use; the *history* is not.
-- [ ] **Retire the legacy Controme Mini Server.** Everything still depending on
-      it is now enumerated in docs/HA_INTEGRATION.md: the two wall units' room
-      temperature and dial setpoints, the humidity feeding the dew-point
-      reference, and the HomeKit bridge. Shelly H&T per room is the long-term
-      replacement (Milestone 1).
+- [x] Heat-demand logic (2026-07-27), replacing the HA automations
+      "Steuerung der Wasserpumpe...". The design was CORRECTED mid-flight and
+      the correction is the useful part - see D-016. It is a RECONCILER, not an
+      on/off controller: the heat pump regulates itself, starting and stopping
+      its own compressor and varying power from the leaving/return spread, so
+      heatctl holds the unit powered and only powers down on an explicit `off`.
+      The original design stopped the source when the house was satisfied, and
+      again when flow fell low; both were wrong, and the second was circular -
+      valve position is heatctl's own output.
+      `source_demand.enabled` and `auto_mode` are both on, so the house average
+      also picks the plant mode (D-020) and heatctl writes the pump's mode
+      register (0x0004) to match. heatctl is sole Modbus master for the unit
+      (D-013), and every write is transition-only because they wear its flash.
 
 ## Milestone 2 - DHW station (fresh water) fast loop
-- [ ] Flow sensor with pulse output on a digital input (16DI terminal,
-      discrete inputs FC2) - hardware addition
-- [ ] Feed-forward: pump speed (0-10V, spare 750-559 channel) as a
-      function of flow; temperature PID only trims
-- [ ] Separate asyncio task at 100 ms using modbus_direct ONLY;
-      temperatures stay at 1 s (750-463 limit)
+
 
 ## Milestone 3 - layer 2 (`optimizer/`, separate process/container)
-- [ ] System identification from heatctl.sqlite: fit step responses per
-      room/circuit (first/second-order models, scipy.optimize), report
-      time constants
-- [ ] Weather forecast (Open-Meteo, no API key) + PV forecast
-- [ ] Heuristic v1 (no MPC): rule-based setpoint shifting, e.g. "PV surplus
-      expected in <4 h and buffer < X -> postpone buffer charging"
-- [ ] MPC v2 optional (cvxpy), only after v1 runs and models are validated
-- [ ] Everything via `heatctl/set/setpoint/<room>` and `heatctl/set/mode`
+
 
 ## Milestone 4 - production
-- [ ] Dedicated machine next to the coupler: mosquitto + modbus2mqtt +
-      heatctl via systemd (deploy/systemd/), hardware watchdog,
-      consider read-only rootfs
-- [ ] HA: bridge HA-Mosquitto <-> dedicated broker; remove WAGO-related
-      HA modbus config and automations
-- [ ] Backup: config.yaml + sqlite; vendor dependencies (pip download)
-      for long-term reproducibility
-- [ ] Keep docs/HARDWARE.md current: every terminal, wire and register
+
 
 ## Conventions
 - Python >=3.11, stdlib + pinned minimal deps, type annotations everywhere

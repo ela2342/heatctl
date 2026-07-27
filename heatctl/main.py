@@ -91,10 +91,10 @@ class Controller:
 
         self.rl_gate = RLGate(cfg)
 
-        # House demand / source engagement. SHADOW by default: it computes and
-        # publishes, and nothing acts on it. The heat pump still has another
-        # writer (the HA automations) until WP-B, and single-writer is a hard
-        # rule - see docs/DESIGN.md 2.1 and 4.3.
+        # House demand / source engagement. A RECONCILER, not an on/off
+        # controller: it holds the unit powered and only powers down on an
+        # explicit `off` (D-016). It also picks the plant mode when auto_mode
+        # is on (D-020).
         # Heat pump client. Its own task at its own (slow) cadence - the
         # device documents a 200 ms minimum between transactions, so it must
         # never share the 1 s valve loop. See docs/HEATPUMP.md.
@@ -522,10 +522,7 @@ class Controller:
             await self.plane.publish(
                 f"valve_mismatch/{n}", f"{state.valves_readback_pct[n]:.0f}")
 
-        # Demand telemetry. Published even while the demand controller is in
-        # shadow mode - that is the whole point of shadow mode: watch what it
-        # WOULD do against what the HA automations actually do, before it owns
-        # the heat pump.
+        # The signals the evaluation in docs/DESIGN.md 4.5 is built on.
         lw, rw = self.hp.status.get(0x8012), self.hp.status.get(0x800E)
         if lw is not None and rw is not None:
             # Leaving/return spread: the efficiency indicator. Maximising flow

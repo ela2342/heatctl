@@ -1,7 +1,7 @@
 # Decision log
 
 **What belongs here:** a decision that establishes a principle, or that
-*reverses* an earlier one. Not routine work — that is in `PLAN.md`.
+*reverses* an earlier one. Not routine work — that is in `ROADMAP.md`.
 
 **Why it exists:** rationale is recorded well at the point of use (module
 docstrings, `config.yaml` comments), which serves someone reading that code.
@@ -107,7 +107,7 @@ condensation protection defeated by an unrelated fault. Frost still outranks
 everything.
 
 ## D-012 · Register `0x0000` bit 0 is the unit's POWER, not the water pump
-**Supersedes** an assumption inherited from `PLAN.md`, which the HA automation
+**Supersedes** an assumption inherited from the roadmap, which the HA automation
 and a template helper were both built to match — three sources, one unverified
 origin. The pump knob is bit 4. **Consequences:** the automation that "held the
 pump request set" was holding the whole unit powered on; the condensation

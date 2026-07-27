@@ -67,9 +67,9 @@ class Demand:
 class DemandController:
     def __init__(self, cfg: dict, can_command_source_mode: bool = False):
         d = dict(cfg["control"].get("source_demand") or {})
-        # Shadow by default: compute and publish, let nothing act on it. The
-        # heat pump has another writer until WP-B, and this logic has to be
-        # watched against the plant before it owns anything.
+        # `enabled` gates ACTING on source_request (holding the unit
+        # powered). Off means compute and publish only, which is how this was
+        # first run against the plant before it owned anything.
         # TWO independent switches, deliberately:
         #   enabled   - act on source_request, i.e. run or stop the plant
         #   auto_mode - pick WHICH mode (heating vs cooling) from the house

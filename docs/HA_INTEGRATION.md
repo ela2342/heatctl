@@ -10,7 +10,7 @@ does. Addresses follow the repo convention: placeholders, real values in local
 notes.
 
 Migration direction: everything here is either interim plumbing or logic that
-`heatctl` should eventually own (PLAN.md Milestone 1 / WP-B). Nothing here is
+`heatctl` should eventually own (ROADMAP.md Milestone 1 / WP-B). Nothing here is
 meant to be permanent.
 
 ## Entities heatctl publishes (MQTT discovery, automatic)

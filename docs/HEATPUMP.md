@@ -31,7 +31,7 @@ Two constraints from the manual that shape any implementation:
 
 **`0x0000` bit 0 is the unit's POWER ON/OFF — it is NOT the water pump.**
 
-`PLAN.md` asserted "register 0 = control flags (bit 0 = water pump)", the HA
+`ROADMAP.md` asserted "register 0 = control flags (bit 0 = water pump)", the HA
 automation `Heat pump: circulation pump request` was written to match, and the
 `binary_sensor.heat_pump_pump_request` helper decodes that same bit. Three
 sources, one unverified origin, and it was wrong.
@@ -90,7 +90,7 @@ measured supply rather than by clamping a setpoint. See
   "Stop the source when flow is too low" was written meaning "park the pump".
   Doing it via `0x0000` bit 0 powers the unit down instead. Whether that is
   what we want, or whether bit 4 / F2 / F3 are the right levers, is an open
-  design question — see PLAN.md.
+  design question — see ROADMAP.md.
 - **The read-modify-write race is worse than documented.** The HA automation
   reads `0x0000` (polled at 10 s), ORs in `0x01`, and writes the whole register
   back — which blindly restores up to 10 s of staleness across bits 1–6,

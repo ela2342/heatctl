@@ -209,7 +209,7 @@ def test_auto_mode_is_refused_while_the_pump_mode_cannot_be_commanded(cfg, caplo
     """heatctl flipping its own mode while the heat pump stays put is worse
     than not switching: the valve loop would drive the wrong direction with
     the wrong water. Register 0 bit 0 (water pump) is the only writable bit
-    established; the mode bit is unknown. See PLAN.md WP-B.
+    established; the mode bit is unknown. See BACKLOG.md and D-012.
     """
     cfg["control"]["source_demand"] = {"enabled": True, "auto_mode": True}
     with caplog.at_level("ERROR", logger="heatctl.demand"):

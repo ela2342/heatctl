@@ -34,7 +34,7 @@ part, not the hold. Holding alone would preserve the lock-out.
 The rule implemented here: RL means something only after the valve has been
 commanded meaningfully open for long enough that water has actually travelled
 the loop. Otherwise the circuit is held, and re-measured periodically by
-flushing. This is the minimal mitigation named in PLAN.md Milestone 1; the
+flushing. This is the minimal mitigation named in ROADMAP.md Milestone 1; the
 full scheduled flush-and-remeasure design is docs/DESIGN.md section 4.
 
 Two deliberate choices:

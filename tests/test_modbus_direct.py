@@ -214,7 +214,7 @@ async def test_watchdog_is_not_touched_when_disabled(backend):
     assert c.regs[WD_MASK_1_16] == 0
 
 
-# ---------- REGRESSION (b), mandated by PLAN.md: reconnect / backoff ----------
+# ---------- REGRESSION (b), mandated by ROADMAP.md: reconnect / backoff ----------
 
 async def test_start_never_raises_when_the_coupler_is_unreachable(cfg):
     """A dead coupler must not prevent the controller from starting.

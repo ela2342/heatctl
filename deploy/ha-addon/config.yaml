@@ -35,7 +35,7 @@ map:
 services:
   - mqtt:want
 
-# Layer 1 must never call Home Assistant APIs (see CLAUDE.md / PLAN.md). These
+# Layer 1 must never call Home Assistant APIs (see CLAUDE.md / ROADMAP.md). These
 # are the Supervisor defaults, set explicitly so the manifest states the rule.
 hassio_api: false
 homeassistant_api: false

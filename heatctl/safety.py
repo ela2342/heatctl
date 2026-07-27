@@ -67,7 +67,7 @@ class Safety:
         temperature. Supply temperature is therefore very nearly the surface
         that matters, with no hidden reserve behind a screed gradient. What
         the margin has to cover is measurement error and the spread of indoor
-        dew point between rooms. Sizing it properly is a PLAN.md item.
+        dew point between rooms. Sizing it properly is a BACKLOG.md item.
 
         Worth knowing when tempted to relax any of this: condensation inside
         the slab is invisible. There is no wet patch to prompt anyone to
