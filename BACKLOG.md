@@ -77,6 +77,28 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
       escalation is to stop the unit - the one place "measure of last resort"
       actually applies. Currently unimplemented: safety can starve the pump and
       nothing notices.
+- [ ] **The below-dew-point cooling limit has NO hysteresis, and it visibly
+      limit-cycles.** Observed live 2026-07-27 23:19-23:23: supply fell through
+      the limit (15.4 = dew 13.4 + 2.0), safety forced hk11 to 0, supply
+      recovered, hk11 went back to 100 at 15.4 - closed at 15.3, reopened at
+      15.4. Safety behaved exactly as designed (fail CLOSED on known-bad
+      supply, D-011) and the house never moved, so this is not a defect and
+      not urgent. But two things follow:
+      (a) A 0.1 K band on a 150 s actuator (D-022) means a valve can be
+          commanded 0 -> 100 -> 0 without ever completing travel, so its real
+          position becomes unknown - the one state the whole design tries to
+          avoid. Wants a deadband on the RELEASE edge (reopen at limit + h),
+          not on the trip edge, which must stay immediate.
+      (b) The cycle is driven by the unit undershooting: it targets 20 degC
+          RETURN water, return sits at ~20.3, so it keeps driving and leaving
+          water goes to ~14. Load compensation (D-018) is the right lever;
+          check whether it is actually authorised to raise the cooling
+          setpoint here, or whether it is sitting at a clamp.
+      Also worth remembering when reading these traces: only circuits 1 and 2
+      have actuators fitted, so forcing hk11 closed changes almost no real
+      flow. Most of the observed recovery is the heat pump's own modulation,
+      not our valve action.
+
 - [~] **Actuator characterisation - LARGELY SETTLED from the datasheet
       (2026-07-27, D-022).** The valves are Moehlenhoff Alpha 5
       `APV 42505-00`, and the APV variant has valve-travel detection: it
