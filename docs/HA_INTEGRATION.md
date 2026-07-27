@@ -126,3 +126,46 @@ re-enabled; that is fine, since re-enabling them caused an outage on
 
 This whole `rest:` block dies with the Mini Server anyway, so the above is a
 step toward switching that machine off, not just tidying.
+
+
+## Operational state changed on 2026-07-27 — READ THIS BEFORE DEBUGGING HA
+
+Things that were deliberately turned off or commented out on the Home Assistant
+side that day. Written down because none of it is discoverable from the running
+system: an automation that is off looks the same as one that never existed, and
+a commented-out YAML block looks like it was never configured.
+
+### Disabled, and NOT to be re-enabled without thought
+| What | State | Why | What replaced it |
+|---|---|---|---|
+| `automation.heat_pump_circulation_pump_request` | **off** | It wrote register 0 bit 0, which is the unit's POWER, not the water pump (docs/HEATPUMP.md). Two masters on one RS485 bus also cannot honour the device's 200 ms minimum. | heatctl's `source_demand` reconciler holds the unit powered |
+| `automation.climate_chilling_setpoint_supervisory_loop` | **off** | Same bus contention; and the setpoint now has one owner. | heatctl's water-setpoint loop (`control.water_setpoint`), whose breach branch is the direct port |
+| `automation.climate_prevent_condensation_with_modbus_fallback` | **off** | Same. | heatctl's `safety.cooling_requires_dew_point` (valve side) plus the setpoint loop's breach jump (source side) |
+| `modbus:` block in `/config/configuration.yaml` | **commented out** | heatctl is now sole Modbus master for the heat pump - two independent masters cannot honour the 200 ms interval and demonstrably interfered. | heatctl publishes every register over MQTT; HA consumes those entities |
+| 4 HomeKit `climate` + `sensor` entities (Bad, both Kinderzimmer, Elternschlafzimmer) | **registry-disabled** | They report a hardcoded 10 degC - Controme's placeholder for "no sensor" - which HA renders as an ordinary live reading. | nothing needed; the rooms have no sensor |
+
+Backups on the host: `/config/configuration.yaml.bak-modbus-*` (before the
+modbus block was commented out) and `/config/configuration.yaml.bak-*` (before
+the dead REST sensors were removed).
+
+**The HomeKit config entry itself was deliberately NOT deleted** - re-adding it
+needs a pairing code, so it is not trivially reversible. Disable, do not delete,
+until the Mini Server is actually decommissioned.
+
+### Still live and load-bearing
+- `automation.heatctl_bridge_legacy_wall_unit_room_temps_to_mqtt` - room
+  temperature AND dial setpoint for Gaestebad and Wohnzimmer. Without it those
+  two rooms lose their air sensor and fall back to return-temperature control.
+- `automation.heatctl_publish_indoor_dew_point_to_mqtt` - **safety-critical**.
+  heatctl stops cooling entirely without a fresh dew point
+  (`cooling_requires_dew_point`), so if this automation stops, cooling stops.
+  That is the intended failure direction, but know that it is the cause.
+- `sensor.system_dew_point_reference` and the two rooms' `luftfeuchte` REST
+  sensors that feed it.
+
+### Recording
+InfluxDB receives everything via a **config entry**, not an `influxdb:` YAML
+block - so the absence of YAML is not evidence that recording is off. That
+mistake was made and corrected on 2026-07-27. Verified by querying Influx
+directly: heatctl circuits, setpoints and heat pump registers all landing at
+full resolution. Grafana add-on is installed alongside.

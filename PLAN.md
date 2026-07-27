@@ -358,6 +358,45 @@ Room sensors still arrive via MQTT regardless of this choice.
       are deliberately NOT discovered - 312 diagnostic entities would bury
       everything useful.
 
+## Open items raised but not yet scheduled
+
+Collected here because they were decided verbally and would otherwise exist
+only in a chat log. Each is small; none is urgent; all of them bite later.
+
+- [ ] **Seasonal lockout for `auto_mode`.** Nothing currently stops a July
+      switch to heating except a 1 K deadband sustained for an hour, on an
+      average of the three rooms that have sensors. An evening of ventilation
+      could do it. The pump reports outdoor ambient (`0x8011`), so the guard is
+      cheap: refuse heating above ~18 degC ambient, refuse cooling below
+      ~12 degC.
+- [ ] **Source-side last resort when safety costs us flow.** The distribution
+      design guarantees flow only for the CONTROL proposal; `Safety.apply` runs
+      afterwards and may close circuits for condensation or screed overtemp. If
+      it closes enough of them, flow is genuinely lost and the correct
+      escalation is to stop the unit - the one place "measure of last resort"
+      actually applies. Currently unimplemented: safety can starve the pump and
+      nothing notices.
+- [ ] **Measure the actuator deadband, both ends.** `open_threshold_pct` and
+      `full_open_pct` are identity placeholders. "Normalise so the peak circuit
+      is fully open" only means what it says once `full_open_pct` is measured,
+      and the owner suspects an upper deadband mirroring the lower one. Needs
+      actuators fitted plus a characterisation run (docs/DESIGN.md 4.1.2, 4.5).
+- [ ] **Tune `distribution.eps`.** The flow/discrimination trade-off, currently
+      a guess at 5.0. First thing to revisit once there is recorded data - see
+      the evaluation checklist in docs/DESIGN.md 4.5.
+- [ ] **A decision log.** Several decisions have now been reversed - register 0
+      bit 0 is power not the water pump, the condensation guard scoped back to
+      cooling, the source stays on rather than tracking demand, the valve
+      mapping is 1:1, InfluxDB was recording all along. Those reversals live
+      only in commit messages, which is the least discoverable place in a
+      project whose premise is thirty years. The rationale is well recorded at
+      the point of use; the *history* is not.
+- [ ] **Retire the legacy Controme Mini Server.** Everything still depending on
+      it is now enumerated in docs/HA_INTEGRATION.md: the two wall units' room
+      temperature and dial setpoints, the humidity feeding the dew-point
+      reference, and the HomeKit bridge. Shelly H&T per room is the long-term
+      replacement (Milestone 1).
+
 ## Milestone 2 - DHW station (fresh water) fast loop
 - [ ] Flow sensor with pulse output on a digital input (16DI terminal,
       discrete inputs FC2) - hardware addition
