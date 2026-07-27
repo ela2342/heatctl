@@ -235,15 +235,21 @@ Room sensors still arrive via MQTT regardless of this choice.
       which is also how their display/interval settings get configured - see
       the local notes outside this repository for the details. Only some units
       survived the overvoltage event, so this covers 2 rooms, not the house.
-- [ ] Clean up the dead legacy REST entities in HA. Most of the ~40 read
-      null/0 permanently (fed by the retired floor gateway) AND are superseded
-      by heatctl's own published sensors, so the entity list is now actively
-      misleading. docs/HA_INTEGRATION.md lists exactly which are safe to remove,
-      which MUST be kept because live control depends on them (the two rooms'
-      temperature, humidity and dial setpoint), and which to leave dormant.
-      Check nothing still references sensor.average_valve_opening first - the
-      two legacy pump automations are off but not deleted. Step toward switching
-      the legacy server off, not just tidying.
+- [x] Clean up the dead legacy Controme entities in HA (2026-07-27). Removed
+      12 `rl_*`, 11 `ventil_*` and the min_max over them from
+      configuration.yaml (backup + `ha core check` + registry purge); kept the
+      eight REST sensors live control depends on. Turned out there were THREE
+      paths carrying the same legacy data, not one: the HomeKit bridge
+      (`homekit_controller`, 29 entities) is easy to miss because it is an
+      integration rather than YAML, and four of its seven rooms report a
+      hardcoded 10 degC - Controme's placeholder for "no sensor", which HA
+      presents as an ordinary live reading. Those are disabled; the config
+      entry is deliberately NOT deleted, since re-adding it needs a HomeKit
+      pairing code. The "Test" dashboard was the only consumer of the removed
+      sensors and was migrated to heatctl's equivalents first, dropping cards
+      with no equivalent rather than faking them.
+      Full detail in docs/HA_INTEGRATION.md. Step toward switching the legacy
+      server off, not just tidying.
 - [ ] Room air sensors, target: Shelly H&T per room via MQTT (none bought
       yet). This is still the long-term plan; the legacy wall-unit bridge above
       is interim plumbing with a finite life. Rooms without either source
