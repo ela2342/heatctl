@@ -327,6 +327,37 @@ Room sensors still arrive via MQTT regardless of this choice.
       is interim plumbing with a finite life. Rooms without either source
       keep running on the return-temperature fallback.
 
+- [x] Load compensation: house demand -> water setpoint (2026-07-27,
+      `heatctl/setpoint.py`). Until this existed the water temperature was a
+      constant that only ever moved upward, defensively, when the condensation
+      guard shoved it there - nothing connected "the house is 0.6 K too warm"
+      to "make water at N degC". Signal is BOTH house deviation and valve
+      saturation, because water colder than needed does not make the house
+      colder, it just makes the valves throttle it back: the error is
+      invisible in room temperature and shows up only as COP and condensation
+      risk. 1 K every 30 min (owner), integer and hysteretic, because every
+      write wears the pump's flash and the slab has hours of thermal mass.
+      A measured leaving-water breach bypasses the cadence - that is a safety
+      event, not a trim. This also subsumes the old HA chilling-setpoint loop,
+      so the setpoint has ONE owner.
+      Honest limit while only two circuits are actuated: the other eight are
+      open pipe and cannot throttle, so valve saturation barely reflects load
+      and the loop effectively runs on house deviation alone.
+- [x] Data recording verified working (2026-07-27). Home Assistant forwards to
+      the InfluxDB add-on via a CONFIG ENTRY, not a `influxdb:` YAML block -
+      an earlier note in this session wrongly concluded "no YAML, therefore not
+      recording". Confirmed by querying Influx directly: heatctl's circuits,
+      setpoints and heat pump registers are all landing at full resolution.
+      heatctl's own SQLite is now a 14-day rolling buffer rather than an
+      archive - the layer-1-independent fallback for when HA is the thing that
+      broke. Unbounded it would have been about a GB a year.
+      Everything heatctl knows is now exposed as an entity (and so recorded):
+      valve command AND read-back, the demand signals, the water-setpoint
+      decision, plant/pump mode agreement, and every decoded heat pump value
+      including all 20 fault bits. The 312 raw registers stay on hp/raw/# but
+      are deliberately NOT discovered - 312 diagnostic entities would bury
+      everything useful.
+
 ## Milestone 2 - DHW station (fresh water) fast loop
 - [ ] Flow sensor with pulse output on a digital input (16DI terminal,
       discrete inputs FC2) - hardware addition

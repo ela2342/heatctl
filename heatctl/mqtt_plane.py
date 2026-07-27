@@ -233,6 +233,27 @@ class ControlPlane:
             else:
                 await undisc("sensor", ch["name"])
 
+        # Actual output position, read back from the coupler. Recorded
+        # separately from the command because the two diverge only when
+        # something else moved the outputs - invisible unless both exist.
+        for ch in self.cfg["valves"]["channels"]:
+            if ch["name"] in assigned:
+                await sensor(f"{ch['name']}_actual", f"{ch['name']} actual",
+                             f"valve_actual/{ch['name']}", "%")
+
+        await disc("binary_sensor", "hp_mode_agrees", {
+            "name": "Plant and heat pump modes disagree",
+            "state_topic": f"{self.base}/hp/mode_agrees",
+            "payload_on": "0", "payload_off": "1",   # a problem when they differ
+            "device_class": "problem",
+            "entity_category": "diagnostic",
+        })
+        await disc("sensor", "water_sp_reason", {
+            "name": "Water setpoint decision",
+            "state_topic": f"{self.base}/water_sp/reason",
+            "entity_category": "diagnostic",
+        })
+
         # --- house demand / source engagement (diagnostic) ---
         # Discovered even while the demand controller is in shadow mode: the
         # entire point of shadow mode is being able to plot what heatctl WOULD

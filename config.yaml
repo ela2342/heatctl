@@ -267,6 +267,31 @@ control:
   pid_room:   {kp: 25.0, ki: 0.005, kd: 0.0, out_min: 0.0, out_max: 100.0}
   pid_return: {kp: 8.0,  ki: 0.02,  kd: 0.0, out_min: 0.0, out_max: 100.0}
 
+  # Load compensation: house demand -> water temperature setpoint. The third
+  # level of the cascade, and the one that decides efficiency - water colder
+  # than needed just makes the valves throttle it back, paying a COP penalty
+  # and carrying condensation risk for the same room temperature.
+  # 1 K every 30 min (owner, 2026-07-27): slow and integer because every write
+  # wears the pump's flash and the slab has hours of thermal mass.
+  # See heatctl/setpoint.py.
+  water_setpoint:
+    enabled: true
+    interval_s: 1800        # 30 min between trims
+    step_c: 1.0
+    saturated_pct: 85.0     # valves this open = not enough capacity
+    idle_pct: 30.0          # valves this shut = water more aggressive than needed
+    deviation_band_c: 0.3
+    cooling_min_c: 14.0     # operating bounds, inside the register's 7-30
+    cooling_max_c: 25.0
+    heating_min_c: 20.0     # inside the register's 15-50
+    heating_max_c: 40.0
+    # Heuristic floor relative to dew point, and the jump target on a MEASURED
+    # breach. P04 targets RETURN water, so no clamp can guarantee the water
+    # reaching the slab is safe - the measured-leaving-water branch is the real
+    # mechanism, and it bypasses the 30 min cadence.
+    dew_floor_offset_c: 4.0
+    breach_jump_c: 6.0
+
   # Source demand and minimum flow - ONE decision, see docs/DESIGN.md 4.3.
   # Aggregate per-ROOM deviation into a signed house demand (too cold ->
   # heating, too warm -> cooling) and engage the source only when that demand
@@ -375,3 +400,10 @@ logging:
   level: INFO
   state_db: /data/heatctl.sqlite   # history for system identification
   log_every_n_cycles: 60
+  # Rolling buffer, not the archive. The archive is InfluxDB via Home
+  # Assistant - verified receiving full-resolution heatctl data 2026-07-27.
+  # This file is the layer-1-independent fallback for when HA is the thing
+  # that broke, so it only has to cover a gap; unbounded it would be about a
+  # GB a year on an appliance nobody watches. Events are kept 10x longer than
+  # samples: they are tiny, and they answer "why did it do that".
+  retention_days: 14

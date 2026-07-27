@@ -28,11 +28,13 @@ import yaml
 
 from .backends.base import make_backend
 from .demand import DemandController
+from . import heatpump_map as hpm
 from .heatpump import HeatPump
 from .mqtt_plane import ControlPlane
 from .pid import PID
 from .rl_gate import FLUSH, MEASURE, RLGate
 from .safety import Safety
+from .setpoint import SetpointController
 
 log = logging.getLogger("heatctl")
 
@@ -96,6 +98,10 @@ class Controller:
         # device documents a 200 ms minimum between transactions, so it must
         # never share the 1 s valve loop. See docs/HEATPUMP.md.
         self.hp = HeatPump(cfg, self.plane)
+
+        # Load compensation: house demand -> water temperature setpoint. The
+        # third level of the cascade; see setpoint.py.
+        self.water_sp = SetpointController(cfg)
 
         self.demand = DemandController(
             cfg, can_command_source_mode=self.hp.enabled and self.hp.allow_writes)
@@ -286,6 +292,8 @@ class Controller:
                 if reason:
                     await self.plane.publish(f"override/{valve}", reason)
 
+        await self._trim_water_setpoint(now)
+
         # Make the heat pump's own mode follow the plant's, and shout if it
         # does not. Cheap to call every cycle: the client drops a write that
         # would change nothing BEFORE touching the bus, so a matching mode
@@ -326,6 +334,51 @@ class Controller:
         # The integrator is deliberately NOT stepped; integrating an invalid
         # measurement is how the hunt builds up in the first place.
         return self.rl_gate.held(valve, self.safety.failsafe_pct)
+
+    async def _trim_water_setpoint(self, now: float) -> None:
+        """Move the heat pump's water setpoint to match the house's demand.
+
+        Slow and integer by design (1 K / 30 min): every write wears the
+        pump's flash, and the slab has hours of thermal mass, so a continuous
+        controller here would be damaging and pointless alike.
+        """
+        if not self.water_sp.enabled or not self.hp.allow_writes:
+            return
+        d = self._last_demand
+        reg = "setpoint_cooling" if self.mode == "cooling" else "setpoint_heating"
+        addr = 0x0090 if self.mode == "cooling" else 0x0091
+        current = self.hp.config.get(addr)
+        leaving = self.hp.status.get(0x8012)
+        dp = self.plane.dew_point(self.safety.dew_max_age)
+
+        decision = self.water_sp.step(
+            mode=self.mode,
+            deviation=None if d is None else d.mean_deviation_c,
+            max_open=self._max_owned_opening(),
+            current=None if current is None else float(current),
+            dew_point=dp,
+            leaving_water=None if leaving is None else leaving * 0.5,
+            supply_limit=(self.safety.cooling_supply_limit()
+                          if self.mode == "cooling" else None),
+            now=now)
+        await self.plane.publish("water_sp/reason", decision.reason)
+        if decision.target is None:
+            return
+        log.info("water setpoint %s: %s -> %.0f degC (%s)",
+                 reg, current, decision.target, decision.reason)
+        self.log_event("water_setpoint",
+                       f"{reg} {current} -> {decision.target:.0f}: {decision.reason}")
+        await self.hp.write_named(reg, decision.target, decision.reason)
+
+    def _max_owned_opening(self) -> float | None:
+        """Highest commanded opening across circuits that can actually throttle.
+
+        Unactuated circuits are excluded: they are open pipe, so including
+        them would peg this at 100 % and permanently read as "saturated".
+        """
+        vals = [p for n, p in self.io.state.valves_pct.items()
+                if n in self.owned_valves and n not in self.rl_gate.unactuated]
+        return max(vals) if vals else None
 
     async def _sync_pump_mode(self) -> None:
         """Keep the pump's mode register aligned with the plant mode.
@@ -401,6 +454,8 @@ class Controller:
         # Only published when it disagrees with the command - a mismatch means
         # something other than heatctl moved the output, which is worth seeing
         # even though the next write corrects it.
+        for n, pct in state.valves_readback_pct.items():
+            await self.plane.publish(f"valve_actual/{n}", f"{pct:.0f}")
         for n in state.valve_mismatch:
             await self.plane.publish(
                 f"valve_mismatch/{n}", f"{state.valves_readback_pct[n]:.0f}")
@@ -423,25 +478,127 @@ class Controller:
 
     # ---------- history for system identification (layer 2) ----------
     def _open_db(self, path: str) -> sqlite3.Connection:
+        """History for system identification (docs/DESIGN.md 7).
+
+        Two tables, because two different questions get asked of this data
+        later. `samples` is the long/narrow time series you fit models
+        against. `events` is the discrete record - mode changes, writes to the
+        heat pump, faults appearing and clearing, failsafe entries and exits -
+        which is what you actually need when reconstructing *why* the plant
+        did something months afterwards. A time series alone never answers
+        that, and by then nobody remembers.
+        """
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         db = sqlite3.connect(path)
         db.execute("CREATE TABLE IF NOT EXISTS samples("
                    "ts REAL, name TEXT, value REAL)")
         db.execute("CREATE INDEX IF NOT EXISTS idx_ts ON samples(ts)")
+        db.execute("CREATE TABLE IF NOT EXISTS events("
+                   "ts REAL, kind TEXT, detail TEXT)")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_ev_ts ON events(ts)")
         return db
 
+    def _prune_db(self) -> None:
+        """Drop samples older than the retention window.
+
+        Without this the file grows without bound on an appliance nobody
+        watches - roughly a GB a year at this width. Events are kept much
+        longer than samples: they are tiny and they are what answers "why did
+        it do that" long after the raw series has rolled off.
+        """
+        days = self.cfg["logging"].get("retention_days", 0)
+        if not days:
+            return
+        cutoff = time.time() - days * 86400
+        try:
+            with self.db:
+                self.db.execute("DELETE FROM samples WHERE ts < ?", (cutoff,))
+                self.db.execute("DELETE FROM events WHERE ts < ?",
+                                (time.time() - days * 10 * 86400,))
+        except Exception:
+            log.exception("history pruning failed")
+
+    def log_event(self, kind: str, detail: str) -> None:
+        """Record a discrete happening. Cheap, and never in the hot path."""
+        try:
+            with self.db:
+                self.db.execute("INSERT INTO events VALUES (?,?,?)",
+                                (time.time(), kind, detail))
+        except Exception:
+            log.exception("event logging failed: %s %s", kind, detail)
+
     def _log_db(self, state) -> None:
+        """Sample everything that moves, once per `log_every_n_cycles`.
+
+        Deliberately wide: the point is that every system parameter should be
+        improvable later from this file alone, and a series nobody recorded
+        cannot be recovered retrospectively. Config registers are NOT sampled
+        here - they change rarely and are captured as events instead, which
+        keeps the row count proportional to what actually moves.
+
+        Note the `settled:` series. Data taken while an actuator is still
+        travelling is poison for identification (docs/DESIGN.md 4.1.4): flow
+        is unknown, so return temperature means nothing. Recording the flag
+        alongside lets a later fit exclude those samples instead of silently
+        averaging them in.
+        """
         if self._cycle % self.cfg["logging"]["log_every_n_cycles"]:
             return
         ts = time.time()
+        now = time.monotonic()
         rows = [(ts, n, t) for n, t in state.temps.items()]
         rows += [(ts, f"valve:{n}", p) for n, p in state.valves_pct.items()]
+        # Commanded vs actual: they diverge when something other than heatctl
+        # moved the outputs, and the difference is only visible if both are
+        # kept.
+        rows += [(ts, f"valve_actual:{n}", p)
+                 for n, p in state.valves_readback_pct.items()]
         for room in self.rooms:
             t = self.plane.room_temp(room["name"])
             if t is not None:
                 rows.append((ts, f"room:{room['name']}", t))
+            rows.append((ts, f"setpoint:{room['name']}",
+                         self.room_setpoints[room["name"]]))
+        for valve in self.owned_valves:
+            c = self.rl_gate._circuit(valve)
+            settled = (c.open_since is not None
+                       and now - c.open_since >= self.rl_gate.settle_s)
+            rows.append((ts, f"settled:{valve}", 1.0 if settled else 0.0))
+
+        rows.append((ts, "mode", {"heating": 1, "cooling": 2}.get(self.mode, 0)))
+        rows.append((ts, "return_sp", self._last_return_sp))
+        dp = self.plane.dew_point(self.safety.dew_max_age)
+        if dp is not None:
+            rows.append((ts, "dew_point", dp))
+        if self.mode == "cooling":
+            rows.append((ts, "cooling_supply_limit",
+                         self.safety.cooling_supply_limit()))
+        d = self._last_demand
+        if d is not None:
+            rows.append((ts, "demand:source_request",
+                         1.0 if d.source_request else 0.0))
+            if d.mean_deviation_c is not None:
+                rows.append((ts, "demand:deviation", d.mean_deviation_c))
+            if d.open_pct is not None:
+                rows.append((ts, "demand:open_pct", d.open_pct))
+        # The heat pump: every decoded status value, plus its commanded state.
+        # This is the other half of any thermal model - without compressor
+        # frequency, current and water temperatures there is no way to
+        # attribute a slab response to an input.
+        for reg in (*hpm.STATUS, *hpm.WRITABLE):
+            raw = self.hp.status.get(reg.addr, self.hp.config.get(reg.addr))
+            if raw is not None:
+                rows.append((ts, f"hp:{reg.name}", hpm.decode(reg, raw)))
+        for (addr, bit), name in {**hpm.OUTPUT_BITS, **hpm.CONTROL_BITS,
+                                  **hpm.MODE_STATUS_BITS}.items():
+            raw = self.hp.status.get(addr, self.hp.config.get(addr))
+            if raw is not None:
+                rows.append((ts, f"hp:{name}", float(raw >> bit & 1)))
         with self.db:
             self.db.executemany("INSERT INTO samples VALUES (?,?,?)", rows)
+        # Once an hour is plenty; DELETE is cheap against the ts index.
+        if self._cycle % 3600 == 0:
+            self._prune_db()
 
 
 def main() -> None:

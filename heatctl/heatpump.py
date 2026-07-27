@@ -372,3 +372,27 @@ class HeatPump:
             "name": "Heat pump mode",
             "state_topic": f"{self.plane.base}/hp/mode_name",
         })
+
+        # --- CONTROLS ---
+        # Exposed because their state lives in the DEVICE's flash, so an HA
+        # control maps to something durable. Contrast heatctl's own behaviour
+        # flags (auto_mode, the demand controller's enables): those live in
+        # config.yaml, and heatctl deliberately keeps no state across a
+        # restart, so an HA toggle for them would silently revert and lie.
+        for reg in hm.WRITABLE:
+            if reg.lo is None or reg.unit != "°C":
+                continue
+            await self.plane.discover("number", f"hp_set_{reg.name}", {
+                "name": "HP " + reg.name.replace("_", " "),
+                "state_topic": f"{self.plane.base}/hp/{reg.name}",
+                "command_topic": f"{self.plane.base}/hp/set/{reg.name}",
+                "min": reg.lo, "max": reg.hi, "step": 1,
+                "unit_of_measurement": reg.unit,
+                "mode": "box",
+            })
+        await self.plane.discover("switch", "hp_power", {
+            "name": "HP power",
+            "state_topic": f"{self.plane.base}/hp/power",
+            "command_topic": f"{self.plane.base}/hp/set/power",
+            "payload_on": "1", "payload_off": "0",
+        })
