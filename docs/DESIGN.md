@@ -305,7 +305,54 @@ inner loop (per circuit, ~1–3 min):
   = f(Σ openings) with on/off delays (exists as HA automation today;
   becomes heatctl's, Milestone 1) — see §4.3.
 
-### 4.3 Source demand and minimum flow are ONE control problem
+### 4.3 Source demand and minimum flow
+
+**CORRECTED 2026-07-27 (owner).** The section below was written on a wrong
+model of the plant and is kept because the correction is the useful part.
+
+**The unit regulates itself.** It starts and stops its own compressor and
+varies its power from the spread between leaving and return water. **Powering
+the unit down is a measure of last resort, not a control action.**
+
+The steady state of this plant is: pump running, compressor doing as much as it
+needs, and **every valve open to a degree that distributes the supplied energy
+to the rooms according to their need**. Note the precision — not "all valves
+wide open", and not valves cycling shut, but open to *proportions*. The water
+temperature decides how much energy there is; the valves decide how it is
+shared out. This is why the *maximum* circuit opening is the right signal for
+the water-setpoint loop: it is the most-demanding room reporting whether the
+water it is being given is hot or cold enough.
+
+So the control hierarchy is:
+
+1. **Water temperature** (`control.water_setpoint`, §4.4) — the primary
+   modulation lever, driven by house demand.
+2. **Valve positions** — per-room trim around that, bounded below by the flow
+   floor.
+3. **The unit's own compressor control** — the fine modulation, which is not
+   ours to do.
+
+Two consequences that invalidate the original design below:
+
+- **"Satisfied" is not a reason to stop.** The unit idles its own compressor
+  and costs almost nothing; power-cycling a heat pump is expensive and slow.
+- **Low flow is a reason to OPEN VALVES, not to stop the source.**
+  `min_open_pct` constrains how far heatctl may throttle. Treating it as a
+  shutdown trigger was also circular: valve position is heatctl's own output,
+  so the plant would have been switched off in response to heatctl's own
+  decision.
+
+`source_demand` is therefore a *reconciler* — it holds the unit powered and
+only powers down on an explicit `off` — not a controller. Still to do:
+enforcing the flow floor as a valve floor. It does not bite yet, because eight
+of ten circuits have no actuator and cannot throttle at all, so the mean
+opening sits near 82 %.
+
+---
+
+#### Original framing, superseded
+
+
 Owner's decision, 2026-07-27. Recorded here because the coupling is the whole
 point and it is easy to implement the two halves separately and get a plant
 that stalls.

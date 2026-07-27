@@ -298,13 +298,17 @@ control:
   # is big enough that the resulting valve openings keep the pump above its
   # minimum flow. Below that, run nothing and let the rooms coast.
   source_demand:
-    # SHADOW MODE. heatctl computes and publishes this on heatctl/demand/#
-    # but acts on none of it. Two reasons to leave it off: the heat pump's
-    # register still has another writer (the HA automations - single-writer is
-    # a hard rule), and this logic should be watched against the real plant
-    # before it owns anything. Turn on as part of the WP-B migration, in one
-    # step, together with disabling those automations.
-    enabled: false
+    # ON since 2026-07-27. With the corrected model this is a RECONCILER, not
+    # a controller: it holds the unit powered, and only powers it down on an
+    # explicit `off`. That restores what the HA "circulation pump request"
+    # automation used to do, which nothing has done since that automation was
+    # disabled - the unit has simply been running on whatever its own flash
+    # said.
+    # Powering a heat pump down is a measure of LAST RESORT. The unit
+    # regulates itself: it starts and stops its own compressor and varies
+    # power from the leaving/return spread. heatctl modulates by WATER
+    # TEMPERATURE (control.water_setpoint) and trims per room with the valves.
+    enabled: true
     # heatctl commands the pump's mode register (0x0004) to follow the plant
     # mode, every cycle, as a no-op when they already agree. auto_mode is the
     # further step: the HOUSE AVERAGE picks that plant mode rather than a
@@ -321,6 +325,12 @@ control:
     # the pump's own Er03 water-flow failsafe. Today the mean sits near 79 %
     # because seven of nine circuits have no actuator, so no stall is
     # possible; it falls naturally as actuators are fitted.
+    # Flow floor as MEAN opening across all water-carrying circuits, counting
+    # unactuated ones as 100 % (they are open pipe). 40 % is the owner's
+    # measured figure. NOTE this is a constraint on how far heatctl may
+    # THROTTLE - a reason to hold valves open - and never a reason to stop the
+    # source. Enforcing it as a valve floor is still to do; today the mean
+    # sits near 82 % because eight of ten circuits cannot throttle at all.
     min_open_pct: 40.0
     engage_deviation_c: 0.3 # how far off target before the source is worth it
     mode_deadband_c: 1.0    # PLANT-level only - rooms keep one target each.

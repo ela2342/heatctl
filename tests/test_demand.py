@@ -89,60 +89,47 @@ def test_source_runs_when_the_house_wants_heat_and_flow_is_available(demand):
     assert out.source_request is True
 
 
-def test_source_stops_when_the_house_is_satisfied(demand):
+def test_the_source_stays_on_when_the_house_is_satisfied(demand):
+    """Corrected 2026-07-27 (owner): "satisfied" is the unit's own business.
+
+    The heat pump idles its own compressor and costs almost nothing;
+    power-cycling it is expensive and slow. Stopping the plant because the
+    rooms are comfortable is not a control strategy, it is a way to short-cycle
+    an appliance that was already handling it.
+    """
     d = demand()
     out = d.step("heating", {"a": 21.0}, {"a": 21.1},
                  {"valve_hk01": 80.0, "valve_hk02": 80.0, "valve_hk03": 80.0}, 0.0)
-    assert out.source_request is False
-    assert "satisfied" in out.reason
+    assert out.source_request is True
 
 
-def test_source_stops_rather_than_running_the_pump_dry(demand):
-    """The case this exists for.
+def test_low_flow_does_not_stop_the_source(demand):
+    """Low flow is a reason to OPEN VALVES, not to stop the source.
 
-    Real demand, but too little of the house open to give the pump flow.
-    Running anyway is what trips Er03; stopping lets the rooms coast and the
-    next engagement starts from parked-open valves.
+    The old behaviour was also circular: the valve positions are heatctl's own
+    output, so it switched the plant off in response to its own decision.
+    `min_open_pct` constrains how far heatctl may throttle; it is not a
+    shutdown trigger.
     """
     d = demand()
     d.unactuated = set()
     out = d.step("heating", {"a": 21.0}, {"a": 18.0},
                  {"valve_hk01": 10.0, "valve_hk02": 10.0, "valve_hk03": 10.0}, 0.0)
-    assert out.source_request is False
-    assert "flow too low" in out.reason
-
-
-def test_the_flow_floor_is_not_tripped_while_circuits_are_open_pipe(demand):
-    """Today's plant: seven of nine circuits unactuated, so no stall risk."""
-    d = demand()          # conftest marks none unactuated; simulate the real one
-    d.unactuated = {"valve_hk02", "valve_hk03"}
-    out = d.step("heating", {"a": 21.0}, {"a": 18.0},
-                 {"valve_hk01": 0.0, "valve_hk02": 0.0, "valve_hk03": 0.0}, 0.0)
     assert out.source_request is True
 
 
-def test_demand_is_never_taken_from_valve_position(demand):
-    """Safety closes valves for reasons unrelated to whether the house wants
-    heat. If a dew-point closure read as "no demand", the source would stop
-    and the supply could never recover - the 2026-07-26 latch-up again.
-
-    Here every valve is shut by safety, yet the rooms are cold: the controller
-    must still see demand, and refuse only on the flow interlock.
-    """
+def test_demand_is_still_measured_even_though_it_no_longer_gates_the_source(demand):
+    """The house deviation is what drives the WATER SETPOINT (setpoint.py),
+    which is the real modulation lever. It still has to be right."""
     d = demand()
     d.unactuated = set()
     out = d.step("cooling", {"a": 21.0}, {"a": 26.0},
                  {"valve_hk01": 0.0, "valve_hk02": 0.0, "valve_hk03": 0.0}, 0.0)
-    assert out.mean_deviation_c == -5.0        # demand is seen
-    assert "flow" in out.reason                # refused on flow, not on demand
+    assert out.mean_deviation_c == -5.0
+    assert out.open_pct == 0.0
 
 
-def test_no_room_data_keeps_circulating(demand):
-    """A total sensor outage must not stop the plant.
-
-    The return-temperature loop still does useful work and the heat pump holds
-    its own setpoint. This is also today's behaviour, so it is not a change.
-    """
+def test_no_room_data_keeps_the_source_running(demand):
     d = demand()
     out = d.step("heating", {"a": 21.0}, {},
                  {"valve_hk01": 0.0, "valve_hk02": 0.0, "valve_hk03": 0.0}, 0.0)
@@ -150,48 +137,26 @@ def test_no_room_data_keeps_circulating(demand):
     assert out.reason == "no_room_data"
 
 
-def test_mode_off_stops_the_source(demand):
+def test_mode_off_is_the_one_thing_that_stops_the_source(demand):
+    """Powering the unit down is a measure of last resort - deliberately, an
+    explicit off is the only route to it here."""
     d = demand()
     out = d.step("off", {"a": 21.0}, {"a": 10.0},
                  {"valve_hk01": 100.0, "valve_hk02": 100.0, "valve_hk03": 100.0}, 0.0)
     assert out.source_request is False
+    assert out.reason == "mode_off"
 
 
-def test_valves_park_open_while_the_source_is_idle(demand):
-    """Position is irrelevant to flow with the pump stopped, so parking open
-    costs nothing and means the next engagement has flow immediately instead
-    of racing a multi-minute actuator stroke."""
-    d = demand()
-    out = d.step("heating", {"a": 21.0}, {"a": 21.5},
-                 {"valve_hk01": 50.0, "valve_hk02": 50.0, "valve_hk03": 50.0}, 0.0)
-    assert out.source_request is False
-    assert out.park_valves_open is True
-
-
-# ---------- anti-short-cycle ----------
-
-def test_the_source_is_held_on_for_the_minimum_run_time(demand):
+def test_the_minimum_run_time_still_damps_an_off_transition(demand):
+    """The anti-short-cycle limits remain, because `off` is still reachable and
+    a power cycle is the expensive transition."""
     d = demand()
     open_all = {"valve_hk01": 80.0, "valve_hk02": 80.0, "valve_hk03": 80.0}
-    d.step("heating", {"a": 21.0}, {"a": 19.0}, open_all, 100.0)   # -> ON
-    # Immediately satisfied; must not stop yet.
-    out = d.step("heating", {"a": 21.0}, {"a": 21.5}, open_all, 200.0)
-    assert out.source_request is True
-    assert "held" in out.reason
-    out = d.step("heating", {"a": 21.0}, {"a": 21.5}, open_all, 701.0)
+    d.step("heating", {"a": 21.0}, {"a": 19.0}, open_all, 100.0)     # ON
+    out = d.step("off", {"a": 21.0}, {"a": 19.0}, open_all, 200.0)
+    assert out.source_request is True and "held" in out.reason
+    out = d.step("off", {"a": 21.0}, {"a": 19.0}, open_all, 701.0)
     assert out.source_request is False
-
-
-def test_the_source_is_held_off_for_the_minimum_idle_time(demand):
-    d = demand()
-    open_all = {"valve_hk01": 80.0, "valve_hk02": 80.0, "valve_hk03": 80.0}
-    d.step("heating", {"a": 21.0}, {"a": 19.0}, open_all, 100.0)
-    d.step("heating", {"a": 21.0}, {"a": 21.5}, open_all, 800.0)    # -> OFF
-    out = d.step("heating", {"a": 21.0}, {"a": 19.0}, open_all, 900.0)
-    assert out.source_request is False
-    assert "held" in out.reason
-    out = d.step("heating", {"a": 21.0}, {"a": 19.0}, open_all, 1500.0)
-    assert out.source_request is True
 
 
 # ---------- mode selection ----------

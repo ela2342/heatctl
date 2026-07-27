@@ -83,7 +83,14 @@ class SetpointController:
         self.dew_floor_offset_c = float(s.get("dew_floor_offset_c", 4.0))
         self.breach_jump_c = float(s.get("breach_jump_c", 6.0))
 
-        self._last_change = 0.0
+        # None, not 0.0. With 0.0 the first cycle after EVERY restart sees
+        # `now - 0 >= interval` and trims immediately, so the 30 min cadence
+        # is silently not honoured across restarts - and a restart loop would
+        # hammer the pump's flash, which is exactly what the cadence exists to
+        # prevent. Observed 2026-07-27: P04 moved on a deploy, correctly in
+        # direction but at the wrong time. Seeded on first use instead, so the
+        # first trim waits a full interval after start-up.
+        self._last_change: float | None = None
 
     def step(self, mode: str, deviation: float | None, max_open: float | None,
              current: float | None, dew_point: float | None,
@@ -107,6 +114,9 @@ class SetpointController:
                     f"{supply_limit:.1f} - jumping",
                     BREACH)
 
+        if self._last_change is None:
+            self._last_change = now
+            return SetpointDecision(None, "settling after start-up")
         if now - self._last_change < self.interval_s:
             return SetpointDecision(None, "within interval")
         if deviation is None:

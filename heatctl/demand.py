@@ -25,11 +25,24 @@ correct through the whole build-out with no special cases - today the average
 sits near 79 % because seven of nine circuits are open pipe, so no stall is
 possible, and the figure falls naturally as actuators are fitted.
 
-**When the source is off, valves park OPEN.** Position is irrelevant to flow
-with the pump stopped, so parking open costs nothing and means the next
-engagement always has flow available immediately, rather than starting into a
-closed manifold and racing the actuators' multi-minute stroke. Safety can still
-close them; it runs last and always wins.
+**The source stays on; valves apportion.** Corrected 2026-07-27 (owner).
+Powering the unit down is a last resort, not a control action: the heat pump
+starts and stops its own compressor and modulates its power from the
+leaving/return spread.
+
+The steady state of this plant is: pump running, compressor doing as much as it
+needs, and **every valve open to a degree that distributes the supplied energy
+to the rooms according to their need**. Not "all valves wide open", and not
+valves cycling shut - open to *proportions*. The water temperature sets how
+much energy there is; the valves decide how it is shared. So heatctl modulates
+the total by WATER TEMPERATURE (setpoint.py) and shares it out with the
+valves.
+
+That makes `min_open_pct` a constraint on how far heatctl may throttle - a
+reason to hold valves OPEN - and never a reason to stop the source. Stopping on
+low flow would also have been circular, since the valves are heatctl's own
+output: it would have been switching the plant off in response to its own
+decision.
 """
 from __future__ import annotations
 
@@ -194,25 +207,37 @@ class DemandController:
 
     def _want_source(self, mode: str, dev: float | None,
                      open_pct: float | None) -> tuple[bool, str]:
+        """Should the unit be powered at all.
+
+        CORRECTED 2026-07-27 (owner). Powering the unit down is a measure of
+        LAST RESORT, not a control action. The heat pump regulates itself: it
+        starts and stops its own compressor and varies its power from the
+        spread between leaving and return water. Steady state for this plant
+        is pump running, compressor doing as much as it needs, and **every
+        valve open to a degree proportional to its room's need** - not all
+        valves wide open, and not valves cycling shut.
+
+        So heatctl modulates by WATER TEMPERATURE (setpoint.py) and uses the
+        valves for per-room trim around that. It does not switch the source on
+        and off to track demand.
+
+        The previous version of this method got that backwards twice: it
+        stopped the source when the house was satisfied, and stopped it again
+        when the mean valve opening fell below the pump's flow minimum. Both
+        are wrong.
+          * "Satisfied" is the unit's own business - it will idle its
+            compressor and cost almost nothing, whereas power cycling a heat
+            pump is expensive and slow.
+          * Low flow is a reason to OPEN VALVES, not to stop the source. The
+            floor is a constraint on how far heatctl may throttle, not a
+            shutdown trigger. Stopping on low flow was also circular: the
+            valves are heatctl's own output, so it would have been switching
+            the plant off in response to its own decision.
+        """
         if mode == "off":
             return False, "mode_off"
         if dev is None:
-            # No room air temperature anywhere. Keep circulating: the
-            # return-temperature loop still does useful work and the heat pump
-            # holds its own setpoint. This is also today's behaviour, so a
-            # total sensor outage is not a behaviour change.
             return True, "no_room_data"
-
-        # Does the house want what this mode delivers?
-        wants = dev > self.engage_deviation_c if mode == "heating" \
-            else dev < -self.engage_deviation_c
-        if not wants:
-            return False, f"satisfied ({dev:+.2f} K)"
-        if open_pct is not None and open_pct < self.min_open_pct:
-            # The demand is real but too little of the house is open to give
-            # the pump flow. Running anyway is what trips Er03. Stopping is
-            # correct: rooms coast, and the next engagement starts from parked
-            # -open valves.
-            return False, f"flow too low ({open_pct:.0f}% < {self.min_open_pct:.0f}%)"
-        return True, f"demand {dev:+.2f} K, flow {open_pct:.0f}%" if open_pct \
-            is not None else f"demand {dev:+.2f} K"
+        if open_pct is not None:
+            return True, f"running, flow {open_pct:.0f}%"
+        return True, "running"

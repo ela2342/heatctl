@@ -15,7 +15,13 @@ from heatctl.setpoint import BREACH, TRIM, SetpointController
 
 @pytest.fixture
 def sp(cfg):
-    def _make(**over):
+    def _make(primed: bool = True, **over):
+        """`primed` skips the post-start-up settling interval.
+
+        The controller refuses to trim for a full interval after start-up (see
+        the restart tests at the bottom), which every other test here would
+        otherwise have to work around. Pass primed=False to exercise it.
+        """
         cfg["control"]["water_setpoint"] = {
             "enabled": True, "interval_s": 1800.0, "step_c": 1.0,
             "saturated_pct": 85.0, "idle_pct": 30.0, "deviation_band_c": 0.3,
@@ -23,7 +29,10 @@ def sp(cfg):
             "heating_min_c": 20.0, "heating_max_c": 40.0,
             "dew_floor_offset_c": 4.0, "breach_jump_c": 6.0, **over,
         }
-        return SetpointController(cfg)
+        c = SetpointController(cfg)
+        if primed:
+            c._last_change = -1e6      # start-up settling already elapsed
+        return c
     return _make
 
 
@@ -165,3 +174,27 @@ def test_no_room_data_holds_the_setpoint(sp):
 def test_a_missing_valve_reading_does_not_trim(sp):
     """max_open is the signal that distinguishes 'no capacity' from 'happy'."""
     assert call(sp(), open_pct=None).target is None
+
+
+# ---------- the cadence must survive a restart ----------
+
+def test_no_trim_in_the_first_interval_after_start_up(sp):
+    """Real defect, 2026-07-27. `_last_change` started at 0.0, so the very
+    first cycle saw `now - 0 >= interval` and trimmed immediately. The 30 min
+    cadence was therefore not honoured across restarts, and a restart loop
+    would have hammered the pump's flash - precisely what the cadence exists
+    to prevent. Caught because P04 moved during a deploy.
+    """
+    c = sp(primed=False)
+    assert call(c, now=50_000.0).target is None      # first sight: settle
+    assert call(c, now=50_000.0 + 1799).target is None
+    assert call(c, now=50_000.0 + 1801).target is not None
+
+
+def test_the_breach_branch_still_acts_during_start_up_settling(sp):
+    """Safety is not subject to the settling delay."""
+    c = sp(primed=False)
+    d = c.step(mode="cooling", deviation=-2.0, max_open=95.0, current=16.0,
+               dew_point=14.0, leaving_water=15.0, supply_limit=16.0,
+               now=50_000.0)
+    assert d.kind == BREACH

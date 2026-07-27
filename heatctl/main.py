@@ -306,6 +306,7 @@ class Controller:
                 if reason:
                     await self.plane.publish(f"override/{valve}", reason)
 
+        await self._hold_source_power()
         await self._trim_water_setpoint(now)
 
         # Make the heat pump's own mode follow the plant's, and shout if it
@@ -348,6 +349,27 @@ class Controller:
         # The integrator is deliberately NOT stepped; integrating an invalid
         # measurement is how the hunt builds up in the first place.
         return self.rl_gate.held(valve, self.safety.failsafe_pct)
+
+    async def _hold_source_power(self) -> None:
+        """Keep the unit powered, and only power it down on an explicit off.
+
+        Powering a heat pump down is a measure of last resort, not a control
+        action: the unit regulates itself, starting and stopping its own
+        compressor and varying its power from the leaving/return spread. So
+        this is a RECONCILER, not a controller - it replaces the HA automation
+        that used to hold the bit set, which nothing has done since that
+        automation was disabled.
+
+        Costs nothing per cycle: a write that would not change the register is
+        dropped before it reaches the bus, so a unit already in the right state
+        never sees a flash cycle.
+        """
+        d = self._last_demand
+        if d is None or not self.demand.enabled or not self.hp.allow_writes:
+            return
+        if not self.hp._config_seen:
+            return          # nothing read yet; set_power would refuse anyway
+        await self.hp.set_power(d.source_request, d.reason)
 
     async def _trim_water_setpoint(self, now: float) -> None:
         """Move the heat pump's water setpoint to match the house's demand.
