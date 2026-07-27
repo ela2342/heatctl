@@ -266,15 +266,45 @@ commanded analog value is a *request*, not a measurement:
   somewhere between the old and new value. Any RL reading taken during that
   window reflects neither.
 
-Measurement needed per valve type (tracked in `BACKLOG.md`; needed
-before WP-C, and a prerequisite for the distribution design, D-017):
-1. `open_threshold_pct` - ramp the output up in small steps, dwelling long
-   enough at each, and find where RL first responds (loop starts flowing).
-2. `full_open_pct` - where further increase stops changing RL.
-3. `settling_time_s` - full 0->100 and 100->0 stroke time; take the slower.
-   Size it from the RL response, not from a datasheet.
-Record the measured values here, and see docs/DESIGN.md section 4 for how
-they feed the controller.
+Measurement needed per valve TYPE - not per valve. The physics is a property
+of the Alpha 5, not of circuit 7, and a per-circuit sweep costs ~10 min per
+step (stroke plus hydraulic transport), so twelve circuits is ~20 h of
+disrupted control. Two or three done properly is enough.
+Tracked in `BACKLOG.md`; prerequisite for the distribution design (D-017).
+
+**`open_threshold_pct` - ramp up, find where RL first responds.** Sound: at
+zero flow the sensor sits at manifold ambient, so the first real flow moves it
+sharply toward VL. Large, unambiguous signal.
+
+**`full_open_pct` - do NOT infer this from "RL stops changing" (D-021).**
+That is what an earlier version of this file said and it is systematically
+wrong. RL is not a flow measurement, it is a heat-exchange measurement:
+
+    RL ~= T_slab + (VL - T_slab) * exp(-NTU),   NTU = UA / (m_dot * cp)
+
+As flow rises, NTU falls, exp(-NTU) -> 1, and RL asymptotes to VL. So
+dRL/d(opening) -> 0 at high openings for purely hydraulic reasons - the valve
+is still moving, RL has simply stopped reporting it. The procedure would find
+the knee at perhaps 60 % and record that as full open, which **throws away
+flow** - precisely what docs/DESIGN.md 4.4 exists to maximise. Prefer, in
+order: the vendor datasheet's control range; passive identification from
+logged data (docs/DESIGN.md 7.3); a sweep watching the HEAT PUMP's
+leaving/return spread and DC pump speed, which keep responding after circuit
+RL has saturated.
+
+**`settling_time_s` - full 0->100 and 100->0 stroke; take the slower.** Size it
+from the RL response, not a datasheet, because it must include hydraulic
+transport through the loop, not just the actuator.
+
+**Preconditions for any thermal method.** It needs contrast between VL and the
+slab - if VL is near slab temperature there is no signal at all, which is
+exactly the state a well-tuned system sits in. Heating season is far easier
+than cooling, where aggressive water collides with the condensation limit.
+And with twelve circuits on one manifold there is cross-talk: opening one
+changes differential pressure and therefore flow in all the others.
+
+Record measured values here, and see docs/DESIGN.md section 4 for how they
+feed the controller.
 
 ## Other devices in the system
 - Heat pump: Modbus RTU via Waveshare RS485 gateway 192.0.2.37,

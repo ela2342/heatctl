@@ -183,3 +183,17 @@ snap needed it. The house average is the right signal precisely *because* it
 does not care what month it is. The deadband and the hour of dwell are the
 guard against a transient (an evening of ventilation), and lengthening the
 dwell is the lever if that proves insufficient.
+
+## D-021 · `full_open_pct` defaults to 100, and may only be lowered on strong evidence
+The error is **asymmetric**. Set too high (100 when the true full open is 85),
+the peak circuit is commanded 100 and the valve simply sits at its mechanical
+stop — harmless. Set too low (85 when the truth is 100), the plant never fully
+opens and **throws away flow**, which is exactly what D-017 exists to maximise.
+**Why it matters now:** the obvious measurement — ramp the opening until RL
+stops changing — is systematically biased *low*, because RL asymptotes to VL as
+flow rises (`RL ≈ T_slab + (VL−T_slab)·exp(−NTU)`), so it stops responding for
+hydraulic reasons while the valve is still travelling. A badly measured value is
+therefore worse than no measurement. **Consequence:** the identity default is
+the safe one; prefer the datasheet or passive identification (§7.3) over a
+thermal sweep, and treat any measured value that lowers this as suspect until
+corroborated.

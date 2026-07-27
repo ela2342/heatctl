@@ -77,11 +77,23 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
       escalation is to stop the unit - the one place "measure of last resort"
       actually applies. Currently unimplemented: safety can starve the pump and
       nothing notices.
-- [ ] **Measure the actuator deadband, both ends.** `open_threshold_pct` and
-      `full_open_pct` are identity placeholders. "Normalise so the peak circuit
-      is fully open" only means what it says once `full_open_pct` is measured,
-      and the owner suspects an upper deadband mirroring the lower one. Needs
-      actuators fitted plus a characterisation run (docs/DESIGN.md 4.1.2, 4.5).
+- [ ] **Characterise the actuator, per TYPE not per valve.** Wanted:
+      `open_threshold_pct`, `settling_time_s`, and confirmation of
+      `full_open_pct`. Sequence, cheapest first:
+      (a) read the Alpha 5 datasheet for the voltage-to-position control range
+      - the top end is a device property and this is the only reliable source
+      for it (D-021);
+      (b) fit `open_threshold_pct` and `settling_time_s` PASSIVELY from logged
+      data (docs/DESIGN.md 7.3). No experiment, no disruption, and the
+      distribution design already sweeps each circuit's full range in normal
+      operation because the peak rotates between rooms;
+      (c) only if something is still missing, a dedicated sweep - watching the
+      HEAT PUMP's leaving/return spread rather than circuit RL, which saturates
+      early (D-021). Needs heating season for thermal contrast, and expect
+      cross-talk between circuits on the shared manifold.
+      **Do not lower `full_open_pct` from 100 without strong evidence** - the
+      error is asymmetric and too-low throws away flow (D-021).
+      Blocked on: actuators being fitted (only 2 of 12 today).
 - [ ] **Tune `distribution.eps`.** The flow/discrimination trade-off, currently
       a guess at 5.0. First thing to revisit once there is recorded data - see
       the evaluation checklist in docs/DESIGN.md 4.5.

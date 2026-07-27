@@ -673,6 +673,38 @@ Practical choices:
 | HP COP map | datasheet | one charge run per AT bin, log (P_el, Q_th) | continuous regression |
 | Hydraulic shares / max_cap | loop lengths | full-open test: all circuits open at fixed VL, compare per-loop RL rise rates; set caps to equalize | repeat seasonally |
 
+#### Passive identification — prefer it to a dedicated experiment
+
+A dedicated sweep is expensive (≈10 min per step, so ~20 h for twelve
+circuits), needs thermal contrast that a well-tuned plant does not naturally
+have, and disrupts control while it runs. Much of this ladder can instead be
+fitted from data heatctl already records at 1/min into InfluxDB — commanded
+position, per-circuit RL, VL, RL_total, the heat pump's leaving/return spread,
+compressor state, and a per-circuit `settled` flag.
+
+Two things make this work better than it sounds:
+
+- **The distribution design sweeps the range by itself.** §4.4 drives the
+  most-demanding circuit to fully open and the rest to the ε trickle, and
+  *which* circuit is the peak rotates as rooms' needs change. So normal
+  operation visits both ends of every circuit's range continuously, without
+  anyone asking it to.
+- **`settled` makes the data usable.** Samples taken while an actuator is
+  still travelling are poison (§4.1.4): flow is unknown, so RL means nothing.
+  Excluding them turns a noisy log into a usable dataset.
+
+What this can plausibly yield without any experiment: `open_threshold_pct`
+(RL departs from manifold ambient), `settling_time_s` (RL response time after a
+commanded step), NTU(opening) over the visited range, and the hydraulic shares
+via the mixing relation at the return header —
+`RL_total = Σ(ṁ_i·RL_i)/Σ(ṁ_i)`, which is a flow-share estimator that needs no
+flow meter.
+
+What it cannot yield: `full_open_pct`, for the reason in D-021 — RL saturates
+before the valve stops moving, so no amount of passive data distinguishes "the
+valve is fully open" from "flow is high enough that RL no longer cares". Take
+that from the datasheet, or leave it at 100, which is the safe error (D-021).
+
 Rule for the implementing agent: never fit more than two parameters from
 one experiment; prefer experiments that isolate (valves closed elsewhere,
 night-time, constant inputs). Every fitted value goes into
