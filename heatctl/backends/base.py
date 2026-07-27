@@ -63,7 +63,11 @@ class IOBackend(ABC):
     async def write_valve(self, name: str, pct: float) -> None: ...
 
     @abstractmethod
-    async def write_all_valves(self, pct: float) -> None: ...
+    async def write_all_valves(self, pct: float,
+                               names: list[str] | None = None) -> None:
+        """Failsafe write. `names` limits it to the channels the caller owns;
+        None means every declared channel."""
+        ...
 
 
 def make_backend(cfg: dict) -> IOBackend:

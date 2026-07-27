@@ -337,7 +337,8 @@ class ModbusDirectBackend(IOBackend):
             raise IOError(f"modbus write failed for {name}: {wr}")
         self.state.valves_pct[name] = pct
 
-    async def write_all_valves(self, pct: float) -> None:
+    async def write_all_valves(self, pct: float,
+                               names: list[str] | None = None) -> None:
         """Failsafe write to every valve. Never raises - best effort by design.
 
         Failures are summarised into ONE line, without a traceback. This runs
@@ -349,7 +350,7 @@ class ModbusDirectBackend(IOBackend):
         """
         failed: list[str] = []
         first = ""
-        for name in self.valves:
+        for name in (names if names is not None else self.valves):
             try:
                 await self.write_valve(name, pct)
             except Exception as e:
@@ -357,5 +358,6 @@ class ModbusDirectBackend(IOBackend):
                 first = first or str(e)
         if failed:
             log.warning("failsafe write to %.0f%% failed for %d/%d valves "
-                        "(%s): %s", pct, len(failed), len(self.valves),
+                        "(%s): %s", pct, len(failed),
+                        len(names if names is not None else self.valves),
                         ",".join(failed), first)

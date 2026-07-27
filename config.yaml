@@ -132,42 +132,42 @@ sensors:
 valves:
   base_register: 12
   channels:
-    # 16 analog outputs since 2026-07-27 (4x 750-559), enough for all 12
-    # circuits plus spares. Which channel drives which circuit is still
-    # UNVERIFIED except 1 and 2 - fix this mapping as each is wired.
-    # Which 750-559 channel drives which circuit is UNVERIFIED except for
-    # channels 1 and 2, the only two physically wired so far (Gaestebad and
-    # Wohnzimmer HK 2). Channel 6 was named valve_hk10 while circuits 7/10
-    # were transposed; renamed to valve_hk07 to match the corrected room
-    # mapping above - the physical channel is still to be confirmed.
+    # 16 analog outputs (4x 750-559, positions 7-10) at holding registers
+    # 12-27 since 2026-07-27. AO index n -> holding register 11+n ->
+    # M{7+(n-1)//4}Ch{(n-1)%4+1}, read back at 0x0200+11+n. Verified against
+    # the coupler.
     #
-    # `fitted` says whether an actuator is PHYSICALLY on that circuit. It is
-    # not cosmetic: an unfitted circuit is open pipe, so its flow does not
-    # follow our command and its return temperature is always valid, whereas
-    # a fitted one reads slab ambient whenever it is closed (see
-    # heatctl/rl_gate.py). Flip these to true as actuators are installed -
-    # marking a circuit fitted before it is will make heatctl hold or flush a
-    # circuit that is in fact wide open.
-    - {index: 1, name: valve_hk01, fitted: true}
-    - {index: 2, name: valve_hk02, fitted: true}
-    - {index: 3, name: valve_hk03, fitted: false}
-    - {index: 4, name: valve_hk04, fitted: false}
-    - {index: 5, name: valve_hk06, fitted: false}
-    - {index: 6, name: valve_hk07, fitted: false}
-    - {index: 7, name: valve_hk11, fitted: false}
-    - {index: 8, name: valve_spare, fitted: false}
-    # 2026-07-27: two more 750-559 fitted (positions 9 and 10), so there are
-    # now SIXTEEN analog outputs at holding registers 12-27, not eight.
-    # Verified against the coupler: AO index n -> holding register 11+n ->
-    # M{7+(n-1)//4}Ch{(n-1)%4+1}, read back at 0x0200+11+n.
-    # Indices 1-8 are deliberately NOT renumbered: 1 and 2 are the only
-    # channels whose physical circuit is confirmed, and shifting them would
-    # silently move which valve heatctl drives.
-    # These eight are spare until someone says what they are wired to.
-    - {index: 9,  name: valve_ao09, fitted: false}
-    - {index: 10, name: valve_ao10, fitted: false}
-    - {index: 11, name: valve_ao11, fitted: false}
-    - {index: 12, name: valve_ao12, fitted: false}
+    # MAPPING IS 1:1 WITH THE CIRCUIT NUMBER (owner, 2026-07-27): analog
+    # output n drives circuit n, and input n is that same circuit's return
+    # sensor. "Input 1, output 1: Gästebad. Etc."
+    #
+    # CORRECTED 2026-07-27. The previous 8-channel table was built around
+    # "8 outputs for 10 active circuits" and so skipped the out-of-service
+    # circuits, shifting everything after index 4: index 5 was named
+    # valve_hk06, 6 was valve_hk07, 7 was valve_hk11, 8 was valve_spare. That
+    # meant e.g. the Arbeitszimmer room PID - which has a live sensor and was
+    # commanding real percentages - drove circuit 7's output. Harmless only
+    # because no actuator is fitted on those channels yet.
+    #
+    # `fitted` says whether an ACTUATOR is physically on that circuit. It is
+    # not cosmetic: an unfitted circuit is open pipe, so its return sensor is
+    # always valid (heatctl/rl_gate.py) and it always passes flow (the demand
+    # controller's flow proxy counts it as 100 %). Flip to true as each
+    # actuator is installed - marking one fitted before it is will make
+    # heatctl hold or flush a circuit that is in fact wide open.
+    - {index: 1,  name: valve_hk01, fitted: true}   # Gästebad
+    - {index: 2,  name: valve_hk02, fitted: true}   # Wohnzimmer
+    - {index: 3,  name: valve_hk03, fitted: false}  # Kinderzimmer Natalie
+    - {index: 4,  name: valve_hk04, fitted: false}  # Kinderzimmer Naomi
+    - {index: 5,  name: valve_hk05, fitted: false}  # Bad Handtuchhalter, reserve
+    - {index: 6,  name: valve_hk06, fitted: false}  # Badezimmer
+    - {index: 7,  name: valve_hk07, fitted: false}  # Elternschlafzimmer
+    - {index: 8,  name: valve_hk08, fitted: false}  # Wohnzimmer
+    - {index: 9,  name: valve_hk09, fitted: false}  # Wohnzimmer
+    - {index: 10, name: valve_hk10, fitted: false}  # Wohnzimmer
+    - {index: 11, name: valve_hk11, fitted: false}  # Arbeitszimmer
+    - {index: 12, name: valve_hk12, fitted: false}  # out of service
+    # Genuine spares - no circuit 13-16 exists.
     - {index: 13, name: valve_ao13, fitted: false}
     - {index: 14, name: valve_ao14, fitted: false}
     - {index: 15, name: valve_ao15, fitted: false}
@@ -203,9 +203,11 @@ rooms:
     label: "Wohnzimmer"
     circuits:
       - {sensor: rl_hk02, valve: valve_hk02}
-      - {sensor: rl_hk08, valve: ""}       # TODO: no valve channel assigned
-      - {sensor: rl_hk09, valve: ""}       #       yet for HK 8/9/10 - only
-      - {sensor: rl_hk10, valve: ""}       #       8 analog outputs exist
+      # Assigned 2026-07-27: with 16 analog outputs every circuit has one, and
+      # the mapping is 1:1 with the circuit number.
+      - {sensor: rl_hk08, valve: valve_hk08}
+      - {sensor: rl_hk09, valve: valve_hk09}
+      - {sensor: rl_hk10, valve: valve_hk10}
     # Legacy wall unit, bridged to MQTT by an HA automation (interim).
     room_temp_topic: "roomtemp/wohnzimmer"
   - name: kind_natalie

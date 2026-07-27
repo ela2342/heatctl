@@ -76,6 +76,16 @@ class Controller:
         # The RL sensors are at the manifold, so a circuit with no flow is not
         # measured at all - see rl_gate.py for why feeding that to the PID
         # locks the circuit shut.
+        # Analog outputs heatctl actually drives, i.e. those assigned to a
+        # circuit. Declared-but-unassigned channels exist (spares, and the two
+        # out-of-service circuits) and must NOT be swept up by the failsafe:
+        # doing so parked them at 100 % and left them there, because nothing
+        # ever commands them again. Observed 2026-07-27.
+        self.owned_valves = [c["valve"] for r in cfg["rooms"]
+                             for c in r["circuits"] if c.get("valve")]
+        self.unowned_valves = [c["name"] for c in cfg["valves"]["channels"]
+                               if c["name"] not in self.owned_valves]
+
         self.rl_gate = RLGate(cfg)
 
         # House demand / source engagement. SHADOW by default: it computes and
@@ -274,6 +284,12 @@ class Controller:
                 if reason:
                     await self.plane.publish(f"override/{valve}", reason)
 
+        # Unassigned outputs get a definite, safe value rather than whatever
+        # a past failsafe left them at. 0 with NC actuators means closed: an
+        # output heatctl does not manage should not be passing water.
+        for name in self.unowned_valves:
+            await self.io.write_valve(name, 0.0)
+
         await self.telemetry(state)
         self._log_db(state)
         self._cycle += 1
@@ -319,7 +335,10 @@ class Controller:
                 self._failsafe_since = now
             self._failsafe_reason = reason
             self._failsafe_logged = now
-        await self.io.write_all_valves(self.safety.failsafe_pct)
+        # Only the circuits we control. Driving unassigned outputs open
+        # achieves nothing and strands them there.
+        await self.io.write_all_valves(self.safety.failsafe_pct,
+                                       self.owned_valves)
         await self.plane.publish("override/global", reason)
 
     def _failsafe_cleared(self) -> None:

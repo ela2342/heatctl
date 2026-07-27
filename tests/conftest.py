@@ -111,6 +111,7 @@ class FakeBackend(IOBackend):
         self.state.last_read_ts = 1.0
         self.writes: list[tuple[str, float]] = []
         self.all_valve_writes: list[float] = []
+        self.all_valve_names: list[str] | None = None
         self.started = False
         self.stopped = False
         self.fail_writes = False
@@ -134,9 +135,11 @@ class FakeBackend(IOBackend):
         self.writes.append((name, pct))
         self.state.valves_pct[name] = pct
 
-    async def write_all_valves(self, pct: float) -> None:
+    async def write_all_valves(self, pct: float,
+                               names: list[str] | None = None) -> None:
         self.all_valve_writes.append(pct)
-        for ch in ("valve_hk01", "valve_hk02", "valve_hk03"):
+        self.all_valve_names = names
+        for ch in (names or ("valve_hk01", "valve_hk02", "valve_hk03")):
             self.state.valves_pct[ch] = pct
 
     # -- convenience for assertions --

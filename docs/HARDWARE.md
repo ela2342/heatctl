@@ -205,13 +205,45 @@ series-connected measuring circuits). Fault saturation values:
 0x05DC (wire break / overtemp), 0xFED4 (short / undertemp).
 
 ## Actuators
-750-559 ch 1-8: Alpha 5 proportional actuators, 0-10V.
-Valve->circuit mapping: TODO verify (8 outputs, 10 active circuits)!
+4x 750-559, 16 channels of 0-10 V: Alpha 5 proportional actuators.
 
-**Only circuits 1 and 2 have an actuator fitted.** Every other circuit is
-open pipe, so water circulates through them whenever the pump runs, with no
-way to throttle them. Two consequences: the manifold cannot be balanced until
-the remaining actuators arrive, and a "closed" state only exists for 1 and 2.
+**Valve->circuit mapping RESOLVED 2026-07-27 (owner): it is 1:1 with the
+circuit number.** Analog output n drives circuit n, and input n is that same
+circuit's return sensor - "Input 1, output 1: Gästebad. Etc." So the sensor
+table above and the output channels share one numbering, and outputs 13-16 are
+genuine spares because there is no circuit 13-16.
+
+This retired the long-standing TODO here ("8 outputs, 10 active circuits") and
+corrected a real error in `config.yaml`. That file's 8-channel table had been
+built around fitting 10 active circuits into 8 outputs, so it skipped the
+out-of-service circuits and shifted everything after index 4:
+
+| AO index | config used to call it | actually drives |
+|---|---|---|
+| 5 | `valve_hk06` | circuit 5, Bad Handtuchhalter (reserve) |
+| 6 | `valve_hk07` | circuit 6, Badezimmer |
+| 7 | `valve_hk11` | circuit 7, Elternschlafzimmer |
+| 8 | `valve_spare` | circuit 8, Wohnzimmer |
+
+Consequence while that was live: the Arbeitszimmer room PID - which has a real
+room sensor and commands real percentages - was driving circuit 7's output.
+Harmless in practice only because no actuator is fitted on any of those
+channels. Worth remembering as the shape of the risk: a plausible-looking
+mapping built by "fitting things in" rather than measured, silently pointing a
+live controller at the wrong valve.
+
+**Only circuits 1 and 2 have an actuator fitted** (still true as of
+2026-07-27 - the two extra 750-559 *modules* arrived that day, which is not the
+same as actuators being on the manifold). Every other circuit is open pipe, so
+water circulates through them whenever the pump runs, with no way to throttle
+them. Two consequences: the manifold cannot be balanced until the remaining
+actuators arrive, and a "closed" state only exists for 1 and 2.
+
+`config.yaml` tracks this per channel with `fitted:`, which is load-bearing in
+two places - `heatctl/rl_gate.py` (an unactuated circuit always flows, so its
+return sensor is always valid) and the demand controller's flow proxy (which
+counts an unactuated circuit as 100 % open). Flip each to `true` as the
+actuator goes on, not when the module arrives.
 
 **These are NC (normally closed) actuators** - recorded as `stellantrieb: NC`
 for every output in the legacy system's database. So loss of signal or power

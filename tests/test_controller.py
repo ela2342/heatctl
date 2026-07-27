@@ -378,3 +378,38 @@ async def test_a_cycle_completes_in_every_mode(controller, mode):
     ctl.io.touch(time.monotonic())
     await ctl.step(1.0)
     assert len(ctl.io.writes) == 3
+
+
+# ---------- outputs heatctl does not own ----------
+
+async def test_the_failsafe_only_touches_circuits_we_control(controller):
+    """Real defect, observed 2026-07-27.
+
+    config.yaml declares more analog outputs than there are circuits - genuine
+    spares, plus the two out-of-service circuits. The failsafe used to sweep
+    every declared channel to 100 % and then never command them again, because
+    nothing else does, leaving them parked wide open indefinitely. Harmless
+    while no actuator is fitted there; wrong the moment one is.
+    """
+    ctl = controller(temps={"rl_hk01": 24.0})
+    ctl.io.touch(time.monotonic() - 3600)
+    await ctl.step(1.0)
+    assert ctl.io.all_valve_names == ctl.owned_valves
+    assert "valve_spare" not in (ctl.io.all_valve_names or [])
+
+
+async def test_unowned_outputs_are_parked_closed(controller):
+    """An output heatctl does not manage should not be passing water, and
+    should have a DEFINITE value rather than whatever a past failsafe left."""
+    ctl = controller(temps={"rl_hk01": 24.0, "rl_hk02": 24.0,
+                            "rl_hk03": 24.0, "vl_total": 30.0})
+    ctl.io.touch(time.monotonic())
+    await ctl.step(1.0)
+    for name in ctl.unowned_valves:
+        assert ctl.io.last_write[name] == 0.0
+
+
+def test_ownership_is_derived_from_the_room_topology(controller):
+    ctl = controller()
+    assert set(ctl.owned_valves) == {"valve_hk01", "valve_hk02", "valve_hk03"}
+    assert ctl.unowned_valves == []

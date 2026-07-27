@@ -125,7 +125,8 @@ class MqttIOBackend(IOBackend):
             self.valve_topic_tpl.format(name=name), str(raw))
         self.state.valves_pct[name] = pct
 
-    async def write_all_valves(self, pct: float) -> None:
+    async def write_all_valves(self, pct: float,
+                               names: list[str] | None = None) -> None:
         for name in self.valve_names:
             try:
                 await self.write_valve(name, pct)

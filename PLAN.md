@@ -53,13 +53,24 @@ Room sensors still arrive via MQTT regardless of this choice.
   circuits 5 and 12 out of service).
 
 ## Milestone 0 - bring-up (manual, no code)
-- [ ] Verify valve<->circuit mapping in config.yaml (8 analog outputs vs
-      10 active circuits; Wohnzimmer circuits 7/8/9 valve assignment TODO).
-      Also resolve the hk07/hk10 conflict against the legacy Controme
-      mapping - see the cross-check table in docs/HARDWARE.md
-- [ ] Hardware still missing: a 750-1606 (enough 0V terminals for all 12
-      valves) and 2x 750-559 (drive all valves, plus spares). Currently
-      only 2 valves are wired: Gästebad (hk01) and Wohnzimmer (hk02).
+- [x] Verify valve<->circuit mapping (2026-07-27, owner): **it is 1:1 with
+      the circuit number** - analog output n drives circuit n, and input n is
+      that circuit's return sensor. Also resolved the Wohnzimmer 8/9/10 valve
+      assignment, since 16 outputs (4x 750-559) means every circuit has one.
+      This corrected a real error: config.yaml's old 8-channel table had been
+      built by fitting 10 active circuits into 8 outputs, so it skipped the
+      out-of-service circuits and shifted indices 5-8 - the Arbeitszimmer room
+      PID was driving circuit 7's output. Harmless only because no actuator is
+      fitted there. See docs/HARDWARE.md.
+      The hk07/hk10 room mapping was settled separately on 2026-07-26 from the
+      Controme database and is unaffected.
+- [~] Hardware: the **2x 750-559 arrived and are fitted** (2026-07-27,
+      positions 9 and 10), so there are now 16 analog outputs - enough for all
+      12 circuits plus spares. Still open: the 750-1606 (enough 0V terminals
+      for all 12 valves) status is unconfirmed, and **only 2 actuators are
+      physically on the manifold** - Gästebad (circuit 1) and Wohnzimmer
+      (circuit 2). A module arriving is not an actuator being fitted; keep
+      `fitted:` in config.yaml honest about the difference.
       WHEN THEY ARE FITTED, two decisions expire together and must be
       revisited in the same breath - both are safe today only because most
       circuits are unthrottleable open pipe:
