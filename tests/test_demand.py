@@ -15,8 +15,11 @@ from heatctl.demand import DemandController
 @pytest.fixture
 def demand(cfg):
     def _make(**overrides):
+        # enabled=False (shadow) by default: `enabled` gates who ACTS on the
+        # answer, not whether it is computed, and with it on the constructor
+        # refuses auto_mode (heatctl cannot command the pump's mode yet).
         cfg["control"]["source_demand"] = {
-            "enabled": True, "auto_mode": True, "min_open_pct": 40.0,
+            "enabled": False, "auto_mode": True, "min_open_pct": 40.0,
             "engage_deviation_c": 0.3, "mode_deadband_c": 1.0,
             "mode_dwell_s": 3600.0, "min_on_s": 600.0, "min_off_s": 600.0,
             **overrides,
@@ -231,3 +234,25 @@ def test_shadow_mode_still_computes_everything(cfg):
     assert d.enabled is False
     assert out.mean_deviation_c == 2.0
     assert out.source_request is True
+
+
+# ---------- the heat pump's own mode is NOT ours to switch (yet) ----------
+
+def test_auto_mode_is_refused_while_the_pump_mode_cannot_be_commanded(cfg, caplog):
+    """heatctl flipping its own mode while the heat pump stays put is worse
+    than not switching: the valve loop would drive the wrong direction with
+    the wrong water. Register 0 bit 0 (water pump) is the only writable bit
+    established; the mode bit is unknown. See PLAN.md WP-B.
+    """
+    cfg["control"]["source_demand"] = {"enabled": True, "auto_mode": True}
+    with caplog.at_level("ERROR", logger="heatctl.demand"):
+        d = DemandController(cfg)
+    assert d.auto_mode is False
+    assert any("cannot command" in r.getMessage() for r in caplog.records)
+
+
+def test_auto_mode_is_left_alone_in_shadow_mode(cfg):
+    """Shadow acts on nothing, so computing a mode it would pick is safe -
+    and is exactly the thing worth watching before the migration."""
+    cfg["control"]["source_demand"] = {"enabled": False, "auto_mode": True}
+    assert DemandController(cfg).auto_mode is True

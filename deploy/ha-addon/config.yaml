@@ -5,7 +5,7 @@
 # room topology, safety limits) and lives in this App's config directory
 # instead - see `map:` and the README.
 name: heatctl
-version: "0.6.1"
+version: "0.7.1"
 slug: heatctl
 description: Self-sufficient hydronic floor heating/cooling control for a WAGO 750-352 node
 url: https://github.com/ela2342/heatctl
@@ -45,6 +45,8 @@ options:
   config_file: config.yaml
   log_level: info
   modbus_host: ""
+  heatpump_host: ""
+  heatpump_port: 4196
   modbus_port: 502
   mqtt_host: ""
   mqtt_port: 1883
@@ -56,6 +58,8 @@ schema:
   log_level: list(debug|info|warning|error|critical)
   # Site values. Left empty, heatctl falls back to whatever config.yaml says -
   # and that ships with placeholder addresses, so at minimum set modbus_host.
+  heatpump_host: str?
+  heatpump_port: int?
   modbus_host: str?
   modbus_port: port?
   # Leave the MQTT fields empty to use the broker the Supervisor offers.

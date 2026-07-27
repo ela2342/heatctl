@@ -25,6 +25,12 @@ if [ ! -f "${TARGET}" ]; then
 fi
 
 # --- site values: App options win over the config file ---
+if bashio::config.has_value 'heatpump_host'; then
+    export HEATCTL_HP_HOST="$(bashio::config 'heatpump_host')"
+fi
+if bashio::config.has_value 'heatpump_port'; then
+    export HEATCTL_HP_PORT="$(bashio::config 'heatpump_port')"
+fi
 if bashio::config.has_value 'modbus_host'; then
     export HEATCTL_MODBUS_HOST="$(bashio::config 'modbus_host')"
 fi

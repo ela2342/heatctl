@@ -84,8 +84,20 @@ def test_room_names_are_unique(real_cfg):
 
 
 def test_valve_channel_count_fits_the_fitted_modules(real_cfg):
-    """Two 750-559 modules = 8 analog outputs. More would not be addressable."""
-    assert len(real_cfg["valves"]["channels"]) <= 8
+    """Four 750-559 modules = 16 analog outputs (since 2026-07-27; it was two
+    modules and 8 outputs before). More would not be addressable.
+
+    Bump this when modules are added or removed — and note the failure is the
+    point: this test caught the module change the moment config.yaml grew past
+    the old limit, which is the cheapest possible reminder that the process
+    image has moved.
+    """
+    channels = real_cfg["valves"]["channels"]
+    assert len(channels) <= 16
+    # Indices must be contiguous from 1, because the analog outputs occupy a
+    # contiguous run of holding registers from `base_register` and the read-back
+    # mirror is addressed the same way.
+    assert sorted(c["index"] for c in channels) == list(range(1, len(channels) + 1))
 
 
 def test_safety_limits_are_ordered_sanely(real_cfg):

@@ -285,8 +285,45 @@ def test_the_condensation_guard_uses_the_live_limit(cfg):
     assert s.apply("cooling", st, "rl_hk01", 60.0) == (0.0, "vl_undertemp")
 
 
-def test_dew_point_does_not_affect_heating(cfg):
+def test_a_missing_dew_point_does_not_stop_heating(cfg):
+    """Only cooling requires a dew point.
+
+    Note this is NOT "heating ignores the dew point" - it used to be, until
+    2026-07-27. The condensation guard now applies in any mode when the supply
+    is measurably below the limit, because heatctl's mode and the heat pump's
+    mode are separate things. What heating does not need is a dew point in
+    order to run at all.
+    """
     s = Safety(cfg)
-    s.set_dew_point(25.0)                      # absurd, but heating ignores it
-    st = state(rl_hk01=20.0, vl_total=15.0)
+    st = state(rl_hk01=20.0, vl_total=30.0)
+    assert s.apply("heating", st, "rl_hk01", 60.0) == (60.0, None)
+
+
+def test_the_condensation_guard_does_not_depend_on_our_mode_label(cfg):
+    """What condenses is decided by the water, not by the label on the plant.
+
+    heatctl's mode and the heat pump's mode are separate things - heatctl
+    cannot command the pump's mode at all yet - so a guard that only ran in
+    "cooling" would switch off in precisely the situation it exists for:
+    heatctl believing it is heating while chilled water circulates.
+    """
+    s = Safety(cfg)
+    s.set_dew_point(14.0)                      # limit 16.0
+    st = state(rl_hk01=20.0, vl_total=15.0)    # supply below the dew point
+    assert s.apply("heating", st, "rl_hk01", 60.0) == (0.0, "vl_undertemp")
+
+
+def test_a_warm_supply_in_heating_is_still_unaffected(cfg):
+    """The guard must not become a general brake on heating."""
+    s = Safety(cfg)
+    s.set_dew_point(14.0)
+    st = state(rl_hk01=22.0, vl_total=35.0)
+    assert s.apply("heating", st, "rl_hk01", 60.0) == (60.0, None)
+
+
+def test_heating_still_runs_without_any_dew_point(cfg):
+    """Only cooling requires a dew point; heating must not be stopped by a
+    missing one."""
+    s = Safety(cfg)
+    st = state(rl_hk01=22.0, vl_total=30.0)
     assert s.apply("heating", st, "rl_hk01", 60.0) == (60.0, None)

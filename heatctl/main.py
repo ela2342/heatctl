@@ -28,6 +28,7 @@ import yaml
 
 from .backends.base import make_backend
 from .demand import DemandController
+from .heatpump import HeatPump
 from .mqtt_plane import ControlPlane
 from .pid import PID
 from .rl_gate import FLUSH, MEASURE, RLGate
@@ -83,6 +84,11 @@ class Controller:
         # rule - see docs/DESIGN.md 2.1 and 4.3.
         self.demand = DemandController(cfg)
         self._last_demand = None
+
+        # Heat pump client. Its own task at its own (slow) cadence - the
+        # device documents a 200 ms minimum between transactions, so it must
+        # never share the 1 s valve loop. See docs/HEATPUMP.md.
+        self.hp = HeatPump(cfg, self.plane)
 
         self.db = self._open_db(cfg["logging"]["state_db"])
         self._cycle = 0
@@ -161,11 +167,32 @@ class Controller:
             if sp != self.room_setpoints[key]:
                 log.info("setpoint %s -> %.1f degC", key, sp)
             self.room_setpoints[key] = sp
+        elif kind == "hp":
+            # Heat pump register write. Async work from a sync callback, so it
+            # is scheduled rather than awaited; the client serialises the bus
+            # itself and drops no-ops before they cost a flash cycle.
+            asyncio.create_task(self._hp_command(key, payload))
+
+    async def _hp_command(self, key: str, payload: str) -> None:
+        try:
+            if key.startswith("raw/"):
+                addr = int(key.split("/", 1)[1], 0)
+                await self.hp.write_register(addr, int(payload, 0), "mqtt raw")
+            elif key == "power":
+                await self.hp.set_power(payload.strip() in ("1", "on", "true"),
+                                        "mqtt")
+            elif key == "mode":
+                await self.hp.set_mode(payload.strip(), "mqtt")
+            else:
+                await self.hp.write_named(key, float(payload), "mqtt")
+        except Exception:
+            log.exception("heat pump command failed: %s = %r", key, payload)
 
     # ---------- main loop ----------
     async def run(self) -> None:
         await self.io.start()
         plane_task = asyncio.create_task(self.plane.run())
+        hp_task = asyncio.create_task(self.hp.run())
         interval = self.cfg["control"]["loop_interval_s"]
         last = time.monotonic()
         try:
@@ -183,6 +210,7 @@ class Controller:
             # connected, only then tear the plane down.
             await self.plane.stop()
             plane_task.cancel()
+            hp_task.cancel()
             await self.io.stop()
 
     async def step(self, dt: float) -> None:

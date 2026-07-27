@@ -91,6 +91,7 @@ class ControlPlane:
                     if self.disc:
                         await self._publish_discovery()
                     await client.subscribe(f"{self.base}/set/#")
+                    await client.subscribe(f"{self.base}/hp/set/#")
                     for topic in self.room_topics:
                         await client.subscribe(topic)
                     if self.dew_topic:
@@ -127,6 +128,10 @@ class ControlPlane:
         elif topic.startswith(f"{self.base}/set/setpoint/"):
             room = topic.rsplit("/", 1)[1]
             self.on_command("setpoint", room, payload)
+        elif topic.startswith(f"{self.base}/hp/set/"):
+            # Heat pump register writes. Routed, not handled here: this file
+            # owns MQTT, not the register map.
+            self.on_command("hp", topic[len(f"{self.base}/hp/set/"):], payload)
 
     async def stop(self) -> None:
         """Say goodbye explicitly, while still connected.
@@ -144,6 +149,25 @@ class ControlPlane:
         try:
             await self._client.publish(f"{self.base}/status", "offline",
                                        retain=True)
+        except Exception:
+            pass
+
+    async def discover(self, component: str, uid: str, conf: dict) -> None:
+        """Publish one HA discovery config. Public so other modules (the heat
+        pump client) can register their own entities without this file needing
+        to know about their register maps."""
+        if not self._client or not self.disc:
+            return
+        conf = {"unique_id": f"heatctl_{uid}",
+                "availability_topic": f"{self.base}/status",
+                "device": {"identifiers": ["heatctl_wago"], "name": "heatctl",
+                           "manufacturer": "heatctl",
+                           "model": "WAGO 750-352 node"},
+                **conf}
+        try:
+            await self._client.publish(
+                f"{self.disc_prefix}/{component}/heatctl/{uid}/config",
+                json.dumps(conf), retain=True)
         except Exception:
             pass
 
@@ -198,8 +222,16 @@ class ControlPlane:
             if ch.get("enabled", True):
                 await sensor(ch["name"], ch.get("label", ch["name"]),
                              f"temp/{ch['name']}", "°C", "temperature")
+        # Only channels assigned to a circuit. An unassigned analog output is
+        # never commanded, so discovering it would create an entity that reads
+        # `unknown` forever - the same clutter we spent 2026-07-27 removing.
+        assigned = {c["valve"] for r in self.cfg["rooms"] for c in r["circuits"]
+                    if c.get("valve")}
         for ch in self.cfg["valves"]["channels"]:
-            await sensor(ch["name"], ch["name"], f"valve/{ch['name']}", "%")
+            if ch["name"] in assigned:
+                await sensor(ch["name"], ch["name"], f"valve/{ch['name']}", "%")
+            else:
+                await undisc("sensor", ch["name"])
 
         # --- house demand / source engagement (diagnostic) ---
         # Discovered even while the demand controller is in shadow mode: the

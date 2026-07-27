@@ -36,8 +36,17 @@ Room sensors still arrive via MQTT regardless of this choice.
 ### Existing environment
 - WAGO 750-352 @ 192.0.2.52 (mapping: config.yaml + docs/HARDWARE.md)
 - HA @ 192.0.2.230 with Mosquitto and an unconfigured Modbus2MQTT add-on
-- Heat pump on Modbus RTU via Waveshare RS485 gateway (192.0.2.37),
-  HA modbus hub "WSDEV0001", register 0 = control flags (bit 0 = water pump).
+- Heat pump (PW58321) on Modbus RTU via Waveshare RS485 gateway
+  (192.0.2.37), HA modbus hub "WSDEV0001". **Register map: docs/HEATPUMP.md**
+  (full vendor manual captured in the local-only docs/PW58321_MODBUS.local.md).
+  CORRECTED 2026-07-27: this line previously said "register 0 = control flags
+  (bit 0 = water pump)". Bit 0 of 0x0000 is the unit's **POWER ON/OFF**. The
+  pump knob is bit 4. So the HA automations that "hold the pump request set"
+  are holding the whole unit powered on, and the condensation automation that
+  clears it powers the heat pump off - which is what was found on 2026-07-26.
+  Note docs/DESIGN.md always had this right; the error lived only here, and was
+  then propagated into the HA automation and a template helper, which made
+  three sources look like corroboration when they had one origin.
   Currently written by HA automations - see milestone 1 warning.
 - Rooms/circuits: see `rooms:` in config.yaml (Gästebad, Wohnzimmer x4,
   Kinderzimmer Natalie/Naomi, Badezimmer, Elternschlafzimmer, Arbeitszimmer;

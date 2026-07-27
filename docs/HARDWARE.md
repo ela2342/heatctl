@@ -12,23 +12,36 @@ outputs fall to a safe state when writes stop.
 | 1   | 16DI      | 16 digital inputs (free)            | discrete inputs 0-15 |
 | 2   | 750-652   | RS485 (unused)                      | IR/HR 0-11 |
 | 3-6 | 4x750-463 | 16x PT1000, degC*10, 2's complement | input reg. 12-27 |
-| 7-8 | 2x750-559 | 8x 0-10V (0..32767)                 | holding reg. 12-19 |
-| 9-10| 2x750-517 | 4 relays                            | coils 0-3 |
+| 7-10| 4x750-559 | **16x 0-10V (0..32767)**            | holding reg. 12-27 |
+| 11-12| 2x750-5xx| 4 relays (2DO each)                 | coils 0-3 |
 |     | 750-600   | bus end terminal                    | -      |
+
+**Changed 2026-07-27: two more 750-559 fitted** (positions 9 and 10), so
+there are now 16 analog outputs, not 8. Verified against the coupler:
+AO index n -> holding register 11+n -> `M{7+(n-1)//4}Ch{(n-1)%4+1}`, read
+back at `0x0200 + 11 + n`. The INPUT image is unchanged - 16 PT1000 still
+at input registers 12-27, since the added modules are outputs.
+
+Which analog output drives which circuit remains **unverified except
+channels 1 and 2**. config.yaml keeps indices 1-8 at their existing names
+on purpose: renumbering them would silently move which physical valve
+heatctl drives, and 1 and 2 are the only confirmed ones.
 
 ### Register spaces - read-back gotcha (verified on hardware 2026-07-26)
 The coupler overlays the input and output process images in the same low
 address range, so **you cannot read back what you wrote at the address you
 wrote it to**:
 - FC4 (read input registers) at 12..27 -> PT1000 values. As documented above.
-- FC6/FC16 (write) at 12..19 -> the 750-559 analog outputs. Correct, works.
-- FC3 (read holding registers) at 12..19 -> **returns the INPUT image, i.e.
+- FC6/FC16 (write) at 12..27 -> the 750-559 analog outputs. Correct, works.
+  (12..19 before the second pair of modules was fitted on 2026-07-27.)
+- FC3 (read holding registers) at 12..27 -> **returns the INPUT image, i.e.
   temperatures again, NOT your output values.** Reading 12/13 right after
   writing them returns ~174/175 (17.4/17.5 degC), which looks like a failed
   write but is not.
 - The output process image is mirrored for reading at **0x0200 + word
-  offset**: output word 12 reads back at 524 (0x020C), word 19 at 531.
-  Verified by writing 16383 to HR12/13 and finding it at 524/525.
+  offset**: output word 12 reads back at 524 (0x020C), word 27 at 539.
+  Verified by writing 16383 to HR12/13 and finding it at 524/525, and again
+  across the full 16-output image on 2026-07-27.
 - **0x1000+ IS valid** - the watchdog configuration block lives there. An
   earlier note in this file claimed otherwise; that was wrong, and only looked
   that way because a 32-register block read spanned past the end of the block

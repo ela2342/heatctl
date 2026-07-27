@@ -79,6 +79,31 @@ mqtt:                          # control-plane broker (telemetry, setpoints, She
   # cooling that is perfectly safe indoors.
   dew_point_topic: "heatctl/env/dew_point"
 
+# --- Heat pump (PW58321) -------------------------------------------------
+# heatctl is the SOLE Modbus master for this device. Not a preference: the
+# unit documents a minimum 200 ms between transactions and two independent
+# masters cannot honour that on each other's behalf - they demonstrably
+# interfere. Home Assistant's modbus hub for this unit must stay disabled; HA
+# gets everything from the MQTT topics heatctl publishes.
+# Register map and the reasoning: docs/HEATPUMP.md.
+heatpump:
+  enabled: true
+  host: 192.0.2.37             # Waveshare RS485->TCP gateway
+  port: 4196
+  unit: 1                      # fixed by the device
+  timeout_s: 5.0
+  poll_interval_s: 5.0         # status block, own task - NOT the 1 s valve loop
+  config_poll_interval_s: 300  # re-read all 269 RW registers and diff them:
+                               # settings can be changed at the unit's own
+                               # control panel and we want to know when they are
+  # WRITES WEAR FLASH. The manual states the unit flashes its memory chip on
+  # every write and warns against doing it often, so: no-op writes are dropped
+  # before they reach the bus, and this budget caps the rest. A loop that tried
+  # to reconcile every cycle would destroy the controller, not just waste
+  # bandwidth - the budget exists to make that fail loudly instead.
+  allow_writes: false
+  write_budget_per_hour: 30
+
 # --- WAGO node inputs ----------------------------------------------------
 # Process image: input registers 0-11 = 750-652 (RS485, unused),
 # 12-27 = 4x 750-463 (16x PT1000, value = degC * 10, two's complement)
@@ -107,8 +132,9 @@ sensors:
 valves:
   base_register: 12
   channels:
-    # NOTE: only 8 analog outputs for up to 12 circuits. Verify which
-    # circuits actually have a proportional actuator and fix this mapping!
+    # 16 analog outputs since 2026-07-27 (4x 750-559), enough for all 12
+    # circuits plus spares. Which channel drives which circuit is still
+    # UNVERIFIED except 1 and 2 - fix this mapping as each is wired.
     # Which 750-559 channel drives which circuit is UNVERIFIED except for
     # channels 1 and 2, the only two physically wired so far (Gaestebad and
     # Wohnzimmer HK 2). Channel 6 was named valve_hk10 while circuits 7/10
@@ -130,6 +156,22 @@ valves:
     - {index: 6, name: valve_hk07, fitted: false}
     - {index: 7, name: valve_hk11, fitted: false}
     - {index: 8, name: valve_spare, fitted: false}
+    # 2026-07-27: two more 750-559 fitted (positions 9 and 10), so there are
+    # now SIXTEEN analog outputs at holding registers 12-27, not eight.
+    # Verified against the coupler: AO index n -> holding register 11+n ->
+    # M{7+(n-1)//4}Ch{(n-1)%4+1}, read back at 0x0200+11+n.
+    # Indices 1-8 are deliberately NOT renumbered: 1 and 2 are the only
+    # channels whose physical circuit is confirmed, and shifting them would
+    # silently move which valve heatctl drives.
+    # These eight are spare until someone says what they are wired to.
+    - {index: 9,  name: valve_ao09, fitted: false}
+    - {index: 10, name: valve_ao10, fitted: false}
+    - {index: 11, name: valve_ao11, fitted: false}
+    - {index: 12, name: valve_ao12, fitted: false}
+    - {index: 13, name: valve_ao13, fitted: false}
+    - {index: 14, name: valve_ao14, fitted: false}
+    - {index: 15, name: valve_ao15, fitted: false}
+    - {index: 16, name: valve_ao16, fitted: false}
 
 # --- Rooms: the actual control unit -------------------------------------
 # A room groups one or more floor circuits and optionally a room air
