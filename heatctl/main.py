@@ -28,6 +28,7 @@ import yaml
 
 from .backends.base import make_backend
 from .demand import DemandController
+from .distribution import Distributor
 from . import heatpump_map as hpm
 from .heatpump import HeatPump
 from .mqtt_plane import ControlPlane
@@ -102,6 +103,17 @@ class Controller:
         # Load compensation: house demand -> water temperature setpoint. The
         # third level of the cascade; see setpoint.py.
         self.water_sp = SetpointController(cfg)
+
+        # Valve distribution. Scales demands so the most-demanding circuit is
+        # fully open: maximum flow, minimum spread, best COP - throttling is a
+        # cost paid only to share energy between rooms. See distribution.py.
+        self.dist = Distributor(cfg)
+        # Pre-normalisation peak demand. This, NOT the commanded position, is
+        # what tells the water-setpoint loop whether there is enough capacity:
+        # normalisation pins the commanded maximum at 100 % by construction, so
+        # reading valve position there would report "saturated" forever and
+        # drive the water colder without limit.
+        self._peak_demand: float | None = None
 
         self.demand = DemandController(
             cfg, can_command_source_mode=self.hp.enabled and self.hp.allow_writes)
@@ -249,6 +261,7 @@ class Controller:
         self._last_return_sp = return_sp
 
         now = time.monotonic()
+        demands: dict[str, tuple[float, str]] = {}
 
         # House demand / source engagement. Computed from the PREVIOUS cycle's
         # valve positions, which is correct: the flow proxy describes the
@@ -297,14 +310,27 @@ class Controller:
                 else:
                     proposed = self._return_control(
                         valve, sensor, state, return_sp, dt, now)
-                pct, reason = self.safety.apply(self.mode, state, sensor, proposed)
-                await self.io.write_valve(valve, pct)
+                demands[valve] = (proposed, sensor)
+
+        # Normalise across ALL circuits before safety sees anything: the
+        # distribution is a property of the whole manifold, not of one room.
+        raw = {v: d for v, (d, _) in demands.items()}
+        self._peak_demand = max(raw.values()) if raw else None
+        # `off` bypasses distribution entirely. Normalising a set of all-zero
+        # demands correctly yields all-valves-open - which is right at thermal
+        # equilibrium and exactly wrong when the plant is meant to be off.
+        commanded = raw if self.mode == "off" else self.dist.apply(raw)
+
+        for valve, (_, sensor) in demands.items():
+            proposed = commanded[valve]
+            pct, reason = self.safety.apply(self.mode, state, sensor, proposed)
+            await self.io.write_valve(valve, pct)
                 # Record what the plant actually received, not what control
                 # asked for - safety may have overridden it, and real flow is
                 # what decides whether RL will mean anything.
-                self.rl_gate.record_command(valve, pct, now)
-                if reason:
-                    await self.plane.publish(f"override/{valve}", reason)
+            self.rl_gate.record_command(valve, pct, now)
+            if reason:
+                await self.plane.publish(f"override/{valve}", reason)
 
         await self._hold_source_power()
         await self._trim_water_setpoint(now)
@@ -390,7 +416,7 @@ class Controller:
         decision = self.water_sp.step(
             mode=self.mode,
             deviation=None if d is None else d.mean_deviation_c,
-            max_open=self._max_owned_opening(),
+            max_open=self._peak_demand,
             current=None if current is None else float(current),
             dew_point=dp,
             leaving_water=None if leaving is None else leaving * 0.5,
@@ -500,6 +526,25 @@ class Controller:
         # shadow mode - that is the whole point of shadow mode: watch what it
         # WOULD do against what the HA automations actually do, before it owns
         # the heat pump.
+        lw, rw = self.hp.status.get(0x8012), self.hp.status.get(0x800E)
+        if lw is not None and rw is not None:
+            # Leaving/return spread: the efficiency indicator. Maximising flow
+            # minimises this, which is the whole point of the distribution
+            # design (distribution.py).
+            await self.plane.publish("hp/spread", f"{rw * 0.5 - lw * 0.5:.1f}")
+        amps = self.hp.status.get(0x8025)
+        if amps is not None:
+            # Rough electrical power. Compressor current x mains voltage - the
+            # same estimate the retired HA template made, kept because it is
+            # the only power figure available and energy-per-degree-day needs
+            # one. It ignores fans and pump and is NOT a metered value.
+            await self.plane.publish("hp/power_estimate", f"{amps * 0.1 * 230:.0f}")
+        if self._peak_demand is not None:
+            # PRE-normalisation peak. The commanded maximum is pinned at 100 %
+            # by construction, so only this says whether there is enough
+            # capacity - it is the signal the water setpoint loop uses.
+            await self.plane.publish("demand/peak", f"{self._peak_demand:.0f}")
+
         d = self._last_demand
         if d is not None:
             await self.plane.publish("demand/source_request",

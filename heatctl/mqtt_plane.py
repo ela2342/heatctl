@@ -268,6 +268,10 @@ class ControlPlane:
         })
         await sensor("demand_deviation", "House deviation",
                      "demand/deviation", "K")
+        await sensor("demand_peak", "Peak circuit demand", "demand/peak", "%")
+        await sensor("hp_spread", "HP spread", "hp/spread", "K")
+        await sensor("hp_power_estimate", "HP power estimate",
+                     "hp/power_estimate", "W", "power")
         await sensor("demand_open_pct", "Circuit opening (flow proxy)",
                      "demand/open_pct", "%")
         await disc("sensor", "demand_reason", {

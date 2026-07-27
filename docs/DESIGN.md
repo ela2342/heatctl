@@ -409,6 +409,115 @@ disagree.
 - **Single-writer still applies**: heatctl must not write WSDEV0001 register 0
   while the HA automations do. One atomic migration, then disable them.
 
+### 4.4 Valve distribution — maximise flow, minimise spread
+
+**The objective** (owner, 2026-07-27), and it is an efficiency objective, not
+a protective one:
+
+> maximise overall flow → minimise the leaving/return spread → the water can
+> sit closer to room temperature for the same duty → better COP
+
+Throttling a valve is a **cost**. It is paid only to distribute energy between
+rooms that need different amounts, never for its own sake. The pump's
+minimum-flow requirement therefore stops being a constraint we defend and
+becomes a side effect of doing the right thing anyway.
+
+**The rule.** Scale the whole set of demands so the most-demanding circuit is
+fully open. Ratios between rooms — the distribution — are preserved; the
+absolute energy delivered stays governed by water temperature (§4.5), not by
+valve position.
+
+```
+cmd_i = open_threshold + (d_i + ε)/(peak + ε) · (full_open − open_threshold)
+```
+
+The naive `d_i / max(d)` fails twice, and ε fixes both together:
+
+| | Naive | With ε |
+|---|---|---|
+| Every room satisfied, `max(d)=0` | 0/0, undefined | → ε/ε = 1 for every circuit, i.e. **all valves fully open**, reached continuously |
+| Demands `[0.001, 0.0005]` | `[100, 50]` — a ratio of noise | discrimination fades out smoothly as demand falls |
+
+All-valves-open at equilibrium is not a degenerate case being papered over: it
+is the physically correct answer. With nothing to distribute there is no reason
+to throttle anything, and maximum flow is exactly what we want.
+
+**ε is an engineering knob, not a fudge factor.** It is the demand scale below
+which we stop trying to tell rooms apart. Larger ε → flatter distribution →
+more flow and better COP, at the cost of per-room discrimination. Smaller ε →
+sharper distribution, less flow. It trades comfort precision against
+efficiency, and it is the first thing to tune once there is data.
+
+**Consequences that are easy to miss:**
+
+1. **The commanded maximum is pinned at 100 % by construction.** So valve
+   position can no longer tell the water-setpoint loop whether there is enough
+   capacity — it would read "saturated" forever and drive the water colder
+   without limit. That loop must read the **pre-normalisation peak demand**.
+   These were the same quantity before normalisation and are not now.
+2. **The circuits are coupled.** Every command depends on the maximum across
+   all of them, so a change in the most-demanding room rescales everyone. The
+   reference peak is therefore slew-limited (`max_peak_step_per_cycle`), or one
+   room's transient would re-throttle the whole house against actuators that
+   take minutes to move.
+3. **`off` must bypass normalisation.** An all-zero demand set correctly
+   normalises to all-valves-open, which is right at thermal equilibrium and
+   exactly wrong when the plant is meant to be off.
+4. **Safety runs after.** This is a control proposal. If safety closes enough
+   circuits that flow is genuinely lost, the escalation is the source-side last
+   resort — not reopening valves into a known-bad supply.
+
+**Deadband, both ends.** §4.1.2 already requires `open_threshold_pct` and
+`full_open_pct` per valve. The upper one matters especially here: "normalise so
+the peak circuit is fully open" only means what it says once `full_open_pct` is
+a *measured* number. Both are unmeasured today — two actuators, no flow meters,
+and eight circuits that cannot throttle at all — so they default to an identity
+mapping and the measurement is a prerequisite (§7.3).
+
+### 4.5 How to tell whether any of this is working
+
+Recorded continuously so the question can be answered later rather than
+guessed at. Everything below is an HA entity and therefore in InfluxDB at full
+resolution.
+
+| Signal | Topic / entity | What it tells you |
+|---|---|---|
+| Leaving/return spread | `hp/spread` | **The primary KPI.** Small spread = high flow = the design working. A large spread while the compressor runs means flow is inadequate. |
+| Pre-normalisation peak demand | `demand/peak` | Is there enough capacity? Pinned near 100 % → water too mild. Sitting near 0 → water too aggressive. |
+| Commanded vs actual valve | `valve/*` and `valve_actual/*` | Divergence means something other than heatctl moved the outputs. |
+| Flow proxy | `demand/open_pct` | Mean opening across circuits, unactuated counted as 100 %. |
+| Water setpoint + decision | `hp/setpoint_*`, `water_sp/reason` | Is the setpoint loop settling, or hunting? |
+| Compressor frequency, current, power estimate | `hp/compressor_freq`, `hp/compressor_current`, `hp/power_estimate` | Duty and rough electrical input. The estimate is current × 230 V — it ignores fans and pump and is **not** metered. |
+| House deviation, per-room setpoint/temperature | `demand/deviation`, `setpoint:*`, `room:*` | Is comfort actually being delivered? |
+| Outdoor ambient | `hp/outdoor_ambient` | Normalise everything else against weather. |
+| All six fault registers | `hp/fault/*`, `hp/fault_any` | Er03 in particular, since flow is what this design manipulates. |
+| Settled flag per circuit | `settled:*` (SQLite) | Excludes samples taken while an actuator was still travelling — those are poison for identification (§4.1.4). |
+
+**What to check, when we decide to check:**
+
+1. **Spread while the compressor runs.** Should be small and stable. If it
+   grows as rooms diverge, distribution is throttling too hard — raise ε.
+2. **Does `demand/peak` spend its time pinned at 100 %?** Then the water is too
+   mild and the setpoint loop is not being aggressive enough, or its bounds are
+   wrong. Persistently near 0 is the opposite.
+3. **Does the water setpoint settle or oscillate?** Hunting means the 30 min
+   cadence or the 1 K step is wrong for this slab's time constant.
+4. **Distribution of commanded positions.** If every circuit sits at 100 %
+   permanently, ε is too large and there is no distribution happening at all.
+   If most sit near zero, ε is too small.
+5. **Compressor cycle length.** Short cycling wastes energy and wears the unit.
+   Compare against the ~10 min on / ~9 min off observed on 2026-07-27, before
+   any of this existed.
+6. **Energy per degree-day.** `hp/power_estimate` integrated, against
+   `hp/outdoor_ambient` and the room deviations. This is the only number that
+   actually answers "is it more efficient", and it needs weeks, not hours.
+7. **Er03 occurrences.** Was 25 in 10 days before this work, all attributed to
+   flukes/low system pressure rather than valve position. If that count rises
+   after the actuators are fitted, distribution is starving the pump.
+
+Note (6) cannot be answered until there are comparable periods, and none of
+this is meaningful until more than two circuits can actually throttle.
+
 ### 4.1 Actuator dynamics — slow, deadbanded, no feedback
 The Alpha 5 actuators have a **lower deadband** (they do not begin to open at
 just any value above zero) and a **multi-minute stroke**, with no position

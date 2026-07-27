@@ -267,6 +267,37 @@ control:
   pid_room:   {kp: 25.0, ki: 0.005, kd: 0.0, out_min: 0.0, out_max: 100.0}
   pid_return: {kp: 8.0,  ki: 0.02,  kd: 0.0, out_min: 0.0, out_max: 100.0}
 
+  # Valve distribution. The objective is EFFICIENCY, not pump protection:
+  #   maximise overall flow -> minimise the leaving/return spread ->
+  #   the water can sit closer to room temperature -> better COP
+  # Throttling a valve is a cost, paid only to share energy between rooms that
+  # need different amounts. So the whole set of demands is scaled such that the
+  # most-demanding circuit is fully open, preserving the ratios between rooms
+  # while the absolute energy delivered stays governed by water temperature.
+  # See heatctl/distribution.py and docs/DESIGN.md 4.4.
+  distribution:
+    enabled: true
+    # THE tuning knob, and a real engineering trade-off rather than a fudge
+    # factor: the demand scale below which rooms stop being told apart.
+    # Larger -> flatter distribution -> more flow, better COP, less per-room
+    # discrimination. Smaller -> sharper distribution, less flow. It also
+    # resolves the 0/0 at perfect equilibrium: with every demand at zero the
+    # result is every valve fully open, which is the physically right answer
+    # (nothing to distribute, so no reason to throttle) reached continuously.
+    eps: 5.0
+    # Normalisation couples the circuits - a change in the most-demanding room
+    # rescales every other one - so the reference peak is slew-limited, in
+    # percent of demand per 1 s cycle. Without it one room's transient would
+    # re-throttle the whole house against multi-minute actuators.
+    max_peak_step_per_cycle: 2.0
+    # Actuator effective range (docs/DESIGN.md 4.1.2). IDENTITY until measured:
+    # "normalise so the peak circuit is fully open" only means what it says
+    # once full_open_pct is a measured number, and there is a deadband at the
+    # bottom that probably mirrors one at the top. Needs the actuators fitted
+    # plus a characterisation run - see docs/DESIGN.md 4.5.
+    open_threshold_pct: 0.0
+    full_open_pct: 100.0
+
   # Load compensation: house demand -> water temperature setpoint. The third
   # level of the cascade, and the one that decides efficiency - water colder
   # than needed just makes the valves throttle it back, paying a COP penalty

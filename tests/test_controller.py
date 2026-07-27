@@ -123,9 +123,15 @@ async def test_circuit_falls_back_to_return_pid_without_a_room_sensor(controller
 
     w = ctl.io.last_write
     # hk02 returns 18 C against a 22 C target in heating -> demand;
-    # hk03 returns 24 C, already above target -> shut.
-    assert w["valve_hk02"] > 0
-    assert w["valve_hk03"] == 0
+    # hk03 returns 24 C, already above target -> no demand of its own.
+    # Note hk03 is NOT driven to 0: distribution normalises the set so the
+    # most-demanding circuit is fully open, and a zero-demand circuit still
+    # gets a trickle rather than being shut. Throttling costs flow, and flow
+    # is what minimises the spread (distribution.py).
+    assert w["valve_hk02"] > w["valve_hk03"]
+    # hk01 has never had a trustworthy RL reading, so it fails open at 100 and
+    # is therefore the peak the others are normalised against.
+    assert w["valve_hk01"] == 100.0
 
 
 async def test_circuit_with_no_return_reading_fails_open(controller):
@@ -446,3 +452,21 @@ async def test_auto_mode_off_leaves_the_mode_alone(controller):
     ctl.io.touch(time.monotonic())
     await ctl.step(1.0)
     assert ctl.mode == "heating"
+
+
+async def test_off_mode_is_not_normalised_into_wide_open(controller):
+    """Defect caught on wiring distribution up, 2026-07-27.
+
+    In `off` every demand is zero, and normalising an all-zero set correctly
+    yields all-valves-open - which is right at thermal equilibrium and exactly
+    wrong when the plant is meant to be off. `off` bypasses distribution.
+    """
+    ctl = controller(
+        control={"mode": "off"},
+        temps={"rl_hk01": 24.0, "rl_hk02": 18.0, "rl_hk03": 18.0,
+               "vl_total": 30.0},
+        room_temps={"gaestebad": 15.0},
+    )
+    ctl.io.touch(time.monotonic())
+    await ctl.step(1.0)
+    assert set(ctl.io.last_write.values()) == {0.0}
