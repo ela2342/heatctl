@@ -299,26 +299,20 @@ def test_a_missing_dew_point_does_not_stop_heating(cfg):
     assert s.apply("heating", st, "rl_hk01", 60.0) == (60.0, None)
 
 
-def test_the_condensation_guard_does_not_depend_on_our_mode_label(cfg):
-    """What condenses is decided by the water, not by the label on the plant.
+def test_the_condensation_guard_is_scoped_to_cooling(cfg):
+    """Owner's call, 2026-07-27. A cold supply in HEATING is not a
+    condensation event to act on - it is a plant that has not warmed up yet,
+    and closing valves there would block the house heating.
 
-    heatctl's mode and the heat pump's mode are separate things - heatctl
-    cannot command the pump's mode at all yet - so a guard that only ran in
-    "cooling" would switch off in precisely the situation it exists for:
-    heatctl believing it is heating while chilled water circulates.
+    The divergence risk that argued for a mode-independent guard is instead
+    handled by detecting a disagreement between heatctl's mode and the pump's
+    own mode register, which heatctl now reads.
     """
     s = Safety(cfg)
     s.set_dew_point(14.0)                      # limit 16.0
-    st = state(rl_hk01=20.0, vl_total=15.0)    # supply below the dew point
-    assert s.apply("heating", st, "rl_hk01", 60.0) == (0.0, "vl_undertemp")
-
-
-def test_a_warm_supply_in_heating_is_still_unaffected(cfg):
-    """The guard must not become a general brake on heating."""
-    s = Safety(cfg)
-    s.set_dew_point(14.0)
-    st = state(rl_hk01=22.0, vl_total=35.0)
+    st = state(rl_hk01=20.0, vl_total=15.0)    # cold supply
     assert s.apply("heating", st, "rl_hk01", 60.0) == (60.0, None)
+    assert s.apply("cooling", st, "rl_hk01", 60.0) == (0.0, "vl_undertemp")
 
 
 def test_heating_still_runs_without_any_dew_point(cfg):

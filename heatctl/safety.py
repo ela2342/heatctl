@@ -155,25 +155,18 @@ class Safety:
         if mode == "heating" and vl is not None and vl > self.vl_max_heating:
             return 0.0, "vl_overtemp"    # screed protection
 
-        # Condensation guard. Deliberately NOT conditioned on the mode: what
-        # condenses is decided by the water, not by the label we have put on
-        # the plant. heatctl's mode and the heat pump's own mode are separate
-        # things today - heatctl cannot even command the pump's mode yet (the
-        # register bit is unknown; see PLAN.md WP-B) - so requiring them to
-        # agree before protecting the slab would mean the guard switches off
-        # in precisely the situation it exists for: heatctl believing it is
-        # heating while chilled water is circulating.
-        if self.dew_point_known() and vl is not None \
-                and vl < self.cooling_supply_limit():
-            return 0.0, "vl_undertemp"
-
         if mode == "cooling":
-            # Whereas THIS one is mode-specific on purpose: heating needs no
-            # dew point, so a missing reading must not stop it.
+            # Condensation guard, deliberately scoped to cooling (owner's
+            # call, 2026-07-27). An earlier draft made it mode-independent, on
+            # the theory that heatctl's mode and the pump's could diverge. They
+            # can - but heatctl now READS the pump's own mode register, so the
+            # honest fix is to detect a disagreement and alarm, not to run a
+            # condensation guard in heating where a lukewarm start-up supply
+            # plus humid air would block the house warming up.
             if self.cooling_requires_dew_point and not self.dew_point_known():
                 return 0.0, "dew_point_unknown"
             if vl is not None and vl < self.cooling_supply_limit():
-                return 0.0, "vl_undertemp"   # static-fallback path
+                return 0.0, "vl_undertemp"
 
         # Lost knowledge of this circuit -> fail open (see policy above).
         if not rl_valid:

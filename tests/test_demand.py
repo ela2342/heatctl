@@ -256,3 +256,11 @@ def test_auto_mode_is_left_alone_in_shadow_mode(cfg):
     and is exactly the thing worth watching before the migration."""
     cfg["control"]["source_demand"] = {"enabled": False, "auto_mode": True}
     assert DemandController(cfg).auto_mode is True
+
+
+def test_auto_mode_is_allowed_once_the_pump_mode_can_be_commanded(cfg):
+    """The capability is passed in, not assumed: it is true only when the heat
+    pump client is enabled AND permitted to write."""
+    cfg["control"]["source_demand"] = {"enabled": True, "auto_mode": True}
+    d = DemandController(cfg, can_command_source_mode=True)
+    assert d.auto_mode is True

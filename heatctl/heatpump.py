@@ -186,6 +186,43 @@ class HeatPump:
             return False
         return await self.write_named("mode", code, why)
 
+    # heatctl plant mode -> the pump's own mode register (0x0004).
+    # "off" has no pump-mode equivalent: not running is a power/demand
+    # decision, not a mode. So an off plant leaves the mode alone.
+    PLANT_TO_PUMP_MODE = {"heating": "heating", "cooling": "cooling"}
+
+    def mode_disagrees(self, plant_mode: str) -> str | None:
+        """The pump's mode if it differs from what the plant thinks. Else None.
+
+        heatctl's mode decides which way the valve PIDs run; the pump's mode
+        decides what temperature the water is. If they diverge, the valve loop
+        drives the wrong direction with the wrong water - and the condensation
+        guard, which is scoped to the plant's cooling mode, would be off while
+        chilled water circulated. Detecting that is why this exists.
+        """
+        want = self.PLANT_TO_PUMP_MODE.get(plant_mode)
+        if want is None:
+            return None
+        actual = self.config.get(0x0004)
+        if actual is None:
+            return None                      # never read it; say nothing
+        name = hm.MODES.get(actual, str(actual))
+        return None if name == want else name
+
+    async def sync_mode(self, plant_mode: str) -> bool:
+        """Make the pump's mode follow the plant's. No-op when already right.
+
+        Refuses until the config block has actually been read: writing 0x0004
+        from an unknown current value would be a blind write, and every write
+        costs a flash cycle.
+        """
+        want = self.PLANT_TO_PUMP_MODE.get(plant_mode)
+        if want is None or not self._config_seen:
+            return False
+        if self.mode_disagrees(plant_mode) is None:
+            return False
+        return await self.set_mode(want, f"plant mode is {plant_mode}")
+
     async def set_power(self, on: bool, why: str = "heatctl") -> bool:
         """Register 0 bit 0 is the unit's POWER, not the water pump.
 

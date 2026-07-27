@@ -101,7 +101,7 @@ heatpump:
   # before they reach the bus, and this budget caps the rest. A loop that tried
   # to reconcile every cycle would destroy the controller, not just waste
   # bandwidth - the budget exists to make that fail loudly instead.
-  allow_writes: false
+  allow_writes: true
   write_budget_per_hour: 30
 
 # --- WAGO node inputs ----------------------------------------------------
@@ -280,7 +280,12 @@ control:
     # before it owns anything. Turn on as part of the WP-B migration, in one
     # step, together with disabling those automations.
     enabled: false
-    auto_mode: false        # also let it pick heating vs cooling
+    # heatctl now commands the pump's mode register (0x0004) to follow the
+    # plant mode, every cycle, as a no-op when they already agree. auto_mode
+    # is the further step of letting the HOUSE AVERAGE pick that plant mode
+    # rather than a person - still off, so the seasonal decision stays manual
+    # until the shadow output has been watched over a full day.
+    auto_mode: false
     # Flow floor as MEAN opening across all water-carrying circuits, counting
     # unactuated ones as 100 % (they are open pipe). 40 % is the owner's
     # measured figure - below it the system runs into trouble and eventually

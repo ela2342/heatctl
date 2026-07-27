@@ -52,7 +52,7 @@ class Demand:
 
 
 class DemandController:
-    def __init__(self, cfg: dict):
+    def __init__(self, cfg: dict, can_command_source_mode: bool = False):
         d = dict(cfg["control"].get("source_demand") or {})
         # Shadow by default: compute and publish, let nothing act on it. The
         # heat pump has another writer until WP-B, and this logic has to be
@@ -60,20 +60,16 @@ class DemandController:
         self.enabled = bool(d.get("enabled", False))
         self.auto_mode = bool(d.get("auto_mode", False))
 
-        # heatctl does not yet command the HEAT PUMP's own heating/cooling
-        # mode. Not because it is unknown - it is register 0x0004, values
-        # 0 DHW / 1 HEATING / 2 COOLING / 3 DHW+HEATING / 4 DHW+COOLING, see
-        # docs/HEATPUMP.md - but because heatctl does not talk to that device
-        # at all yet. Until it does, heatctl's mode and the pump's mode are
-        # independent, and letting heatctl flip its own mode while the pump
-        # stays put is worse than not switching: the valve loop would drive
-        # the wrong direction with the wrong water. Flip this to True as part
-        # of WP-B, together with the client that owns those registers.
-        self.can_command_source_mode = False
+        # Whether heatctl can make the HEAT PUMP follow its plant mode - i.e.
+        # write register 0x0004. Passed in rather than assumed, because
+        # switching heatctl's own mode while the pump stays put is worse than
+        # not switching at all: the valve loop would drive the wrong direction
+        # with the wrong water.
+        self.can_command_source_mode = bool(can_command_source_mode)
         if self.enabled and self.auto_mode and not self.can_command_source_mode:
             log.error("source_demand.auto_mode requested, but heatctl cannot "
-                      "command the heat pump's heating/cooling mode yet - "
-                      "refusing, mode stays manual. See PLAN.md WP-B.")
+                      "command the heat pump's mode - needs heatpump.enabled "
+                      "and heatpump.allow_writes. Refusing; mode stays manual.")
             self.auto_mode = False
 
         # Plant-level mode hysteresis. Rooms keep a single target each

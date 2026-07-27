@@ -305,3 +305,51 @@ async def test_a_disabled_client_does_nothing(cfg):
     cfg["heatpump"] = {"enabled": False}
     h = HeatPump(cfg, FakePlane())
     await asyncio.wait_for(h.run(), timeout=1.0)   # returns immediately
+
+
+# ---------- plant mode <-> pump mode ----------
+
+def test_mode_disagreement_is_detected(hp):
+    """heatctl's mode decides which way the valve PIDs run; the pump's decides
+    what temperature the water is. Diverged, the valve loop drives the wrong
+    direction with the wrong water - and the condensation guard, scoped to the
+    plant's cooling mode, would be off while chilled water circulated."""
+    h, _, _ = hp()
+    h.config = {0x0004: 1}                     # pump in heating
+    h._config_seen = True
+    assert h.mode_disagrees("cooling") == "heating"
+    assert h.mode_disagrees("heating") is None
+
+
+def test_mode_disagreement_is_silent_before_the_pump_has_been_read(hp):
+    """Never read it -> say nothing, rather than invent a disagreement."""
+    h, _, _ = hp()
+    assert h.mode_disagrees("cooling") is None
+
+
+def test_plant_mode_off_does_not_imply_a_pump_mode(hp):
+    """Not running is a power/demand decision, not a mode. An off plant must
+    not start rewriting the pump's mode register."""
+    h, _, _ = hp()
+    h.config = {0x0004: 2}
+    h._config_seen = True
+    assert h.mode_disagrees("off") is None
+
+
+async def test_sync_mode_writes_only_on_a_real_disagreement(hp):
+    h, c, _ = hp()
+    h.config = {0x0004: 1}
+    h._config_seen = True
+    assert await h.sync_mode("cooling") is True
+    assert c.writes == [(0x0004, 2)]
+    # Now they agree: a second call must not cost another flash cycle.
+    assert await h.sync_mode("cooling") is False
+    assert c.writes == [(0x0004, 2)]
+
+
+async def test_sync_mode_refuses_before_the_config_has_been_read(hp):
+    """Writing 0x0004 from an unknown current value is a blind write, and
+    every write costs a flash cycle."""
+    h, c, _ = hp()
+    assert await h.sync_mode("cooling") is False
+    assert c.writes == []

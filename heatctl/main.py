@@ -92,13 +92,15 @@ class Controller:
         # publishes, and nothing acts on it. The heat pump still has another
         # writer (the HA automations) until WP-B, and single-writer is a hard
         # rule - see docs/DESIGN.md 2.1 and 4.3.
-        self.demand = DemandController(cfg)
-        self._last_demand = None
-
         # Heat pump client. Its own task at its own (slow) cadence - the
         # device documents a 200 ms minimum between transactions, so it must
         # never share the 1 s valve loop. See docs/HEATPUMP.md.
         self.hp = HeatPump(cfg, self.plane)
+
+        self.demand = DemandController(
+            cfg, can_command_source_mode=self.hp.enabled and self.hp.allow_writes)
+        self._last_demand = None
+        self._mode_warned: str | None = None
 
         self.db = self._open_db(cfg["logging"]["state_db"])
         self._cycle = 0
@@ -284,6 +286,12 @@ class Controller:
                 if reason:
                     await self.plane.publish(f"override/{valve}", reason)
 
+        # Make the heat pump's own mode follow the plant's, and shout if it
+        # does not. Cheap to call every cycle: the client drops a write that
+        # would change nothing BEFORE touching the bus, so a matching mode
+        # costs nothing and no flash cycle.
+        await self._sync_pump_mode()
+
         # Unassigned outputs get a definite, safe value rather than whatever
         # a past failsafe left them at. 0 with NC actuators means closed: an
         # output heatctl does not manage should not be passing water.
@@ -318,6 +326,26 @@ class Controller:
         # The integrator is deliberately NOT stepped; integrating an invalid
         # measurement is how the hunt builds up in the first place.
         return self.rl_gate.held(valve, self.safety.failsafe_pct)
+
+    async def _sync_pump_mode(self) -> None:
+        """Keep the pump's mode register aligned with the plant mode.
+
+        Divergence is not cosmetic. heatctl's mode decides which way the valve
+        PIDs run; the pump's decides what temperature the water is. Diverged,
+        the valve loop drives the wrong direction with the wrong water - and
+        the condensation guard is scoped to the plant's cooling mode, so it
+        would be switched off exactly while chilled water circulated.
+        """
+        disagree = self.hp.mode_disagrees(self.mode)
+        if disagree is None:
+            self._mode_warned = None
+        elif disagree != self._mode_warned:
+            log.warning("heat pump is in %s mode but the plant is %s - "
+                        "correcting", disagree, self.mode)
+            self._mode_warned = disagree
+        if self.hp.allow_writes:
+            await self.hp.sync_mode(self.mode)
+        await self.plane.publish("hp/mode_agrees", "0" if disagree else "1")
 
     async def failsafe(self, reason: str) -> None:
         # Log the transition, then only once a minute. A failsafe that persists
