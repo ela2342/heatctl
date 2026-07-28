@@ -197,13 +197,21 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
       But the device also reports `dc_bus_voltage` (0x8021), reading **374 V**
       while we assume 230 - so the assumed voltage is not even the bus the
       current is measured on.
-      **A free decisive test now exists**, from the datasheet: mains current
-      maxes at **16.5 A**. Watch the peak of 0x8025 at full output (the
-      2026-07-30 heat event will do it) - near 16 A means mains current and
-      `x 230 V` is roughly right; 9-10 A means inverter output; 5-7 A means DC
-      link, and the correct multiplier is `dc_bus_voltage` (~374 V), making the
-      present estimate low by ~60 %. Observed 6.5 A at 89 Hz fits mains OR DC
-      link, so it is genuinely open. Do not derive COP until it is settled.
+      **RESOLVE IT WITH THE UTILITY SHELLY** (owner, 2026-07-28) - this is the
+      clean answer and needs no new hardware. There is a Shelly metering the
+      house's grid connection, so correlate its power step against the step in
+      `0x8025` each time the compressor starts, stops or changes frequency.
+      The compressor is by far the largest switched load, so the regression
+      slope is direct: **~230 W/A means 0x8025 is mains current** and the
+      present estimate is roughly right; a slope near 374 W/A means DC link;
+      anything much lower means inverter output current. The intercept also
+      hands us the fan + pump + controls overhead the estimate currently omits.
+      Do this before deriving COP - and it yields real measured electrical
+      power for the heat pump as a by-product, which is half of COP anyway.
+      Narrowing from the owner: **10 A has been observed**, which rules out the
+      DC-link reading (bracketed 5-7 A at full output) but does not separate
+      mains from inverter output, since 10 A may not have been at full load.
+      Datasheet bound for reference: mains current maxes at 16.5 A.
       Fans (80 W), circulation pump and controls are excluded either way; the
       datasheet's own input range at the relevant duty point is 380-2600 W,
       which bounds any sanity check.
