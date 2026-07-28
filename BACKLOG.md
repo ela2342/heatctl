@@ -132,13 +132,50 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
       feeding the delivered-cooling term, which is about a third of the
       balance. Everything downstream - slab capacity, envelope loss, COP,
       whether the plant can meet a design day - inherits that uncertainty.
-      Options, cheapest first: (a) calibrate a pump curve against
-      `dc_pump_speed`, which we already log, using a known thermal step;
-      (b) the heat pump may expose flow or a derived power in a register we
-      have not decoded - check the full RW block dump against
-      docs/HEATPUMP.md; (c) fit a clamp-on ultrasonic meter. Even a one-off
-      calibration would convert most of our energy balances from
-      order-of-magnitude to quantitative.
+      **Note flow does NOT require pipe surface area** - that only enters the
+      water-to-slab conductance `UA_ws`, which is downstream and separately
+      identifiable once flow is known. Three routes, none needing it:
+      (a) **TRANSIT TIME - free, today, no new hardware.** Let one circuit
+          stagnate, command it fully open, and time the thermal front reaching
+          its own return sensor: `t = V_circuit / Q_circuit`. Needs pipe
+          INTERNAL VOLUME (length x bore), both specifiable - length from area
+          / spacing off the floor plan, bore from the pipe spec. Take the 50 %
+          rise point; axial dispersion and slab exchange smear the front, so
+          expect ~20 %. **`rl_gate.py`'s FLUSH already performs exactly this
+          manoeuvre** - the data may be in the logs already.
+      (b) **RESISTIVE CALORIMETRY - the accurate one.** A resistance heater is
+          100 % efficient by construction, so `m_dot = P_el / (cp * dT)` with
+          no COP and no geometry at all. The Baubeschreibung lists an 8 kW
+          electric auxiliary heater; if it sits on a metered circuit (there
+          are smart plugs in the HWR) this is close to exact. Heating mode
+          only.
+      (c) **BUFFER AS CALORIMETER.** 995 L known, so 4.16 kWh/K. Isolate it,
+          drive it, measure dT/dt. Needs a buffer sensor and isolation.
+      **Check the manifold for built-in Durchflussmesser FIRST.** Floor-heating
+      manifolds commonly carry per-circuit float topmeters (0.5-5 L/min) for
+      hydraulic balancing. If ours has them, total flow is readable by eye for
+      free right now - and they are the balancing instrument we will want
+      anyway once more actuators are fitted.
+
+- [ ] **Our dT resolution limits energy measurement independently of flow.**
+      Worth knowing before buying a bare flow sensor. The PT1000 chain
+      quantises to 0.1 K, and the overnight manifold spread was 0.10-1.01 K -
+      so dT alone carries 10-100 % error at low load, and no flow figure
+      however good repairs that. Consequence for procurement: a proper
+      **Waermemengenzaehler** (heat meter, M-Bus or Modbus) with its own
+      matched sensor pair closes flow, energy AND dT in one purchase, and is
+      what COP monitoring needs regardless. A bare flow meter fixes one of the
+      three.
+
+- [ ] **`hp_power_estimate` is not usable for COP, and can be improved cheaply.**
+      It is `compressor_current x 230 V` (heatctl/main.py), inherited from the
+      retired HA template, and its docstring is honest that it is not metered.
+      But the device also reports `dc_bus_voltage` (0x8021), reading **374 V**
+      while we assume 230 - so the assumed voltage is not even the bus the
+      current is measured on. Establish from docs/HEATPUMP.md what 0x8025
+      actually measures (inverter output vs DC link) before trusting any
+      product of the two, and until then do not derive COP from it. Fans,
+      circulation pump and controls are excluded either way.
 
 - [ ] **Phase-2 model priors are now extracted; two gaps remain.** The EnEV
       Waermeschutznachweis and the Bauantrag drawings have been mined into
