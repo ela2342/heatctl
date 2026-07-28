@@ -77,6 +77,30 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
       escalation is to stop the unit - the one place "measure of last resort"
       actually applies. Currently unimplemented: safety can starve the pump and
       nothing notices.
+- [ ] **heatctl has no window-open input, and there are no window sensors in
+      HA at all** (checked 2026-07-28: no matching entities). Observed live
+      when the owner ventilated Wohnzimmer at ~07:10 with 13 degC outside
+      against 26 degC inside. Nothing harmful happens - the failure is wasted
+      effort and setpoint churn: the room sensor dives toward outdoor air,
+      house demand collapses, the actuated circuit throttles off its 100 %,
+      and the water-setpoint trim reverses the walk it just started. Then it
+      all rebounds when the window shuts. The mismatch is the problem: the
+      trim moves 1 K / 30 min against a room that ventilation can move
+      several K in minutes, so it lags in BOTH directions and spends its
+      cadence budget chasing an artefact.
+      Cheapest fix is not a control change: a contact sensor per ventilated
+      room, published like any other input, and a per-room "suspend" that
+      parks the circuit rather than driving it. Note this is a SUSPEND, not
+      an off - safety (frost, dew point) must keep running on that room, so
+      it cannot be implemented by masking the room out of the demand set.
+      Until then it is a known, benign inefficiency, not a defect.
+      Related but distinct from the dew-point angle, which turned out fine
+      here: outdoor dew point 12.1 vs indoor 12.5, so ventilating LOWERED
+      the condensation floor. That will not hold on a muggy day, and then
+      opening a window while cooling is genuinely hazardous - the guard is
+      `Safety.apply`, which sees the dew point rise and forces closed, but
+      only after the fact. Worth a look when the contact sensors go in.
+
 - [ ] **Underfloor cooling cannot track solar gain - measured 2026-07-28.**
       First clean observation of the limit, worth keeping as a reference
       trace. Wohnzimmer has large glazing; at sunrise its air went
@@ -137,8 +161,11 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
       (b) The cycle is driven by the unit undershooting: it targets 20 degC
           RETURN water, return sits at ~20.3, so it keeps driving and leaving
           water goes to ~14. Load compensation (D-018) is the right lever;
-          check whether it is actually authorised to raise the cooling
-          setpoint here, or whether it is sitting at a clamp.
+          ANSWERED 2026-07-28 07:10:42: it is authorised and not clamped.
+          It made its first trim, 20.0 -> 19.0 degC, as soon as the morning
+          solar load pushed house deviation past `deviation_band_c`. It had
+          simply had no reason to move before. The remaining question is
+          only whether 1 K / 30 min is fast enough - see the solar item.
       Also worth remembering when reading these traces: only circuits 1 and 2
       have actuators fitted, so forcing hk11 closed changes almost no real
       flow. Most of the observed recovery is the heat pump's own modulation,
