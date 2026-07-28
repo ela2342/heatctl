@@ -170,11 +170,24 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
           convector's characteristic is different and has a second input (fan
           speed) heatctl cannot see or command.
       (e) Room model: Arbeitszimmer is single-state, not room+slab.
-      Capacity note: this ADDS emitter capacity rather than moving it - the
-      136.40 m2 slab is ground floor only, so upstairs was never in it. Likely
-      lifts total past the heat pump's ~5.7 kW and moves the binding constraint
-      back to the source. **But it is not fungible between rooms** - it does
-      nothing for Wohnzimmer, whose constraint is unchanged.
+      **Rated 4.2 kW cooling / 4.3 kW heating** (owner, 2026-07-28). Total
+      emitter capacity is therefore 7.6-9.0 kW against a heat pump good for
+      ~5.7 kW, so **we are source-limited, not emitter-limited** - reversing
+      the earlier conclusion.
+      **And there is a real strategy in the surplus.** 4.2 kW over 31.20 m2 is
+      135 W/m2; the room cannot absorb it. But a wet coil dehumidifies, the
+      guard is `dew point + 2.0`, and so every 1 K of house dew point removed
+      is 1 K more supply headroom for all ten slab circuits - about 1 kW of
+      extra slab capacity. Holding the house 2 K below outdoor dew point costs
+      only 0.36 kW latent at n=0.7, i.e. the coil at 25-34 % duty, whose
+      0.67-1.09 kW sensible byproduct is roughly Arbeitszimmer's own load
+      anyway. Net gain on the order of +1 kW, landed on the slab where it is
+      needed. Numbers and caveats in docs/HARDWARE.md.
+      **This makes (a) strategically important, not cosmetic**: the guard
+      currently forces the valve shut below dew point + 2, which is exactly the
+      operating point the lever needs. And it is the only route by which the
+      coil's surplus reaches the rest of the house - sensible cooling stays
+      stuck in Arbeitszimmer.
 
 - [ ] **Stop treating `heatctl_outdoor_ambient` as air temperature.** Measured
       2026-07-28: the heat pump's own sensor peaked at **36.5 degC** while two

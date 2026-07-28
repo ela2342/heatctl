@@ -456,10 +456,62 @@ one has a condensate tray and drain. Two cases:
 
 **Do not exempt it on assumption.** Confirm the drain physically first.
 
-**Capacity implication.** The earlier estimate that emitter capacity caps the
-plant at 3.4–4.8 kW counted only the 136.40 m² slab. The convector adds to that
-— plausibly 2–4 kW for a room this size — which likely lifts total capacity past
-the heat pump's ~5.7 kW and moves the binding constraint back to the source.
-**But capacity is not fungible between rooms:** the convector cools
-Arbeitszimmer only, and does nothing for Wohnzimmer, whose constraint is
-unchanged.
+**Rated capacity: 4.2 kW cooling / 4.3 kW heating** (owner, 2026-07-28).
+
+### Capacity: the source is now the binding constraint, not the emitters
+
+| | kW |
+|---|---|
+| Slab, 136.40 m² at 25–35 W/m² | 3.4 – 4.8 |
+| Fan coil | 4.2 |
+| **Total emitter** | **7.6 – 9.0** |
+| Heat pump at ~11 °C supply | **5.7 ← binding** |
+
+This reverses the earlier conclusion that we were emitter-limited. We are not;
+we are source-limited. Supply headroom (D-024) still matters, but for a
+different reason — to let the heat pump reach its own capacity, not to squeeze
+more out of the floor.
+
+**The coil is enormously oversized for its own room:** 4.2 kW over 31.20 m² is
+**135 W/m²**, against 25–35 W/m² for the slab. Arbeitszimmer cannot absorb
+anything like that. That surplus is the interesting part.
+
+### The latent lever — spend coil capacity to buy slab capacity
+
+A wet coil removes moisture. The condensation guard is `dew point + 2.0 K`, so
+**every 1 K of house dew point removed is 1 K of extra supply headroom for all
+ten slab circuits** — worth roughly 1 kW of extra slab capacity at a textbook
+7 W/(m²K).
+
+What it costs, at the EnEV-assumed n = 0.7 h⁻¹ (348 m³/h = 418 kg/h of outdoor
+air):
+
+| Hold the house below outdoor dew point by | Latent load |
+|---|---|
+| 1 K | 0.18 kW |
+| 2 K | 0.36 kW |
+| 3 K | 0.56 kW |
+
+At a wet-coil SHR of 0.65–0.75, meeting the 2 K case needs the coil at only
+**25–34 % duty**, which dumps **0.67–1.09 kW of sensible** into Arbeitszimmer.
+
+**And that sensible byproduct is approximately Arbeitszimmer's own cooling
+load** on a hot day (31 m², east and south glazing, upstairs). So the
+dehumidification comes out very nearly free: net gain on the order of **+1 kW
+of usable capacity**, delivered where it is actually needed — the slab serves
+the whole ground floor.
+
+**The current guard blocks exactly this.** `vl_undertemp` forces the valve shut
+below `dew point + 2`, which is precisely the operating point the lever
+requires. Scoping the guard per circuit is therefore not a refinement; it is
+what makes the strategy possible at all.
+
+**Everything above is conditional on the condensate drain**, still unconfirmed.
+It is now the highest-value open question on the plant. Other assumptions worth
+naming: SHR 0.65–0.75 is generic and depends on entering water temperature;
+7 W/(m²K) for floor cooling is a textbook figure we have never measured; and
+n = 0.7 h⁻¹ is EnEV's assumption, not a blower-door result.
+
+**Still not fungible between rooms** for *sensible* cooling — the coil does
+nothing directly for Wohnzimmer. The latent path is the only route by which its
+surplus reaches the rest of the house, which is why it is worth the trouble.
