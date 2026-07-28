@@ -125,6 +125,21 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
       `Safety.apply`, which sees the dew point rise and forces closed, but
       only after the fact. Worth a look when the contact sensors go in.
 
+- [!] **Measure the hydronic flow rate - it now gates every energy balance.**
+      Highest-value missing instrument, promoted 2026-07-28 after the first
+      model validation. The overnight mass estimate came out at 13,700-18,600
+      Wh/K, and that whole spread is driven by the ASSUMED flow (0.8-1.5 m3/h)
+      feeding the delivered-cooling term, which is about a third of the
+      balance. Everything downstream - slab capacity, envelope loss, COP,
+      whether the plant can meet a design day - inherits that uncertainty.
+      Options, cheapest first: (a) calibrate a pump curve against
+      `dc_pump_speed`, which we already log, using a known thermal step;
+      (b) the heat pump may expose flow or a derived power in a register we
+      have not decoded - check the full RW block dump against
+      docs/HEATPUMP.md; (c) fit a clamp-on ultrasonic meter. Even a one-off
+      calibration would convert most of our energy balances from
+      order-of-magnitude to quantitative.
+
 - [ ] **Phase-2 model priors are now extracted; two gaps remain.** The EnEV
       Waermeschutznachweis and the Bauantrag drawings have been mined into
       `docs/BUILDING.local.md` (git-excluded - the data identifies the site):
@@ -143,8 +158,34 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
           above the pipes (couples to the room, fast) and below (dead weight).
           The 3-state RC model in docs/DESIGN.md 6.1 needs it.
 
-- [ ] **Reconfigure the HA solar forecast per facade, with the MEASURED
-      azimuths.** The building is rotated 16.3 degrees from cardinal (measured
+- [ ] **Add per-facade solar forecast planes - API contract now confirmed.**
+      HA's solar forecast is a client for the public **Forecast.Solar** HTTP
+      API, which takes arbitrary planes, so we can query the WINDOW facades
+      instead of borrowing the roof PV planes:
+      `GET https://api.forecast.solar/estimate/{lat}/{lon}/{declination}/{azimuth}/{kwp}`
+      - no API key; **12 requests/hour per IP**, today + tomorrow, hourly
+      - `declination: 90` for a vertical wall; `kwp` is a pure linear scaler
+      - **AZIMUTH TRAP: the raw API uses 0 = SOUTH (-180..180), while HA's
+        config flow uses 0 = NORTH.** They differ by 180, and getting it wrong
+        points every plane at its exact opposite - which yields a plausible
+        curve peaking at the wrong time, not an error.
+      Recipe: one plane per facade, `kwp` = that facade's effective collector
+      area, so the returned watts come out directly as solar heat gain in watts
+      within one per-facade calibration factor of order 1.0 - which the
+      estimator should identify rather than us deriving it.
+      VERIFIED against today's data (2026-07-28): the ESE facade peaks at
+      **08:00** and is at 76 % of peak by 07:00, exactly matching both the
+      sun-position calculation and the observed Wohnzimmer ramp. It carries
+      2,181 Wh/kWp today against the SSW facade's 1,426, and the two are nearly
+      complementary - ESE owns the morning, SSW the afternoon, crossover about
+      12:00. Full tables in `docs/BUILDING.local.md`.
+      Why the existing PV planes will not do: both are configured south
+      (185/17 and 180/25), so they understate the east facade by 1.7-4.5x
+      through the morning and overstate it by ~4x in the afternoon. Wrong in
+      both directions at the worst times, and not fixable with one coefficient.
+
+- [ ] **SUPERSEDED by the item above - kept for the measurement.** Reconfigure
+      the HA solar forecast per facade, with the MEASURED azimuths.** The building is rotated 16.3 degrees from cardinal (measured
       off the compass rose and building grid on the Bauantrag ground-floor
       plan, see `docs/BUILDING.local.md`). Configuring a forecast with the
       drawings' nominal N/E/S/W labels puts every plane 16 degrees out, which
