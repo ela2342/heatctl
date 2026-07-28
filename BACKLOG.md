@@ -125,6 +125,23 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
       `Safety.apply`, which sees the dew point rise and forces closed, but
       only after the fact. Worth a look when the contact sensors go in.
 
+- [ ] **Watch the 2026-07-30 heat event (36 degC, forecast dew point 9) - it
+      is the first time the plant runs AT the condensation constraint all
+      day.** Predicted chain: safety limit = 9 + 2 = **11 degC** supply, and
+      load compensation can drive the heat pump's return-water setpoint down
+      to `water_setpoint.cooling_min_c: 14.0`, which at the spreads seen so
+      far lands supply at roughly 10-11 - i.e. on the limit, not below it.
+      So the day is a test of two things at once, both currently UNDEPLOYED:
+      D-024 supplies the extra 1 K of headroom that the old floor would have
+      eaten, and D-023's release hysteresis is what stops the valves flapping
+      against the limit for hours. Deploy both before it.
+      What to check on the day: whether supply actually reaches ~11 or
+      whether `cooling_min_c` binds first (if it binds, that bound is a
+      control-layer choice and can be lowered - it is not a safety limit);
+      how often the guard trips with hysteresis in place; and whether a 2.0 K
+      margin still looks right at the dry end, where it is a much larger
+      fraction of the available headroom than it is at dew point 15.
+
 - [!] **The dew-point template falls back to the OUTDOOR dew point, and
       nothing bounds that any more.** Found 2026-07-28 while removing the
       12 degC floor (D-024), which had been accidentally capping the damage.

@@ -250,7 +250,14 @@ static `vl_min_cooling_c: 16.0` this whole mechanism replaced (D-010). The two
 requirements are mutually exclusive, so the construct was never going to work.
 **Evidence it was inert:** across ten days of recorded data the reference dew
 point ranged 11.2–15.1 °C, giving a limit of 13.2–17.1 °C. It never came within
-1.2 K of the floor. **Provenance, for honesty:** I introduced it in `d457314`,
+1.2 K of the floor. **Owner's site knowledge closes it from both ends
+(2026-07-28):** this house has seen dew points of **20 °C**, against which a
+12 °C floor is not merely useless but actively misleading — and the forecast
+for 2026-07-30 is **36 °C with a dew point of 9 °C**, where the floor would
+have thrown away 1 K of supply headroom on the hottest day of the year. A
+constant cannot straddle an 11 K spread in the quantity it is standing in for.
+That is the general lesson: a fixed number substituting for a measured one
+fails at *both* ends of the measurement's range, not one. **Provenance, for honesty:** I introduced it in `d457314`,
 the same commit whose docstring criticises the *other* undocumented magic
 number for arriving without derivation. It had none either.
 **The principle worth keeping:** if a reading needs defending against, defend
