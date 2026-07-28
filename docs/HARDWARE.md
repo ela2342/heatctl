@@ -501,6 +501,43 @@ dehumidification comes out very nearly free: net gain on the order of **+1 kW
 of usable capacity**, delivered where it is actually needed — the slab serves
 the whole ground floor.
 
+### CORRECTION (2026-07-28, owner) — not available on the current hydraulics
+
+The paragraphs above describe a real effect but skipped the hydraulics, and the
+owner caught it. **The lever needs the coil to see water several K COLDER than
+the slab can safely take** — roughly 8–11 °C to get the coil surface under a
+12.5 °C dew point, against a slab limit of 14.5 °C. Today all eleven circuits
+hang off one common supply header, so there is no way to give the coil cold
+water without sending the same water to the slab.
+
+And the fallback of "close the slab circuits while running cold" **does not
+work either**: only circuits 1 and 2 have actuators. The other seven active
+circuits are open pipe and cannot be closed at all, so cold water would flow
+straight into the slab and condense inside it — invisibly, which is the failure
+mode this whole guard exists to prevent.
+
+**What it would actually require**, in order:
+
+1. **A separate low-temperature branch for the coil** — heat pump feeding the
+   coil directly, with the slab manifold behind a 3-way mixing valve raising its
+   supply back above dew point. DESIGN.md §1.2 already specifies exactly this
+   ("Feed: pump + 3-way mixing valve from buffer"); today's `H_DIRECT` wiring
+   (§3.1) is the interim that lacks it. So this is not new plumbing to invent,
+   it is plumbing already in the target design.
+2. All twelve actuators fitted, so the slab can genuinely be isolated.
+3. The condensate drain made permanent (currently temporary).
+
+**A cost I had not accounted for.** With a single source, running cold enough
+for the coil means the heat pump makes cold water for *everything*, mixed back
+up for the slab. That costs EER across the whole output, not just the coil's
+share — interpolating the datasheet, dropping leaving water 14 → 9 °C moves EER
+from ~2.66 to ~2.25, i.e. **+18 % electrical input for the same cooling**.
+
+So the honest conclusion is narrower than the section above implies: this is a
+**peak-shaving move for capacity-constrained hours**, on hydraulics we do not
+yet have — not a default operating mode. On an ordinary day it is a bad trade.
+The +1 kW is real; so is the ~0.4 kW of extra compressor power to get it.
+
 **The current guard blocks exactly this.** `vl_undertemp` forces the valve shut
 below `dew point + 2`, which is precisely the operating point the lever
 requires. Scoping the guard per circuit is therefore not a refinement; it is

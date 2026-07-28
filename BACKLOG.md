@@ -156,7 +156,11 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
 - [ ] **Adapt control to circuit 11 being a FAN CONVECTOR, not floor heating**
       (owner, 2026-07-28; details in docs/HARDWARE.md). Same loop, same valve
       channel, entirely different plant. Ordered by when it starts to matter:
-      (a) **Confirm whether the convector has a condensate drain.** If it does,
+      (a) **Condensate drain: a TEMPORARY one is installed** (owner,
+          2026-07-28), and making it permanent is under consideration. Note it
+          is necessary but nowhere near sufficient for the latent lever below -
+          the hydraulics are the real blocker. For the guard question: if a
+          permanent drain exists,
           the `vl_undertemp` guard is not just over-conservative for that
           circuit but counter-productive - letting the coil run wet would lower
           the house dew point and buy headroom for every slab circuit. If it
@@ -183,11 +187,27 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
       0.67-1.09 kW sensible byproduct is roughly Arbeitszimmer's own load
       anyway. Net gain on the order of +1 kW, landed on the slab where it is
       needed. Numbers and caveats in docs/HARDWARE.md.
-      **This makes (a) strategically important, not cosmetic**: the guard
-      currently forces the valve shut below dew point + 2, which is exactly the
-      operating point the lever needs. And it is the only route by which the
-      coil's surplus reaches the rest of the house - sensible cooling stays
-      stuck in Arbeitszimmer.
+      **BUT NOT ON TODAY'S HYDRAULICS** (owner's correction, 2026-07-28, and
+      it is right). The lever needs the coil to see ~8-11 degC water, several K
+      below the slab's 14.5 limit, and all eleven circuits share one supply
+      header - so there is no way to feed the coil cold without sending the
+      same water to the slab. "Close the slab circuits" does not rescue it:
+      only circuits 1 and 2 have actuators, the other seven are open pipe and
+      cannot be closed, so cold water would reach the slab and condense inside
+      it invisibly. Requires, in order: a separate low-temperature branch with
+      the slab behind a 3-way mixing valve (already in docs/DESIGN.md 1.2 - the
+      current H_DIRECT wiring is the interim that lacks it); all twelve
+      actuators fitted; and the temporary condensate drain made permanent.
+      **Also costs EER, which I had not counted:** with one source, running
+      cold for the coil means making cold water for everything and mixing back
+      up for the slab. Dropping leaving water 14 -> 9 degC moves EER ~2.66 ->
+      ~2.25, **+18 % electrical for the same cooling** - about 0.4 kW to buy
+      the 1 kW. So it is a **peak-shaving move for capacity-constrained hours
+      on hydraulics we do not yet have**, not a default mode, and a bad trade
+      on an ordinary day.
+      Still true: per-circuit guard scoping is the enabler, and the latent path
+      is the only route by which the coil's surplus reaches the rest of the
+      house - sensible cooling stays stuck in Arbeitszimmer.
 
 - [ ] **Stop treating `heatctl_outdoor_ambient` as air temperature.** Measured
       2026-07-28: the heat pump's own sensor peaked at **36.5 degC** while two
