@@ -219,3 +219,22 @@ match the code, not the model name. **Cost:** none — this replaced an
 experiment that would have cost hours of disrupted control and, done the
 obvious way, would have been biased low anyway.
 
+## D-023 · The condensation guard gets hysteresis on RELEASE only
+`Safety.apply` compared supply against `dew_point + margin` with a strict
+`<` and no hysteresis. Both operands are quantised to 0.1 K and dither
+independently, and load compensation (D-018) deliberately drives supply down
+onto the limit — so the plant parks exactly where one LSB tick in *either*
+signal flips every owned valve. **Measured 2026-07-28 07:32:** trip at supply
+14.5→14.4, reopen 16 s later from the **dew point** moving 12.5→12.4 with
+supply unchanged, trip again at 14.3. hk02 is a fitted actuator with a 150 s
+stroke (D-022), so 100→0→100→0 in 27 s left its true position unknown — the
+one state the design exists to prevent. **Fix:** trip at `vl < limit`, release
+only at `vl >= limit + dew_point_release_margin_c` (0.3 K). **The asymmetry is
+the whole point** — closing is protective and must stay instantaneous, so the
+margin may only ever delay reopening; a symmetric band would defer the trip and
+be worse than no hysteresis. **Frequency, for honesty:** 4 trips in 9.7 h, one
+of them sub-stroke. This was not chronic chatter, and the first report of it as
+such overstated the case. It will get worse as actuators are fitted and as the
+trim tracks the constraint harder. **Also learned:** instrumenting only the
+supply side would have missed this — the reopen came from the humidity input.
+

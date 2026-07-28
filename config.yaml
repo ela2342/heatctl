@@ -431,6 +431,16 @@ safety:
   # spread of indoor dew point between rooms. And note condensation inside the
   # slab is INVISIBLE - nothing will prompt anyone to notice it.
   dew_point_margin_c: 2.0
+  # Hysteresis on the condensation guard, and it applies to REOPENING ONLY -
+  # the trip stays instantaneous, because closing is the protective direction
+  # (D-023). Sized from measurement, not taste: supply and the dew point are
+  # each quantised to 0.1 K and dither independently, so anything below 0.2
+  # leaves the LSB flapping. 0.3 buys roughly 30-75 s of extra closed time at
+  # the observed recovery rate of ~0.1 K per 10-25 s, which together with the
+  # natural recovery keeps a closure beyond the actuator's 150 s stroke.
+  # RAISING this costs cooling: the plant runs with valves shut while the
+  # supply is already safe. LOWERING it below 0.2 re-opens the defect.
+  dew_point_release_margin_c: 0.3
   dew_point_max_age_s: 900     # older than this -> fall back to the static value
   vl_min_cooling_floor_c: 12.0 # hard floor on what a dew-point reading may
                                # authorise, bounding a stuck-low humidity sensor

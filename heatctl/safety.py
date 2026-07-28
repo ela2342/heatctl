@@ -34,6 +34,10 @@ class Safety:
         self.vl_min_cooling_floor = s.get("vl_min_cooling_floor_c", 12.0)
         self.cooling_requires_dew_point = s.get("cooling_requires_dew_point",
                                                 True)
+        # ASYMMETRIC hysteresis on the condensation guard. Trip immediately,
+        # release only `release_margin` above the limit. See apply().
+        self.dew_release_margin = s.get("dew_point_release_margin_c", 0.3)
+        self._cooling_tripped = False
         self._dew: float | None = None
         self._dew_ts = 0.0
         self._dew_logged: float | None = None
@@ -165,8 +169,37 @@ class Safety:
             # plus humid air would block the house warming up.
             if self.cooling_requires_dew_point and not self.dew_point_known():
                 return 0.0, "dew_point_unknown"
-            if vl is not None and vl < self.cooling_supply_limit():
-                return 0.0, "vl_undertemp"
+            if vl is not None:
+                limit = self.cooling_supply_limit()
+                # ASYMMETRIC BY DESIGN. Trip the instant supply goes below the
+                # limit; release only once it is `release_margin` clear of it.
+                #
+                # Measured 2026-07-28 07:32 (D-023). A strict `vl < limit`
+                # compares two INDEPENDENTLY quantised 0.1 K signals, and the
+                # better the plant is controlled the more time supply spends
+                # sitting exactly on the limit - load compensation drives it
+                # there on purpose. One LSB tick in EITHER signal then flips
+                # every owned valve. That morning the trip came from supply
+                # (14.5 -> 14.4) and the release 16 s later came from the DEW
+                # POINT (12.5 -> 12.4, limit 14.5 -> 14.4) with supply
+                # unchanged, so instrumenting only the supply side would have
+                # missed half of it. 16 s against a 150 s actuator stroke
+                # means the valve never reached either commanded position and
+                # its true opening became unknown.
+                #
+                # The asymmetry is the safety-relevant part: closing is the
+                # protective direction and must stay instantaneous, so the
+                # margin may only ever DELAY REOPENING. Do not "simplify" this
+                # into a symmetric band - that would defer the trip.
+                if vl < limit or (self._cooling_tripped
+                                  and vl < limit + self.dew_release_margin):
+                    self._cooling_tripped = True
+                    return 0.0, "vl_undertemp"
+            self._cooling_tripped = False
+        else:
+            # Mode left cooling; the latch must not survive into the next
+            # cooling period (restart == safe state, and so does a mode flip).
+            self._cooling_tripped = False
 
         # Lost knowledge of this circuit -> fail open (see policy above).
         if not rl_valid:

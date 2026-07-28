@@ -170,8 +170,16 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
       Do it per channel as each actuator goes in, and flip `fitted: true` only
       once the step test passes - not when the hardware is screwed on.
 
-- [!] **The below-dew-point cooling limit has NO hysteresis - CONFIRMED
-      CHATTERING ON A FITTED ACTUATOR 2026-07-28 07:32.** Raised from "worth
+- [x] **FIXED 2026-07-28 (D-023), not yet deployed.** Release-only hysteresis,
+      `safety.dew_point_release_margin_c: 0.3`. Root cause was NOT what the
+      first report here claimed: every transition is explained exactly by
+      `vl < limit` on two independently 0.1-K-quantised signals, and the
+      16 s reopen came from the DEW POINT ticking 12.5 -> 12.4, not from
+      supply noise and not from any inconsistency. Frequency was also
+      overstated - 4 trips in 9.7 h, one sub-stroke, rather than chatter.
+      Original report, kept because the trace is the evidence:
+  **The below-dew-point cooling limit has NO hysteresis - observed on a
+      fitted actuator 2026-07-28 07:32.** Raised from "worth
       doing" to the top of the list because the predicted failure happened.
       hk02 (Wohnzimmer, `fitted: true`) was commanded 100 -> 0 -> 100 -> 0 in
       **27 seconds**, against a 150 s full stroke (D-022): three commanded

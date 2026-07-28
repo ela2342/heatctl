@@ -321,3 +321,114 @@ def test_heating_still_runs_without_any_dew_point(cfg):
     s = Safety(cfg)
     st = state(rl_hk01=22.0, vl_total=30.0)
     assert s.apply("heating", st, "rl_hk01", 60.0) == (60.0, None)
+
+
+# ---------- release hysteresis on the condensation guard (D-023) ----------
+
+def test_the_condensation_guard_does_not_reopen_on_one_lsb_of_recovery(cfg):
+    """Regression: the 16-second reopen of 2026-07-28 07:32.
+
+    THE DEFECT. `vl < limit` compared two independently 0.1-K-quantised
+    signals with no hysteresis. Load compensation deliberately drives the
+    supply down onto the limit, so the plant parks exactly where a single LSB
+    tick in either signal flips every owned valve. The recorded sequence:
+
+        07:32:18  vl 14.4, dew 12.5 -> limit 14.5   -> CLOSE
+        07:32:33  vl 14.4, dew 12.4 -> limit 14.4   -> reopened
+        07:32:45  vl 14.3, dew 12.4 -> limit 14.4   -> CLOSE
+
+    hk02 is a fitted actuator with a 150 s stroke, so being commanded
+    100 -> 0 -> 100 -> 0 in 27 s left its true position unknown - the one
+    state the design exists to prevent.
+
+    Note the reopen came from the DEW POINT moving, not the supply, which is
+    why this test holds the supply constant and moves the limit.
+    """
+    s = Safety(cfg)
+    s.set_dew_point(12.5)                                  # limit 14.5
+    st = state(rl_hk01=20.0, vl_total=14.4)
+    assert s.apply("cooling", st, "rl_hk01", 100.0) == (0.0, "vl_undertemp")
+
+    s.set_dew_point(12.4)                                  # limit 14.4
+    pct, reason = s.apply("cooling", st, "rl_hk01", 100.0)
+    assert reason == "vl_undertemp", "reopened on an LSB tick of the LIMIT"
+    assert pct == 0.0
+
+
+def test_the_condensation_guard_trips_the_instant_supply_goes_bad(cfg):
+    """The hysteresis must be asymmetric: it may only ever delay REOPENING.
+
+    Closing is the protective direction. If a future change makes the band
+    symmetric, the trip is deferred and the guard becomes slower than the
+    defect it replaced - strictly worse than having no hysteresis at all.
+    """
+    s = Safety(cfg)
+    s.set_dew_point(12.5)                                  # limit 14.5
+    st = state(rl_hk01=20.0, vl_total=14.49)               # a hair below
+    assert s.apply("cooling", st, "rl_hk01", 100.0) == (0.0, "vl_undertemp")
+
+
+def test_the_condensation_guard_reopens_once_clear_of_the_margin(cfg):
+    """It must actually release - a latch that never clears stops the cooling."""
+    s = Safety(cfg)
+    s.set_dew_point(12.5)                                  # limit 14.5
+    assert s.apply("cooling", state(rl_hk01=20.0, vl_total=14.4),
+                   "rl_hk01", 100.0) == (0.0, "vl_undertemp")
+    # Inside the release margin (14.5 + 0.3): still held closed.
+    assert s.apply("cooling", state(rl_hk01=20.0, vl_total=14.7),
+                   "rl_hk01", 100.0) == (0.0, "vl_undertemp")
+    # Clear of it: control gets its circuit back.
+    assert s.apply("cooling", state(rl_hk01=20.0, vl_total=14.8),
+                   "rl_hk01", 100.0) == (100.0, None)
+
+
+def test_an_untripped_guard_does_not_hold_the_margin_against_control(cfg):
+    """The margin applies only after a trip.
+
+    Without the latch check a supply sitting between the limit and the margin
+    would be treated as bad, silently tightening the condensation limit by
+    the release margin for every circuit, all the time.
+    """
+    s = Safety(cfg)
+    s.set_dew_point(12.5)                                  # limit 14.5
+    assert s.apply("cooling", state(rl_hk01=20.0, vl_total=14.6),
+                   "rl_hk01", 80.0) == (80.0, None)
+
+
+def test_the_trip_latch_does_not_survive_a_mode_change(cfg):
+    """restart == safe state, and so does a mode flip.
+
+    A latch left set from a previous cooling period would hold circuits shut
+    at the start of the next one, before any supply measurement justified it.
+    """
+    s = Safety(cfg)
+    s.set_dew_point(12.5)
+    assert s.apply("cooling", state(rl_hk01=20.0, vl_total=14.4),
+                   "rl_hk01", 100.0) == (0.0, "vl_undertemp")
+    s.apply("heating", state(rl_hk01=20.0, vl_total=30.0), "rl_hk01", 50.0)
+    # Back to cooling, supply inside the old release margin but above the limit.
+    assert s.apply("cooling", state(rl_hk01=20.0, vl_total=14.6),
+                   "rl_hk01", 100.0) == (100.0, None)
+
+
+def test_the_release_margin_is_not_applied_once_the_guard_has_cleared(cfg):
+    """The latch must actually reset, not just stop being consulted.
+
+    Found by mutation testing 2026-07-28: deleting the in-cooling reset left
+    every other test in this file green. Nothing failed because the release
+    path does not care what the latch holds once the supply is clear of the
+    margin - so a latch stuck True is invisible until the NEXT approach to the
+    limit, when it silently tightens the condensation limit by the release
+    margin for every circuit, permanently. That is a quiet loss of cooling,
+    which is exactly the class of bug that does not announce itself.
+    """
+    s = Safety(cfg)
+    s.set_dew_point(12.5)                                  # limit 14.5
+    assert s.apply("cooling", state(rl_hk01=20.0, vl_total=14.4),
+                   "rl_hk01", 100.0) == (0.0, "vl_undertemp")
+    # Recover clear of the margin - this must clear the latch.
+    assert s.apply("cooling", state(rl_hk01=20.0, vl_total=14.9),
+                   "rl_hk01", 100.0) == (100.0, None)
+    # Now back INSIDE the margin but above the limit. Safe, so control keeps it.
+    assert s.apply("cooling", state(rl_hk01=20.0, vl_total=14.6),
+                   "rl_hk01", 100.0) == (100.0, None)
