@@ -137,6 +137,88 @@ class DemandController:
                 vals.append(valves_pct[name])
         return sum(vals) / len(vals) if vals else None
 
+    def enforce_flow_floor(self, commanded: dict[str, float]
+                           ) -> tuple[dict[str, float], float | None]:
+        """Raise valve openings until the flow proxy clears `min_open_pct`.
+
+        Returns (adjusted, raised_to) where `raised_to` is None if nothing was
+        needed - so the caller can report that this fired without recomputing.
+
+        WHY THIS EXISTS. The heat pump has a hard minimum water flow (0.16 l/s
+        for the BLP08P1V1MR32) enforced by its own flow switch: below it the
+        unit throws **Er03 and stops**. The owner shut every valve but circuit
+        11 on 2026-07-28 and tripped it instantly. Without this, heatctl can
+        do the same to itself - distribution is free to drive every circuit
+        down to `distribution.open_threshold_pct` (5 %), far under the floor,
+        and the plant would fault out in the hour the house most needs it.
+
+        It has never been reachable so far only because 8 of the 10
+        water-carrying circuits are open pipe and count as 100 %, pinning the
+        mean at >= 80 %. **It becomes reachable the moment the remaining
+        actuators are fitted**, which is why this is here before they are.
+
+        DIRECTION IS THE WHOLE POINT: too little flow is a reason to OPEN
+        valves, never to close them. A version of this that throttled instead
+        would be strictly worse than having nothing, so `test_demand.py`
+        asserts the direction rather than merely asserting that something
+        changed.
+
+        Openings are scaled by ONE COMMON FACTOR, so relative proportions are
+        preserved - this is D-017's normalisation applied at the bottom end
+        instead of the top. Circuits that hit 100 % are clipped and their
+        shortfall is redistributed across the rest, which is the only place
+        proportionality genuinely cannot be kept.
+
+        Unactuated circuits are left alone: they are open pipe, so commanding
+        them changes no flow. Only actuated circuits can help.
+        """
+        if not self.circuit_valves:
+            return commanded, None
+        actuated = [v for v in self.circuit_valves
+                    if v not in self.unactuated and v in commanded]
+        n_total = len([v for v in self.circuit_valves
+                       if v in self.unactuated or v in commanded])
+        if not actuated or not n_total:
+            return commanded, None
+
+        n_unact = len([v for v in self.circuit_valves if v in self.unactuated])
+        # Sum of actuated openings needed for the mean to reach the floor.
+        need = self.min_open_pct * n_total - 100.0 * n_unact
+        have = sum(commanded[v] for v in actuated)
+        if need <= have:
+            return commanded, None
+
+        out = dict(commanded)
+        if need >= 100.0 * len(actuated):
+            # Even wide open cannot make the floor. Open everything and let
+            # the source-side handle it - see BACKLOG. Still the right
+            # direction, and the most flow we can offer.
+            for v in actuated:
+                out[v] = 100.0
+            log.warning("flow floor %.0f%% unreachable: all %d actuated "
+                        "circuits forced open", self.min_open_pct, len(actuated))
+            return out, self.open_pct(out)
+
+        free = list(actuated)
+        while free:
+            have_free = sum(out[v] for v in free)
+            if have_free <= 0.0:
+                # Nothing to scale - distribute the requirement evenly.
+                for v in free:
+                    out[v] = need / len(free)
+                break
+            k = need / have_free
+            clipped = [v for v in free if out[v] * k > 100.0]
+            if not clipped:
+                for v in free:
+                    out[v] = out[v] * k
+                break
+            for v in clipped:
+                out[v] = 100.0
+                need -= 100.0
+                free.remove(v)
+        return out, self.open_pct(out)
+
     # ---------- demand ----------
 
     def mean_deviation(self, setpoints: dict[str, float],

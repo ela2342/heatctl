@@ -114,6 +114,7 @@ class Controller:
         # reading valve position there would report "saturated" forever and
         # drive the water colder without limit.
         self._peak_demand: float | None = None
+        self._flow_floor_pct: float | None = None
 
         self.demand = DemandController(
             cfg, can_command_source_mode=self.hp.enabled and self.hp.allow_writes)
@@ -320,6 +321,17 @@ class Controller:
         # demands correctly yields all-valves-open - which is right at thermal
         # equilibrium and exactly wrong when the plant is meant to be off.
         commanded = raw if self.mode == "off" else self.dist.apply(raw)
+
+        # Pump minimum flow. Runs AFTER distribution (it needs the final
+        # openings) and BEFORE safety (which must still be able to force a
+        # circuit shut for frost or dew point, and outrank this). `off` is
+        # exempt: no flow is wanted at all, and the source is not running.
+        self._flow_floor_pct = None
+        if self.mode != "off":
+            commanded, raised = self.demand.enforce_flow_floor(commanded)
+            if raised is not None:
+                self._flow_floor_pct = raised
+                log.info("flow floor: valves raised to %.0f%% mean", raised)
 
         for valve, (_, sensor) in demands.items():
             proposed = commanded[valve]

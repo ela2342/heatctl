@@ -125,8 +125,9 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
       `Safety.apply`, which sees the dew point rise and forces closed, but
       only after the fact. Worth a look when the contact sensors go in.
 
-- [!] **`min_open_pct` is documented, configured, and NEVER ENFORCED - it goes
-      live the moment the actuators are fitted.** Found 2026-07-28 after the
+- [x] **DONE 2026-07-28 (D-025), shipped in 0.13.0.** `min_open_pct` was
+      documented, configured, and NEVER ENFORCED - it would have gone
+      live the moment the actuators were fitted.** Found 2026-07-28 after the
       owner closed every valve but circuit 11 and got an **instant Er03**
       (water flow, bit 0 of 0x8008).
       `demand.py` reads `min_open_pct: 40.0` and its own docstring is explicit

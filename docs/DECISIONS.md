@@ -269,3 +269,29 @@ shape. **Exposed by this removal:** see BACKLOG — the HA template falls back t
 the *outdoor* dew point when no indoor pair is valid, and the floor was
 accidentally the only thing bounding that path.
 
+## D-025 · Too little flow opens valves; it never throttles and never stops the source
+The plant has a hard minimum water flow enforced by the unit's own flow switch
+(0.16 l/s on the BLP08P1V1MR32) — below it the heat pump throws **Er03 and
+stops**. Confirmed on the plant 2026-07-28: the owner shut every valve but one
+and tripped it instantly. `min_open_pct` had been configured and documented
+since Milestone 1 but **never enforced** — `open_pct()` fed a status string and
+nothing else. It was unreachable only because 8 of 10 circuits are open pipe and
+count as 100 %, pinning the mean at ≥ 80 %; **fitting the remaining actuators
+would have made heatctl able to fault its own plant**, since distribution can
+drive every circuit to `open_threshold_pct` (5 %). **Decision:** enforce it in
+`Demand.enforce_flow_floor`, by scaling all openings up by one common factor
+until the mean clears the floor — D-017's normalisation applied at the bottom
+end rather than the top, so the distribution decided upstream survives intact.
+**Two orderings are load-bearing.** It runs *after* distribution, because it
+needs the final openings; and *before* safety, because safety must still be able
+to force a circuit shut for frost or below-dew-point supply. Reversing that
+would hold a circuit open into dangerous water to protect the pump — trading an
+invisible wet slab for a recoverable fault code, which is the wrong trade.
+**Direction is the invariant, not the mechanism:** low flow is a reason to OPEN
+valves and never to close them or to stop the source (D-016). A throttling
+version would deadhead the pump faster than no protection at all, so the tests
+assert the direction rather than that something changed. **Exempt in `off`** —
+no flow is wanted and the source is not running. **Note the floor itself is
+still an estimate**; 40 % coincides with the datasheet's 0.16/0.40 ratio, but
+only under assumptions nobody has measured. See BACKLOG.
+

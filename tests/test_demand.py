@@ -234,3 +234,107 @@ def test_auto_mode_is_allowed_once_the_pump_mode_can_be_commanded(cfg):
     cfg["control"]["source_demand"] = {"enabled": True, "auto_mode": True}
     d = DemandController(cfg, can_command_source_mode=True)
     assert d.auto_mode is True
+
+
+# ---------- pump minimum flow: enforce_flow_floor ----------
+#
+# The plant has a HARD minimum water flow enforced by its own flow switch: the
+# BLP08P1V1MR32 wants >= 0.16 l/s and throws Er03 and STOPS below it. The owner
+# tripped it instantly on 2026-07-28 by shutting every valve but one. heatctl
+# can do the same to itself once every circuit has an actuator, because
+# distribution is free to drive them all down to `open_threshold_pct`.
+
+def test_flow_floor_leaves_adequate_flow_alone(demand):
+    d = demand(min_open_pct=40.0)
+    cmd = {"valve_hk01": 80.0, "valve_hk02": 60.0, "valve_hk03": 70.0}
+    out, raised = d.enforce_flow_floor(cmd)
+    assert out == cmd
+    assert raised is None, "must not touch valves that already have flow"
+
+
+def test_flow_floor_OPENS_valves_and_never_closes_them(demand):
+    """THE test. Direction is the whole point.
+
+    Too little flow is a reason to OPEN valves. A version that throttled
+    instead would deadhead the pump faster - strictly worse than no protection
+    at all - and it would look like 'the flow logic ran' in any test that only
+    asserted that something changed.
+    """
+    d = demand(min_open_pct=40.0)
+    cmd = {"valve_hk01": 5.0, "valve_hk02": 5.0, "valve_hk03": 5.0}
+    out, raised = d.enforce_flow_floor(cmd)
+    for v, before in cmd.items():
+        assert out[v] >= before, f"{v} was CLOSED to relieve low flow"
+    assert raised is not None and raised >= 40.0
+
+
+def test_flow_floor_preserves_relative_proportions(demand):
+    """D-017's normalisation, applied at the bottom end instead of the top.
+
+    One common scale factor, so the distribution decided upstream survives.
+    """
+    d = demand(min_open_pct=40.0)
+    cmd = {"valve_hk01": 10.0, "valve_hk02": 20.0, "valve_hk03": 30.0}
+    out, _ = d.enforce_flow_floor(cmd)
+    assert out["valve_hk02"] / out["valve_hk01"] == pytest.approx(2.0)
+    assert out["valve_hk03"] / out["valve_hk01"] == pytest.approx(3.0)
+    assert sum(out.values()) / 3 == pytest.approx(40.0)
+
+
+def test_flow_floor_clips_at_100_and_redistributes(demand):
+    """A valve cannot exceed 100 %, so the shortfall moves to the others.
+
+    This is the one place proportionality genuinely cannot be kept, and the
+    floor matters more than the ratio.
+    """
+    d = demand(min_open_pct=80.0)
+    cmd = {"valve_hk01": 5.0, "valve_hk02": 50.0, "valve_hk03": 60.0}
+    out, raised = d.enforce_flow_floor(cmd)
+    assert max(out.values()) <= 100.0
+    assert raised == pytest.approx(80.0)
+
+
+def test_flow_floor_opens_everything_when_the_floor_is_unreachable(demand):
+    """Wide open still short: offer the most flow available, do not give up.
+
+    Returning the input unchanged here would be the dangerous failure - it
+    reads as 'nothing to do' when in fact the plant is about to fault.
+    """
+    d = demand(min_open_pct=100.0)
+    cmd = {"valve_hk01": 5.0, "valve_hk02": 5.0, "valve_hk03": 5.0}
+    out, _ = d.enforce_flow_floor(cmd)
+    assert all(v == 100.0 for v in out.values())
+
+
+def test_flow_floor_can_lift_valves_off_zero(demand):
+    """Scaling cannot escape zero, so there is an additive path.
+
+    Reachable whenever distribution's open_threshold_pct is 0, which it was
+    until 2026-07-28 and may be again.
+    """
+    d = demand(min_open_pct=40.0)
+    cmd = {"valve_hk01": 0.0, "valve_hk02": 0.0, "valve_hk03": 0.0}
+    out, raised = d.enforce_flow_floor(cmd)
+    assert all(v > 0.0 for v in out.values())
+    assert raised == pytest.approx(40.0)
+
+
+def test_flow_floor_counts_open_pipe_circuits_as_already_flowing(cfg):
+    """Unactuated circuits are open pipe: full flow, and commanding them is a
+    fiction. They must count toward the floor, or heatctl will pointlessly
+    force the few actuated circuits open on a manifold that is already wide
+    open - which is exactly today's plant, 8 of 10 circuits unactuated.
+    """
+    cfg["control"]["source_demand"] = {
+        "enabled": False, "auto_mode": True, "min_open_pct": 40.0,
+        "engage_deviation_c": 0.3, "mode_deadband_c": 1.0,
+        "mode_dwell_s": 3600.0, "min_on_s": 600.0, "min_off_s": 600.0,
+    }
+    for ch in cfg["valves"]["channels"]:
+        ch["fitted"] = ch["name"] == "valve_hk01"      # only hk01 actuated
+    d = DemandController(cfg, can_command_source_mode=True)
+    cmd = {"valve_hk01": 5.0, "valve_hk02": 5.0, "valve_hk03": 5.0}
+    out, raised = d.enforce_flow_floor(cmd)
+    # hk02/hk03 are open pipe -> 100 each -> mean already 68 % >= 40 %.
+    assert out == cmd
+    assert raised is None

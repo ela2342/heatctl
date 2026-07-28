@@ -470,3 +470,46 @@ async def test_off_mode_is_not_normalised_into_wide_open(controller):
     ctl.io.touch(time.monotonic())
     await ctl.step(1.0)
     assert set(ctl.io.last_write.values()) == {0.0}
+
+
+# ---------- pump minimum flow vs safety: ordering ----------
+
+async def test_safety_still_forces_a_circuit_shut_after_the_flow_floor(controller):
+    """Ordering invariant: the flow floor runs BEFORE safety, so safety wins.
+
+    Both want to move the same valve in opposite directions. The floor opens
+    valves to keep the pump alive; safety closes them when the supply is known
+    dangerous. If these ever swap order, heatctl would hold a circuit open into
+    below-dew-point water to protect the pump - trading an invisible wet slab
+    for a recoverable fault code. That is the wrong trade, so pin the order.
+    """
+    ctl = controller(
+        temps={"rl_hk01": 20.0, "rl_hk02": 20.0, "rl_hk03": 20.0,
+               "vl_total": 10.0},          # supply far below any dew limit
+        dew_point=14.0,                    # limit 16.0 -> supply is bad
+        control={"mode": "cooling"},
+    )
+    ctl.io.touch(time.monotonic())
+    await ctl.step(1.0)
+    written = ctl.io.last_write
+    assert written, "nothing written - test is not checking anything"
+    for valve in ("valve_hk01", "valve_hk02", "valve_hk03"):
+        assert written[valve] == 0.0, (
+            f"{valve} left open at {written[valve]} % into below-dew-point "
+            "supply - the flow floor overrode safety")
+
+
+async def test_the_flow_floor_does_not_fire_in_off_mode(controller):
+    """`off` means no flow is wanted and the source is not running.
+
+    Raising valves for a pump that is not turning would be pure confusion,
+    and it would undo the deliberate all-closed state that `off` exists for.
+    """
+    ctl = controller(
+        temps={"rl_hk01": 20.0, "rl_hk02": 20.0, "rl_hk03": 20.0,
+               "vl_total": 20.0},
+        control={"mode": "off"},
+    )
+    ctl.io.touch(time.monotonic())
+    await ctl.step(1.0)
+    assert ctl._flow_floor_pct is None
