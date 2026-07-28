@@ -410,3 +410,56 @@ mapped correctly.
 Still open: which 750-559 analog channel drives which circuit. That is a
 separate question from circuit->room and remains unverified for all channels
 except 1 and 2 - resolve at the manifold during Milestone 0.
+
+## Circuit 11 (Arbeitszimmer) is a FORCED-AIR CONVECTOR, not floor heating
+
+Owner, 2026-07-28. Every other active circuit feeds the ground-floor slab;
+circuit 11 feeds a fan convector in the upstairs Arbeitszimmer. It is the same
+water loop and the same valve channel, so heatctl drives it identically — but
+almost nothing else about it is the same, and several defaults are wrong for it.
+
+**Consistent with the building data:** the EnEV floor-to-ground area is
+136.40 m², the ground floor only. The upstairs was never part of the heated
+slab, so this is not a change to the slab model — it is an *additional* emitter
+the model did not have.
+
+| | Slab circuits | Circuit 11 (convector) |
+|---|---|---|
+| Response time | hours | tens of seconds |
+| Thermal mass | huge (69 % of the building) | negligible |
+| Output per unit | ~25–35 W/m² of floor | high, and fan-speed dependent |
+| Condensate | must never form | **forms by design** |
+
+**What this invalidates**
+
+1. **`rl_gating.settle_s: 300`** was sized for water to traverse a slab loop.
+   A convector responds in tens of seconds. Circuit 11 is `fitted: false` today
+   so the gate is inert, but this must be per-circuit before an actuator goes on.
+2. **The return-temperature PID** driving circuit 11 is tuned for slab dynamics.
+   Wrong plant, and it will be sluggish at best.
+3. **Distribution normalisation** maps demand → opening identically for all
+   circuits. A convector's output-vs-opening curve is nothing like a slab's,
+   and it has a second control input (fan speed) heatctl cannot see.
+4. **The 3-state room+slab model** (DESIGN.md §6.1) does not apply — Arbeitszimmer
+   is essentially a single-state room.
+
+**The condensation guard question — needs an answer before the next hot spell.**
+A fan coil below dew point condenses; that is how it dehumidifies, and a proper
+one has a condensate tray and drain. Two cases:
+
+* **Drain fitted** → the guard is over-conservative for circuit 11. Worse, it is
+  counter-productive: letting that coil run wet would *lower* the house dew
+  point and buy headroom for every slab circuit. Consider exempting circuit 11
+  from `vl_undertemp` — but only that circuit, and only with the drain confirmed.
+* **No drain** → the guard is essential and the circuit needs at least the same
+  limit, arguably a tighter one, since there is no slab mass to buffer a mistake.
+
+**Do not exempt it on assumption.** Confirm the drain physically first.
+
+**Capacity implication.** The earlier estimate that emitter capacity caps the
+plant at 3.4–4.8 kW counted only the 136.40 m² slab. The convector adds to that
+— plausibly 2–4 kW for a room this size — which likely lifts total capacity past
+the heat pump's ~5.7 kW and moves the binding constraint back to the source.
+**But capacity is not fungible between rooms:** the convector cools
+Arbeitszimmer only, and does nothing for Wohnzimmer, whose constraint is
+unchanged.

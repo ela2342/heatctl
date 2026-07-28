@@ -84,6 +84,31 @@ event, say:
 Observed 6.5 A at 89 Hz is consistent with either mains or DC link, so the
 question is open until we see it at full output. Do not derive COP until then.
 
+## `outdoor_ambient` (0x8011) is NOT air temperature in daytime
+
+**Measured 2026-07-28.** The unit's own outdoor sensor reported a peak of
+**36.5 °C** at 17:00 CEST. Two independent Fine Offset weather-station sensors
+agreed with each other on **25.1 °C** in the same hour. The heat pump reads up
+to **+11 K high** in the afternoon.
+
+Cause is the usual one: the sensor sits on the outdoor unit, so it picks up
+solar gain on the casing and its own discharge air recirculating. Overnight the
+two sources agree within ~0.7 K (heat pump slightly low), so the error is
+daytime and insolation-driven, not a calibration offset.
+
+**Consequences**
+
+* Do **not** use it for weather compensation, degree-days, COP-vs-ambient, or
+  anything else that needs real air temperature. Use
+  `sensor.fineoffset_wh65b_210_t` / `wh24_210_t`.
+* It is still the right signal for **the machine's own** operating point —
+  defrost, capacity derating, and the manufacturer's COP tables are all
+  referenced to what the unit itself experiences. Keep publishing it, and keep
+  it clearly named as the unit's sensor rather than "outdoor temperature".
+* Energy balances built on it will be wrong by up to 11 K in daytime.
+  The overnight balance in `docs/BUILDING.local.md` is unaffected (night-time
+  agreement is ~0.7 K on a 7.1 K delta, inside its stated uncertainty).
+
 ## Transport
 RS485, 9600 8N1, **unit address fixed at 1**, standard Modbus RTU. Reached over
 the LAN through a Waveshare RS485→TCP gateway (address in the local site

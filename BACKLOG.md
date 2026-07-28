@@ -125,6 +125,68 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
       `Safety.apply`, which sees the dew point rise and forces closed, but
       only after the fact. Worth a look when the contact sensors go in.
 
+- [!] **The condensation guard is BLIND to showers - measured 2026-07-28.**
+      The owner showered in Gaestebad in the morning and asked whether it
+      showed up. It did not, anywhere. `sensor.luftfeuchte_gastebad` stayed
+      inside **46.4-50.3 % RH for the whole of 06:30-12:00**, with no spike at
+      any point, and the derived `system_dew_point_reference` drifted
+      *downward* 12.6 -> 12.0 across the same window. A shower in a 3.4 m2
+      bathroom should drive RH to 80-95 % and the local dew point to 18-22 degC
+      within minutes.
+      The sensor is alive and behaving - RH falls correctly when the room warms
+      (08:15-08:22), so it tracks temperature - it simply never saw the
+      moisture. Most likely heavy damping in the Controme RC firmware, or the
+      wall unit sits outside the plume, or extraction clears it faster than the
+      ~60 s reporting interval resolves.
+      **Why this matters:** `system_dew_point_reference` is the MAX over four
+      rooms and it is the sole input to the cooling condensation limit. If the
+      bathroom sensor cannot see a shower, the guard is blind to the largest
+      and most abrupt indoor moisture source in the house - and Gaestebad is
+      circuit 1, one of only two with an actuator fitted.
+      It did not bite today: dew point ~12 against a supply of 14-20, so metres
+      of margin. It would bite on a humid day with supply already at the limit.
+      The 2.0 K margin absorbs some of this, which is an argument for deriving
+      it properly rather than shrinking it.
+      FIX candidates: a fast, well-placed humidity sensor in the bathroom (the
+      Shelly H&T migration is the natural vehicle - pick the position for the
+      plume, not for tidiness); and/or treat bathroom circuits conservatively
+      on a humidity *rate* trigger or occupancy. Note no control change helps
+      until a sensor can actually see the event.
+
+- [ ] **Adapt control to circuit 11 being a FAN CONVECTOR, not floor heating**
+      (owner, 2026-07-28; details in docs/HARDWARE.md). Same loop, same valve
+      channel, entirely different plant. Ordered by when it starts to matter:
+      (a) **Confirm whether the convector has a condensate drain.** If it does,
+          the `vl_undertemp` guard is not just over-conservative for that
+          circuit but counter-productive - letting the coil run wet would lower
+          the house dew point and buy headroom for every slab circuit. If it
+          does not, the guard is essential there. **Do not exempt on
+          assumption.**
+      (b) `rl_gating.settle_s` must become per-circuit before an actuator is
+          fitted to 11. 300 s is slab transport time; a convector responds in
+          tens of seconds.
+      (c) The return-temperature PID on circuit 11 is tuned for slab dynamics.
+      (d) Distribution maps demand -> opening identically for every circuit; a
+          convector's characteristic is different and has a second input (fan
+          speed) heatctl cannot see or command.
+      (e) Room model: Arbeitszimmer is single-state, not room+slab.
+      Capacity note: this ADDS emitter capacity rather than moving it - the
+      136.40 m2 slab is ground floor only, so upstairs was never in it. Likely
+      lifts total past the heat pump's ~5.7 kW and moves the binding constraint
+      back to the source. **But it is not fungible between rooms** - it does
+      nothing for Wohnzimmer, whose constraint is unchanged.
+
+- [ ] **Stop treating `heatctl_outdoor_ambient` as air temperature.** Measured
+      2026-07-28: the heat pump's own sensor peaked at **36.5 degC** while two
+      independent Fine Offset station sensors agreed on **25.1** in the same
+      hour - **+11 K**. Solar loading on the outdoor unit's casing plus its own
+      discharge recirculating. Overnight the two agree within ~0.7 K, so it is
+      a daytime insolation error, not an offset. Keep publishing it (it is the
+      right signal for the MACHINE's operating point - defrost, derating, the
+      vendor COP tables), but rename it so nobody mistakes it, and point any
+      weather compensation, degree-day or COP-vs-ambient work at
+      `sensor.fineoffset_wh65b_210_t`. See docs/HEATPUMP.md.
+
 - [!] **Measure the hydronic flow rate - it now gates every energy balance.**
       Highest-value missing instrument, promoted 2026-07-28 after the first
       model validation. The overnight mass estimate came out at 13,700-18,600
