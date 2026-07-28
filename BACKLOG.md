@@ -80,23 +80,37 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
 - [ ] **heatctl has no window-open input, and there are no window sensors in
       HA at all** (checked 2026-07-28: no matching entities). Observed live
       when the owner ventilated Wohnzimmer at ~07:10 with 13 degC outside
-      against 26 degC inside. Nothing harmful happens - the failure is wasted
-      effort and setpoint churn: the room sensor dives toward outdoor air,
-      house demand collapses, the actuated circuit throttles off its 100 %,
-      and the water-setpoint trim reverses the walk it just started. Then it
-      all rebounds when the window shuts. The mismatch is the problem: the
-      trim moves 1 K / 30 min against a room that ventilation can move
-      several K in minutes, so it lags in BOTH directions and spends its
-      cadence budget chasing an artefact.
+      against 26 degC inside.
+      MEASURED, and it corrected the prediction that was written here first.
+      The predicted failure was churn - sensor dives, demand collapses,
+      circuit throttles off 100 %, setpoint trim reverses. NONE of that
+      happened. Wohnzimmer peaked at 26.00 at 07:11:16 and then fell only to
+      25.50 by 07:28, i.e. the window turned +0.074 K/min into -0.042 K/min
+      and by 07:29 was already decelerating back toward zero as the sun
+      climbed. Peak circuit demand went the OTHER way from the prediction,
+      58 -> 92 straight through the window opening, hk02 stayed pinned at
+      100 %, and the setpoint trim continued down to 19.0. Control never saw
+      an artefact because the room stayed ~2.5 K above setpoint the whole
+      time: heatctl reacts to the GAP, and ventilation only shaved the ramp.
+      So the churn scenario is real but narrower than stated: it needs
+      ventilation to DOMINATE, i.e. a mild day and a room near setpoint, not
+      a room under heavy solar load. Useful side measurement: the open window
+      was worth about 0.12 K/min of cooling authority at a 13 K indoor-outdoor
+      difference, which is the first number we have for ventilation capacity.
       Cheapest fix is not a control change: a contact sensor per ventilated
       room, published like any other input, and a per-room "suspend" that
       parks the circuit rather than driving it. Note this is a SUSPEND, not
       an off - safety (frost, dew point) must keep running on that room, so
       it cannot be implemented by masking the room out of the demand set.
       Until then it is a known, benign inefficiency, not a defect.
-      Related but distinct from the dew-point angle, which turned out fine
-      here: outdoor dew point 12.1 vs indoor 12.5, so ventilating LOWERED
-      the condensation floor. That will not hold on a muggy day, and then
+      Related but distinct from the dew-point angle. Careful with this one -
+      the house REFERENCE was 12.5 against 12.1 outdoors, so ventilating
+      lowered the aggregate. But Wohnzimmer itself was DRIER than outside
+      (dew point ~11.2), so its own dew point rose toward 12.1 - 11.2 to
+      11.6 in the first 18 minutes. Per-room dew point is what threatens a
+      per-room cold circuit, so a house-wide reference can be reassuring and
+      wrong at the same time; worth checking whether the guard should track
+      the worst room rather than the reference. That will not hold on a muggy day, and then
       opening a window while cooling is genuinely hazardous - the guard is
       `Safety.apply`, which sees the dew point rise and forces closed, but
       only after the fact. Worth a look when the contact sensors go in.
