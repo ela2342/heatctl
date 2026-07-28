@@ -442,8 +442,6 @@ safety:
   # supply is already safe. LOWERING it below 0.2 re-opens the defect.
   dew_point_release_margin_c: 0.3
   dew_point_max_age_s: 900     # older than this -> fall back to the static value
-  vl_min_cooling_floor_c: 12.0 # hard floor on what a dew-point reading may
-                               # authorise, bounding a stuck-low humidity sensor
   frost_protect_c: 6.0         # below this return temp: force valve open
   sensor_fault_raw: [0x05DC, 0xFED4]  # wire-break / short-circuit saturation
   stale_data_timeout_s: 15     # no fresh input data -> failsafe

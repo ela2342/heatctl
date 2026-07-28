@@ -82,7 +82,6 @@ BASE_CFG: dict = {
         "vl_min_cooling_c": 16.0,
         "dew_point_margin_c": 2.0,
         "dew_point_max_age_s": 900,
-        "vl_min_cooling_floor_c": 12.0,
         "frost_protect_c": 6.0,
         "sensor_fault_raw": [0x05DC, 0xFED4],
         "stale_data_timeout_s": 15,

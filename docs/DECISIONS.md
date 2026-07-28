@@ -238,3 +238,27 @@ such overstated the case. It will get worse as actuators are fitted and as the
 trim tracks the constraint harder. **Also learned:** instrumenting only the
 supply side would have missed this — the reopen came from the humidity input.
 
+## D-024 · No lower floor on the cooling supply limit — bound the reading, not the result
+`safety.vl_min_cooling_floor_c: 12.0` clamped the computed limit to
+`max(dew + margin, 12.0)`. **Removed 2026-07-28** at the owner's call.
+**Why it was wrong:** it cannot do the job its own comment claimed. A floor low
+enough to permit useful cooling is not a safe floor — a 12 °C indoor dew point
+is an ordinary 22 °C at 53 % RH, so if it ever *did* bind it would be
+authorising condensation, not preventing it. A floor high enough to be
+genuinely safe (≈17–18 °C) blocks cooling outright, which is precisely the
+static `vl_min_cooling_c: 16.0` this whole mechanism replaced (D-010). The two
+requirements are mutually exclusive, so the construct was never going to work.
+**Evidence it was inert:** across ten days of recorded data the reference dew
+point ranged 11.2–15.1 °C, giving a limit of 13.2–17.1 °C. It never came within
+1.2 K of the floor. **Provenance, for honesty:** I introduced it in `d457314`,
+the same commit whose docstring criticises the *other* undocumented magic
+number for arriving without derivation. It had none either.
+**The principle worth keeping:** if a reading needs defending against, defend
+the **reading** — plausibility bounds, cross-room agreement, staleness — never
+clamp the result computed from it. Clamping the output only moves a wrong
+number somewhere harder to see. The dew point is already the **maximum** across
+every instrumented room and already has a staleness check; that is the right
+shape. **Exposed by this removal:** see BACKLOG — the HA template falls back to
+the *outdoor* dew point when no indoor pair is valid, and the floor was
+accidentally the only thing bounding that path.
+

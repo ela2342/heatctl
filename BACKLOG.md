@@ -125,6 +125,33 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
       `Safety.apply`, which sees the dew point rise and forces closed, but
       only after the fact. Worth a look when the contact sensors go in.
 
+- [!] **The dew-point template falls back to the OUTDOOR dew point, and
+      nothing bounds that any more.** Found 2026-07-28 while removing the
+      12 degC floor (D-024), which had been accidentally capping the damage.
+      `sensor.system_dew_point_reference` takes the max over four indoor
+      temperature/humidity pairs and, if none is valid, **substitutes
+      `sensor.fineoffset_wh65b_210_dew_point` - an OUTDOOR sensor.**
+      Two reasons this is wrong:
+      (a) It contradicts config.yaml's own warning under `dew_point_topic`,
+          which says in as many words not to point this at an outdoor dew
+          point. The comment only anticipated outdoor being too HIGH
+          (needlessly forbidding safe cooling); the dangerous direction is
+          outdoor being too LOW - a cold dry day gives a plausible, fresh,
+          authoritative and badly wrong limit.
+      (b) It defeats D-010. `cooling_requires_dew_point` exists so that
+          "we do not know the humidity" means "stop cooling". A fallback that
+          always produces a number means heatctl can never reach that state,
+          so the designed safe degradation is unreachable from the plant.
+      Correlated-failure risk is real, not theoretical: three of the four
+      pairs are Controme room controllers reaching HA through the single
+      legacy Mini Server, so one host dying invalidates three at once.
+      FIX: delete the fallback and let the template go unavailable. heatctl
+      then stops cooling by itself, which is the whole point of D-010. The
+      template lives in HA, not in git - see docs/HA_INTEGRATION.md.
+      Consider also a plausibility gate INSIDE heatctl (reject a dew point
+      above room temperature, or wildly out of band), because layer 1 is not
+      supposed to depend on an HA template being correct.
+
 - [ ] **Underfloor cooling cannot track solar gain - measured 2026-07-28.**
       First clean observation of the limit, worth keeping as a reference
       trace. Wohnzimmer has large glazing; at sunrise its air went

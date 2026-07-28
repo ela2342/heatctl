@@ -28,10 +28,6 @@ class Safety:
         # degC static limit shut circuits that were in no danger whatever.
         self.dew_margin = s.get("dew_point_margin_c", 2.0)
         self.dew_max_age = s.get("dew_point_max_age_s", 900)
-        # Hard floor on what a dew-point reading may authorise, bounding the
-        # damage from a stuck-low humidity sensor. Live data may relax the
-        # static limit, but only this far.
-        self.vl_min_cooling_floor = s.get("vl_min_cooling_floor_c", 12.0)
         self.cooling_requires_dew_point = s.get("cooling_requires_dew_point",
                                                 True)
         # ASYMMETRIC hysteresis on the condensation guard. Trip immediately,
@@ -60,7 +56,14 @@ class Safety:
     def cooling_supply_limit(self, now: float | None = None) -> float:
         """Lowest supply temperature cooling may run at, right now.
 
-        With a fresh dew point this is `dew point + margin`, floored.
+        With a fresh dew point this is exactly `dew point + margin`. There is
+        deliberately no lower floor on it (D-024, removed 2026-07-28): a floor
+        low enough to permit useful cooling is not a safe floor anyway - a
+        12 degC indoor dew point is an ordinary 22 degC at 53 % RH - and one
+        high enough to be genuinely safe blocks cooling outright, which is the
+        static limit this mechanism replaced. The reading is defended by being
+        the MAXIMUM across every instrumented room and by the staleness check,
+        not by clamping its output.
 
         The margin is EMPIRICAL: it matches the margin the existing HA
         supervisory loop has run at without condensation. It is a margin on
@@ -100,7 +103,7 @@ class Safety:
                             self.vl_min_cooling)
                 self._dew_logged = None
             return self.vl_min_cooling
-        limit = max(self._dew + self.dew_margin, self.vl_min_cooling_floor)
+        limit = self._dew + self.dew_margin
         if self._dew_logged is None or abs(self._dew - self._dew_logged) >= 0.5:
             log.info("cooling supply limit %.1f degC (dew point %.1f + %.1f)",
                      limit, self._dew, self.dew_margin)

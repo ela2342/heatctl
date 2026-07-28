@@ -174,11 +174,24 @@ def test_a_stale_dew_point_falls_back_to_the_static_limit(cfg):
     assert s.cooling_supply_limit(now=now + 901) == 16.0
 
 
-def test_a_dew_point_cannot_authorise_below_the_hard_floor(cfg):
-    """Bounds the damage from a stuck-low humidity sensor."""
+def test_the_limit_tracks_the_dew_point_with_no_lower_floor(cfg):
+    """D-024: the `vl_min_cooling_floor_c` clamp was REMOVED 2026-07-28.
+
+    It never once bound in ten days of recorded data (dew point 11.2-15.1,
+    so a limit of 13.2-17.1 against a 12.0 floor), and it could not do the
+    job its comment claimed. A floor low enough to permit useful cooling is
+    not safe - 12 degC dew point is an ordinary 22 degC at 53 % RH - and one
+    high enough to be safe blocks cooling, which is the static limit this
+    whole mechanism replaced.
+
+    This test exists to stop it being reintroduced by reflex. If a bad
+    reading needs bounding, bound the READING (plausibility, cross-room
+    agreement, staleness), not the limit computed from it - clamping the
+    output just moves a wrong number somewhere harder to see.
+    """
     s = Safety(cfg)
-    s.set_dew_point(-40.0)
-    assert s.cooling_supply_limit() == cfg["safety"]["vl_min_cooling_floor_c"]
+    s.set_dew_point(5.0)
+    assert s.cooling_supply_limit() == pytest.approx(7.0)
 
 
 def test_set_dew_point_ignores_none(cfg):

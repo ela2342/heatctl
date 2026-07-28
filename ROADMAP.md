@@ -204,7 +204,8 @@ Room sensors still arrive via MQTT regardless of this choice.
       this decision.
 - [x] Cooling: dew-point supervision (2026-07-27). `mqtt.dew_point_topic`
       feeds `Safety.set_dew_point`; the cooling limit becomes
-      `dew point + dew_point_margin_c`, floored by `vl_min_cooling_floor_c`
+      `dew point + dew_point_margin_c` (the `vl_min_cooling_floor_c` clamp
+      shipped with this and was removed again 2026-07-28, D-024)
       to bound a stuck-low humidity sensor, and falls back to the static
       `vl_min_cooling_c` when the reading is older than
       `dew_point_max_age_s`. The fallback is deliberately NOT the max of the
