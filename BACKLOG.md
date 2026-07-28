@@ -94,9 +94,19 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
       time: heatctl reacts to the GAP, and ventilation only shaved the ramp.
       So the churn scenario is real but narrower than stated: it needs
       ventilation to DOMINATE, i.e. a mild day and a room near setpoint, not
-      a room under heavy solar load. Useful side measurement: the open window
-      was worth about 0.12 K/min of cooling authority at a 13 K indoor-outdoor
-      difference, which is the first number we have for ventilation capacity.
+      a room under heavy solar load. CAUTION on the capacity figure first
+      recorded here (0.12 K/min): the baseline was contaminated and it is
+      VOID. The owner pointed out that direct sun was on the WALL the sensor
+      is mounted on until ~07:36, so the 25.5 plateau was partly radiant wall
+      temperature, not room air. Once the sun moved off, the reading fell
+      25.50 -> 24.44 in 8 minutes, **-0.13 K/min**, three times the earlier
+      apparent rate. Treat -0.13 K/min as a LOWER BOUND on ventilation
+      capacity at a 13 K difference, and treat the first minutes of that
+      decay as partly the sensor re-equilibrating rather than the room
+      cooling - watch where it flattens to get the real air temperature.
+      Second, independent reason the Shelly H&T migration matters: a wall
+      unit on a sunlit wall reports the wall. Whatever replaces it needs a
+      PLACEMENT rule, not just a protocol.
       Cheapest fix is not a control change: a contact sensor per ventilated
       room, published like any other input, and a per-room "suspend" that
       parks the circuit rather than driving it. Note this is a SUSPEND, not
@@ -160,8 +170,25 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
       Do it per channel as each actuator goes in, and flip `fitted: true` only
       once the step test passes - not when the hardware is screwed on.
 
-- [ ] **The below-dew-point cooling limit has NO hysteresis, and it visibly
-      limit-cycles.** Observed live 2026-07-27 23:19-23:23: supply fell through
+- [!] **The below-dew-point cooling limit has NO hysteresis - CONFIRMED
+      CHATTERING ON A FITTED ACTUATOR 2026-07-28 07:32.** Raised from "worth
+      doing" to the top of the list because the predicted failure happened.
+      hk02 (Wohnzimmer, `fitted: true`) was commanded 100 -> 0 -> 100 -> 0 in
+      **27 seconds**, against a 150 s full stroke (D-022): three commanded
+      full reversals inside a fifth of one stroke time. The valve cannot have
+      tracked any of it, so its actual position is now unknown - precisely
+      the state the design exists to avoid.
+      Trip points, against a limit of 14.5 (dew 12.5 + 2.0): forced closed at
+      supply 14.4 (07:32:18), released at 14.4 (07:32:34), closed again at
+      14.3 (07:32:45), released at 14.4 (07:35:22).
+      NOTE the second transition: it released while supply was still BELOW
+      the limit. That is not zero hysteresis, that is inconsistent, and it
+      means the trip input is moving too - most likely the dew-point
+      reference itself dithering, or the guard reading a different supply
+      quantity than the published `supply_total`. Establish which BEFORE
+      adding hysteresis, or the deadband will be tuned against the wrong
+      signal.
+      Earlier and milder observation of the same thing, 2026-07-27 23:19-23:23: supply fell through
       the limit (15.4 = dew 13.4 + 2.0), safety forced hk11 to 0, supply
       recovered, hk11 went back to 100 at 15.4 - closed at 15.3, reopened at
       15.4. Safety behaved exactly as designed (fail CLOSED on known-bad
