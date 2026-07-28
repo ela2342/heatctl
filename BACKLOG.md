@@ -125,6 +125,44 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
       `Safety.apply`, which sees the dew point rise and forces closed, but
       only after the fact. Worth a look when the contact sensors go in.
 
+- [!] **`min_open_pct` is documented, configured, and NEVER ENFORCED - it goes
+      live the moment the actuators are fitted.** Found 2026-07-28 after the
+      owner closed every valve but circuit 11 and got an **instant Er03**
+      (water flow, bit 0 of 0x8008).
+      `demand.py` reads `min_open_pct: 40.0` and its own docstring is explicit
+      about what it is for - *"a constraint on how far heatctl may throttle - a
+      reason to hold valves OPEN"*, naming Er03 by name. But `open_pct()` is
+      only ever used to build a status string and publish telemetry. **Nothing
+      clamps the valve outputs.** Grep confirms: no reference in `main.py` or
+      `distribution.py` beyond publishing it.
+      **Why it has never bitten:** 8 of the 10 water-carrying circuits are open
+      pipe and count as 100 %, so the mean opening cannot currently fall below
+      **80 %**. The floor is unreachable. Once all actuators are fitted,
+      distribution can drive every circuit to `open_threshold_pct` = **5 %**,
+      far below the 40 % floor - and per the owner's experiment the unit faults
+      out immediately. That is a self-inflicted plant shutdown, in the hour
+      when the house most needs cooling, caused by heatctl's own output.
+      **PROPOSED FIX** (small, and the same principle as D-017): after
+      distribution, if the mean opening is below `min_open_pct`, scale ALL
+      openings up by one common factor until the mean reaches the floor,
+      clipping at 100. That preserves the relative proportions exactly - it is
+      D-017's normalisation applied at the bottom end instead of the top - and
+      it is the correct response anyway, because low flow is a reason to open
+      valves, not to throttle further. Needs a test asserting the direction:
+      too little flow must OPEN valves, never close them.
+      Sequencing note: it must run BEFORE safety, so that a frost or dew-point
+      override still wins. Safety closing circuits can itself starve flow, and
+      that case is genuinely a source problem, not a valve problem - see the
+      existing "source-side last resort when safety costs flow" item.
+
+- [ ] **The Er03 flow switch is a free single-point flow calibration.** It trips
+      at the unit's minimum, spec'd 0.16 l/s. So the valve configuration at
+      which it *just* trips tells us the flow through that configuration -
+      an absolute anchor for the pump-curve model we otherwise have no way to
+      pin. Combine with `dc_pump_speed` and the commanded openings. Do it
+      deliberately and briefly, not by accident, and only once the actuators
+      are in; tripping a flow failsafe repeatedly is not free wear-wise.
+
 - [!] **The condensation guard is BLIND to showers - measured 2026-07-28.**
       The owner showered in Gaestebad in the morning and asked whether it
       showed up. It did not, anywhere. `sensor.luftfeuchte_gastebad` stayed
