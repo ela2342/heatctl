@@ -370,6 +370,16 @@ control:
     # THROTTLE - a reason to hold valves open - and never a reason to stop the
     # source. Enforcing it as a valve floor is still to do; today the mean
     # sits near 82 % because eight of ten circuits cannot throttle at all.
+    # Flow floor, as MEAN valve opening. 40 is the owner's estimate, and the
+    # datasheet happens to agree: the BLP08P1V1MR32 wants 0.16-0.40 l/s, and
+    # 0.16/0.40 is exactly 40 %. Do not read that as confirmation - the two
+    # agree only if (a) flow is linear in mean opening and (b) all-valves-open
+    # actually reaches the unit's 0.40 l/s. Neither is measured.
+    # (b) is the real risk: if this system's loops mean the pump tops out at,
+    # say, 0.30 l/s, then Er03 lies at 53 % of achievable flow and a 40 % floor
+    # is too low. Er03 was observed instantly with everything but circuit 11
+    # shut (owner, 2026-07-28), so the trip is real and unforgiving.
+    # Replace this with a flow-based limit once flow is measured - see BACKLOG.
     min_open_pct: 40.0
     engage_deviation_c: 0.3 # how far off target before the source is worth it
     mode_deadband_c: 1.0    # PLANT-level only - rooms keep one target each.

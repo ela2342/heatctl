@@ -155,6 +155,35 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
       that case is genuinely a source problem, not a valve problem - see the
       existing "source-side last resort when safety costs flow" item.
 
+- [ ] **Derive the flow floor from the datasheet instead of a rule of thumb.**
+      The 40 % `min_open_pct` is the owner's estimate, and the datasheet turns
+      out to agree exactly - the BLP08P1V1MR32 wants **0.16-0.40 l/s**, and
+      0.16/0.40 = **40 %**. Tempting, but it is only agreement if BOTH hold:
+      (a) flow is linear in mean valve opening - it is not, strictly: parallel
+          branches sum conductance, the valve characteristic is not linear, and
+          a fixed-speed pump moves up its curve as circuits close, so flow
+          falls LESS than proportionally (which errs safe);
+      (b) all-valves-open actually reaches 0.40 l/s. **This is the real risk
+          and it is unmeasured.** If this system's loop resistance means the
+          pump tops out at 0.30 l/s, Er03 sits at 53 % of achievable flow and a
+          40 % floor is too low:
+            all-open 0.40 l/s -> floor 40 % (x1.25 margin: 50 %)
+            all-open 0.35      -> 46 %  (57 %)
+            all-open 0.30      -> 53 %  (67 %)
+            all-open 0.25      -> 64 %  (80 %)
+      So: keep 40 % as the interim, but the correct fix is to express the limit
+      in **l/s** and measure our actual maximum. Until then treat 40 % as a
+      lower bound on the floor, not a calibrated value.
+
+- [ ] **Nothing checks the flow MAXIMUM, and D-017 pushes toward it.** The
+      datasheet gives 0.40 l/s as a maximum, not just a design point, and
+      D-017's whole principle is "normalise so the most-demanding circuit is
+      fully open" - i.e. deliberately maximise flow. With `dc_pump_speed`
+      observed at 100 % and every circuit open, nothing establishes that we
+      stay under it. Probably fine, since the pump is internal to the monoblock
+      and the manufacturer sized it - but that is an assumption, not a check.
+      Resolve with the same flow measurement.
+
 - [ ] **The Er03 flow switch is a free single-point flow calibration.** It trips
       at the unit's minimum, spec'd 0.16 l/s. So the valve configuration at
       which it *just* trips tells us the flow through that configuration -
