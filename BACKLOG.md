@@ -77,6 +77,31 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
       escalation is to stop the unit - the one place "measure of last resort"
       actually applies. Currently unimplemented: safety can starve the pump and
       nothing notices.
+- [ ] **Underfloor cooling cannot track solar gain - measured 2026-07-28.**
+      First clean observation of the limit, worth keeping as a reference
+      trace. Wohnzimmer has large glazing; at sunrise its air went
+      **22.1 -> 25.6 degC in 44 minutes** (06:21-07:05), smooth and linear at
+      ~0.1 K/min. Over the same window that room's own slab circuits went the
+      OTHER way: circuit 8 20.6 -> 18.6, circuit 9 20.6 -> 19.6, circuit 10
+      20.4 -> 18.9. (Those three are open pipe, so flow was constant; part of
+      the fall is supply falling, so treat the magnitude as indicative, not
+      as a calibrated room-temperature proxy.)
+      The point is the time constants, and they are far apart: solar gain
+      through glass loads the air in minutes, the slab responds over hours.
+      Control did the right thing - Wohnzimmer became peak demand, hk02 went
+      to 100 %, Gaestebad throttled to 6 % - and it will still lose the race,
+      because by the time the slab is cold the sun has moved on.
+      Implication, and it is a design one rather than a tuning one: this load
+      can only be met by ANTICIPATION, i.e. pre-cooling the slab before the
+      sun arrives. That is the concrete case for the layer-2 planner
+      (docs/DESIGN.md, WP-H) and it needs a solar forecast, not a faster
+      loop. No amount of PID tuning in layer 1 fixes it.
+      Worth checking when the planner is built: whether overnight setpoints
+      should be biased DOWN on rooms with big glazing ahead of a sunny
+      morning, and how that trades against the condensation floor, which was
+      already binding all night (supply minima 14.7-15.2 against a limit of
+      14.3-14.7).
+
 - [ ] **Per-channel step test when fitting each actuator** - confirms fitment
       AND mapping in one move, and costs one command step. Discovered by
       accident 2026-07-27 while checking whether hk11 had an actuator.
