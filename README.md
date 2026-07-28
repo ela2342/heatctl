@@ -34,7 +34,7 @@ bridge is replaceable and the direct path stays as insurance.
 | WAGO coupler: registers, wiring, watchdog | `docs/HARDWARE.md` | Device truth. |
 | Heat pump: registers, limits, access rules | `docs/HEATPUMP.md` | Device truth. Read before touching heat-pump code. |
 | What Home Assistant does, and **what was turned off** | `docs/HA_INTEGRATION.md` | Includes operational state — disabled automations, commented-out config — none of which is discoverable from the running system. |
-| Site addresses, credentials, vendor manuals | `docs/*.local.md` | Git-excluded; this repository is public. |
+| Site addresses, credentials, vendor manuals, **building physics** | `docs/*.local.md` | Git-excluded; this repository is public. Envelope areas, U-values, thermal masses, façade azimuths and per-room geometry live in `docs/BUILDING.local.md` — they identify the site, so they never move into a tracked file. |
 | How one control decision is made | the module docstring in `heatctl/<module>.py` | Rationale lives next to the code it explains. |
 | Whether a rule still holds | `tests/` | Every safety rule has a test; each regression test carries its defect's story. |
 

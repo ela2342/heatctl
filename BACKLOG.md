@@ -125,6 +125,36 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
       `Safety.apply`, which sees the dew point rise and forces closed, but
       only after the fact. Worth a look when the contact sensors go in.
 
+- [ ] **Phase-2 model priors are now extracted; two gaps remain.** The EnEV
+      Waermeschutznachweis and the Bauantrag drawings have been mined into
+      `docs/BUILDING.local.md` (git-excluded - the data identifies the site):
+      envelope areas and U-values, loss coefficients, per-element thermal
+      mass, room areas, the full window inventory, and the design flow/return.
+      Three as-built corrections from the owner are folded in, and they all
+      point the same way - **U-values survive, thermal masses do not**, so the
+      certificate's annual-energy figures are usable and its dynamics are not.
+      The floor slab alone is 36 % heavier than the certificate says.
+      STILL MISSING, both needed before the per-room model means anything:
+      (a) **Internal partition area.** 9 cm solid wood, so 1.05 W/(m2K)
+          room-to-room and 20 Wh/(m2K) of shared mass, but the AREA is in no
+          document we hold. Plausibly 4,000-6,000 Wh/K, i.e. comparable to all
+          external walls and roof combined. Measure it off the floor plans.
+      (b) **Pipe depth within the 10 cm screed.** Sets the split between mass
+          above the pipes (couples to the room, fast) and below (dead weight).
+          The 3-state RC model in docs/DESIGN.md 6.1 needs it.
+
+- [ ] **Reconfigure the HA solar forecast per facade, with the MEASURED
+      azimuths.** The building is rotated 16.3 degrees from cardinal (measured
+      off the compass rose and building grid on the Bauantrag ground-floor
+      plan, see `docs/BUILDING.local.md`). Configuring a forecast with the
+      drawings' nominal N/E/S/W labels puts every plane 16 degrees out, which
+      is 60-70 minutes of error on when each facade's gain peaks - and peak
+      timing is the whole point, since the planner has to pre-cool BEFORE the
+      gain arrives. Give the service the true azimuths and 90 degree tilt, one
+      plane per facade, scaled by the effective collector areas already
+      tabulated. Then the east plane becomes a direct predictor for the room
+      that actually has the problem.
+
 - [ ] **Watch the 2026-07-30 heat event (36 degC, forecast dew point 9) - it
       is the first time the plant runs AT the condensation constraint all
       day.** Predicted chain: safety limit = 9 + 2 = **11 degC** supply, and
