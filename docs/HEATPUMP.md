@@ -10,6 +10,80 @@ summarised here; prose is not reproduced.
 
 Read the local capture before acting on anything ambiguous below.
 
+## The unit itself — Blaupunkt BLP08P1V1MR32
+
+`PW58321` names the **controller / Modbus protocol**; the machine is a
+**Blaupunkt BLP08P1V1MR32** inverter monoblock (owner, 2026-07-28, datasheet
+`BLP08P1V1MR32.pdf`). Rebranded OEM hardware, so expect the register map to be
+shared across several badges.
+
+| | |
+|---|---|
+| Type | Monoblock air-to-water, inverter, R32 |
+| Supply | **220–240 V / 50 Hz, single phase** |
+| **Max. power input** | **3.6 kW** |
+| **Max. current** | **16.5 A** |
+| Compressor | Twin Rotary, inverter, ×1 |
+| Fan | ×1, 2500 m³/h, 80 W |
+| Water heat exchanger | Plate type, **Δp 30 kPa**, **G1"** |
+| **Water flow, min / max** | **0.16 / 0.40 l/s** = **0.58 / 1.44 m³/h** |
+| Noise | 53 dB |
+
+### Rated duty points
+
+| Condition | Capacity | COP/EER | Modulation | Input |
+|---|---|---|---|---|
+| Heating 30/35 | 8.4 kW | 4.26 | 1.6 – 8.4 kW | 370 – 2000 W |
+| Heating 40/45 (or /55) | 7.8 kW | 2.99 | 1.5 – 7.8 kW | 490 – 2600 W |
+| **Cooling A35 / W18** | **6.0 kW** | **2.99** | **1.1 – 6.0 kW** | 380 – 2000 W |
+| **Cooling A35 / W7** | **5.5 kW** | **2.09** | **1.0 – 5.5 kW** | 500 – 2600 W |
+
+Heating COP at W35: 1.52 (−25 °C air) · 2.99 (−7) · 3.40 (0) · 4.26 (7) ·
+4.68 (21). At W45 subtract roughly 0.7; at W55 roughly 1.3.
+
+### Three things this settles
+
+**1. The flow range is specified, and it narrows our energy balances.** The unit
+*requires* 0.16–0.40 l/s. With `dc_pump_speed` observed at 90–100 %, we are
+near the top of that: **1.2–1.44 m³/h**. That was previously a guess spanning
+0.8–1.5. See BACKLOG — it tightens the measured building capacity to
+15,700–18,300 Wh/K, which lands squarely on the as-built figures and further
+away from the EnEV certificate's.
+
+**2. It explains the overnight cycling.** Minimum cooling output is
+**1.0–1.1 kW**. The overnight delivery we back-computed was ~0.9 kW average —
+*below the unit's minimum modulation*. So it could not throttle down to match
+the load and cycled on/off instead, which is exactly what the logs show: mean
+compressor frequency ~16 Hz made up of brief bursts to ~89 Hz. **Not a control
+fault and not something heatctl can fix** — the load was simply below the
+machine's floor. Worth remembering before anyone tries to tune the cycling out.
+
+**3. The heat pump is not the constraint on a design cooling day.** At ~11 °C
+supply it interpolates to roughly **5.7 kW** cooling. The floor can only
+dissipate an estimated 3.4–4.8 kW before surface temperature or the dew point
+binds. So capacity is limited by the *emitter*, not the source — which is why
+supply headroom (D-024) matters more than anything we could do to the unit.
+
+### Still unresolved: what `0x8025` actually measures
+
+`hp_power_estimate` computes `compressor_current × 230 V`. The datasheet makes
+230 V at least the right voltage class (the unit is single-phase 220–240), but
+does not say whether `0x8025` is mains current, inverter output current, or DC
+link current. The device separately reports `dc_bus_voltage` ≈ 374 V.
+
+**There is now a free, decisive test.** Mains current maxes at **16.5 A**. Watch
+the peak value of `0x8025` when the unit runs flat out — on the 2026-07-30 heat
+event, say:
+
+* peak approaching **16 A** → it is mains current, and `× 230 V` is roughly
+  right (bar power factor)
+* peak around **9–10 A** → inverter output current
+* peak around **5–7 A** → DC link current, and the correct multiplier is
+  `dc_bus_voltage`, making our present estimate low by ~60 %
+
+Observed 6.5 A at 89 Hz is consistent with either mains or DC link, so the
+question is open until we see it at full output. Do not derive COP until then.
+
 ## Transport
 RS485, 9600 8N1, **unit address fixed at 1**, standard Modbus RTU. Reached over
 the LAN through a Waveshare RS485→TCP gateway (address in the local site

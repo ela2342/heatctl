@@ -143,14 +143,18 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
           rise point; axial dispersion and slab exchange smear the front, so
           expect ~20 %. **`rl_gate.py`'s FLUSH already performs exactly this
           manoeuvre** - the data may be in the logs already.
-      (b) **RESISTIVE CALORIMETRY - the accurate one.** A resistance heater is
-          100 % efficient by construction, so `m_dot = P_el / (cp * dT)` with
-          no COP and no geometry at all. The Baubeschreibung lists an 8 kW
-          electric auxiliary heater; if it sits on a metered circuit (there
-          are smart plugs in the HWR) this is close to exact. Heating mode
-          only.
-      (c) **BUFFER AS CALORIMETER.** 995 L known, so 4.16 kWh/K. Isolate it,
-          drive it, measure dT/dt. Needs a buffer sensor and isolation.
+      (b) ~~RESISTIVE CALORIMETRY~~ and (c) ~~BUFFER AS CALORIMETER~~ are both
+          **BLOCKED for now** (owner, 2026-07-28): the tank is not online yet
+          and the 8 kW element sits *in the tank*. Revisit both when it is
+          commissioned - they are the accurate routes, and the element is a
+          100 %-efficient reference needing no geometry at all.
+      **Datasheet narrows it meanwhile.** The BLP08P1V1MR32 specifies water
+      flow **min 0.16 / max 0.40 l/s** (0.58-1.44 m3/h). With `dc_pump_speed`
+      observed at 90-100 % we are near the top: **1.2-1.44 m3/h**. Re-running
+      the overnight balance on that narrower range gives a building capacity of
+      **15,700-18,300 Wh/K**, tightening the earlier 13,700-18,600 and landing
+      it on the as-built + partition figure. So the flow gap is now a
+      refinement rather than a blocker - but see the dT item, which is not.
       **Check the manifold for built-in Durchflussmesser FIRST.** Floor-heating
       manifolds commonly carry per-circuit float topmeters (0.5-5 L/min) for
       hydraulic balancing. If ours has them, total flow is readable by eye for
@@ -167,15 +171,42 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
       what COP monitoring needs regardless. A bare flow meter fixes one of the
       three.
 
+- [ ] **Heat-meter placement decides WHICH question it answers** (owner raised
+      the stove problem, 2026-07-28). A Waermemengenzaehler sees only the
+      HYDRONIC share, so once the water-jacketed wood stove is online its
+      direct radiant and convective output to the room is invisible to the
+      meter. That is real, but it is not an argument against the meter - it is
+      an argument about placement, and for the estimator:
+      * **On the heat pump's own circuit** it measures the heat pump cleanly
+        whatever the stove does. This is the placement for COP and for flow
+        calibration - the two things we actually lack.
+      * **On the manifold feed** it measures energy into the slab, correctly
+        summing stove and heat pump water contributions, but cannot separate
+        them.
+      * The stove's DIRECT share stays unmeasured either way, which is exactly
+        how docs/DESIGN.md 6.4 already models it - a pure disturbance. With a
+        metered hydronic side and a validated building model, that direct share
+        becomes the *residual*, i.e. observable rather than unknown. The stove
+        makes the estimator more valuable, not the meter less.
+      Recommend: heat pump circuit first, since it closes flow, energy, dT and
+      COP together, and the stove is not yet online to confound anything.
+
 - [ ] **`hp_power_estimate` is not usable for COP, and can be improved cheaply.**
       It is `compressor_current x 230 V` (heatctl/main.py), inherited from the
       retired HA template, and its docstring is honest that it is not metered.
       But the device also reports `dc_bus_voltage` (0x8021), reading **374 V**
       while we assume 230 - so the assumed voltage is not even the bus the
-      current is measured on. Establish from docs/HEATPUMP.md what 0x8025
-      actually measures (inverter output vs DC link) before trusting any
-      product of the two, and until then do not derive COP from it. Fans,
-      circulation pump and controls are excluded either way.
+      current is measured on.
+      **A free decisive test now exists**, from the datasheet: mains current
+      maxes at **16.5 A**. Watch the peak of 0x8025 at full output (the
+      2026-07-30 heat event will do it) - near 16 A means mains current and
+      `x 230 V` is roughly right; 9-10 A means inverter output; 5-7 A means DC
+      link, and the correct multiplier is `dc_bus_voltage` (~374 V), making the
+      present estimate low by ~60 %. Observed 6.5 A at 89 Hz fits mains OR DC
+      link, so it is genuinely open. Do not derive COP until it is settled.
+      Fans (80 W), circulation pump and controls are excluded either way; the
+      datasheet's own input range at the relevant duty point is 380-2600 W,
+      which bounds any sanity check.
 
 - [ ] **Phase-2 model priors are now extracted; two gaps remain.** The EnEV
       Waermeschutznachweis and the Bauantrag drawings have been mined into
