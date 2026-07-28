@@ -577,26 +577,131 @@ layer 1 works on raw sensors alone.
 Keep every sub-model linear (or linearized) and low-order; identifiability
 beats fidelity.
 
-### 6.1 Room + slab: 3-state RC model per room
-States: `T_air`, `T_env` (envelope/mass node), `T_slab`.
+### 6.1 Room model — REVISED 2026-07-28 against measured plant + building data
+
+Assumes the planned **per-room air sensors** (Shelly H&T) are in place. Without
+them four of seven rooms have no air measurement at all and the 3-state form is
+not identifiable — see "Observability" below, which is the real constraint on
+model order, more than any physics question.
+
+States per room: `T_air`, `T_env`, `T_slab`.
 
 ```
-C_air  dT_air/dt = UA_ae·(T_env−T_air) + UA_sa·(T_slab−T_air)
-                   + q_int + q_stove_dir(living room)
-C_env  dT_env/dt = UA_ae·(T_air−T_env) + UA_eo·(AT−T_env) + a_sol·I_sol
+C_air  dT_air/dt  = UA_ae·(T_env−T_air) + UA_sa·(T_slab−T_air)
+                    + Σ_n UA_nb,n·(T_air,n − T_air)          ← NEW: neighbours
+                    + ṁ_adv·c·(T_air,n − T_air)              ← NEW: open air paths
+                    + f_sol·q_sol,room                       ← NEW: split, see below
+                    + q_int + q_stove_dir(living room)
+C_env  dT_env/dt  = UA_ae·(T_air−T_env) + UA_eo·(AT−T_env)
 C_slab dT_slab/dt = UA_ws·(T_wm−T_slab) − UA_sa·(T_slab−T_air)
+                    − UA_sg·(T_slab − T_ground)              ← NEW: ground
+                    + (1−f_sol)·q_sol,room                   ← NEW: solar to the floor
 ```
 
-- `T_wm` = mean loop water temp ≈ (VL+RL)/2 while flowing; RL itself is a
-  measurement of the slab heat exchange: `RL ≈ T_slab + (VL−T_slab)·exp(−NTU)`
-  per circuit; valve opening → flow → NTU (nonlinear but slowly varying;
-  treat NTU(opening) as a lookup identified in §7.4).
-- `I_sol`: solar irradiance proxy = own PV production (normalized), plus
-  forecast for prediction; `a_sol` per room (large for the living room).
-- `q_int`: lumped internal gains (people/appliances), small constant +
-  estimated disturbance.
-- `q_stove_dir`: stove direct radiation into the living room — estimated
-  as a disturbance state (§7.2).
+Four corrections to the original formulation, each forced by measurement:
+
+**(a) Rooms are coupled to each other, and it was missing entirely.** Internal
+partitions are 9 cm solid wood: **U ≈ 1.05 W/(m²K)**, roughly **six times** the
+external wall's 0.18. Rooms exchange heat with each other far more readily than
+with outdoors, so omitting this pushes a large real flux into whatever
+disturbance state sits nearest. Add `UA_nb,n = 1.05 × A_shared`.
+
+Separately, **Wohnzimmer and Arbeitszimmer share an open air path** — the OG
+`Luftraum` over the living room. That is advective, not conductive: potentially
+larger than any wall term, and asymmetric because warm air rises. It needs its
+own `ṁ_adv` term, and a buoyancy-driven one is a function of ΔT, so linearise
+around the operating point and let the filter track the coefficient.
+
+**Decoupling is preserved**: neighbour temperature enters as a *measured input*,
+exactly like VL — not as a shared state. §7.1's one-filter-per-room structure
+survives intact, which is the whole reason it was chosen.
+
+**(b) The slab had no ground path.** Add `UA_sg·(T_slab − T_ground)`. With 12 cm
+PU under the screed this is ≈ **29 W/K** over 136.40 m², which against a slab of
+8,691 Wh/K is a **~300 h** time constant — far too slow to matter for control,
+but a persistent seasonal sink that would otherwise be absorbed into a
+disturbance estimate and quietly bias it. `T_ground` is a slow state (or a
+seasonal function): at 0.5–1 m depth it lags air by 1–2 months. **In cooling it
+helps**, which is exactly when we are capacity-constrained.
+
+**(c) Solar had the wrong driver AND the wrong node.**
+
+*Driver.* The original used own-PV production as `I_sol`. Both PV planes face
+south (185°/17°, 180°/25°) while the building is rotated **16.3° off cardinal**,
+so its façades are ESE/SSW/WNW/NNE. Measured 2026-07-28: PV understates the east
+façade by **1.7–4.5×** through the morning and overstates it ~4× in the
+afternoon — wrong in both directions at the worst times, and not fixable with a
+single coefficient. Replace with **one Forecast.Solar plane per façade** at the
+measured azimuths, `declination 90`, `kwp` = that façade's effective collector
+area (API contract in `docs/BUILDING.local.md`). Then
+`q_sol,room = Σ_façade A_eff,room,façade · I_façade`.
+
+**Still missing: the per-ROOM glazing split.** We have it per façade only, and
+it is very unevenly distributed — Wohnzimmer holds ~28 m² of the house's 51 m².
+Read it off the plans; this is the single highest-value remaining geometry item.
+
+*Node.* Shortwave through glazing lands mostly on the **floor**, not on the
+envelope. Putting it all into `T_env` gets the timing wrong, and we have direct
+evidence: on 2026-07-28 the air rose 3.5 K in 44 minutes while that room's slab
+circuits went *down*. A `T_env`-only injection predicts a far slower air
+response than observed. Hence the `f_sol` split — a fast convective/radiant
+fraction to `T_air`, the remainder charging `T_slab`. `f_sol` is a per-room
+parameter for the filter to identify; expect it small (0.2–0.4).
+
+**(d) Not every room has a slab.** Arbeitszimmer is served by a **fan convector**
+(4.2 kW cooling / 4.3 kW heating), and is upstairs — outside the 136.40 m²
+ground slab entirely. It is a **2-state room**: drop `T_slab`, and its emitter
+term is a fast `Q_coil(valve, fan)` rather than `UA_ws·(T_wm−T_slab)`.
+A fan coil also *dehumidifies* when its surface is below dew point, so for that
+room alone the model has a latent channel the slab rooms do not.
+
+### 6.1.1 Observability — the binding constraint
+
+| | |
+|---|---|
+| States, target | 6 slab rooms × 3 + 1 coil room × 2 = **20**, plus disturbances |
+| Air measurements | 3 today → **7 assumed** after Shelly H&T |
+| Circuit RL | 10, **at the manifold**, valid only while flowing (D-009) |
+| System | VL, RL total |
+
+With per-room air sensors the 3-state form is identifiable. **Without them it is
+not**, and the four unsensored rooms should collapse to 1–2 states rather than
+run three states off one intermittent, position-biased measurement.
+
+**The deepest dependency is flow.** `T_wm` and `NTU(opening)` both need it, and
+that pair carries nearly all the slab information. Until flow is measured the
+slab estimate rests on an assumed pump curve — see BACKLOG. This is why the flow
+meter is a model prerequisite, not an accounting nicety.
+
+### 6.1.2 Parameters now known from the building survey
+
+From `docs/BUILDING.local.md` (EnEV certificate + Bauantrag drawings, with the
+owner's as-built corrections). **U-values survived the corrections; thermal
+masses did not** — so the certificate is usable for the R network and must not
+be trusted for the C network.
+
+| Parameter | Value | Confidence |
+|---|---|---|
+| `C_slab`, whole floor | **8,691 Wh/K** (63.7 Wh/(m²K) × 136.40 m²) | good — from as-built layers |
+| `UA_sg` (slab → ground) | ≈ 29 W/K | good |
+| `UA_eo` total (fabric + bridges) | 148.83 W/K | fair — 18 % is a Bbl 2 default |
+| Ventilation | 118.40 W/K at n = 0.7 h⁻¹ | **poor — assumed, never measured** |
+| Partition `U` | 1.05 W/(m²K) | good |
+| Partition capacity | 20.0 Wh/(m²K) | good |
+| Internal partition run, EG | **≈ 42 m → ~100 m² → ~2,000 Wh/K** | **weak, see note** |
+| Whole-building C | ~15,300 Wh/K predicted vs **15,700–18,300 measured** | consistent |
+
+**Note on the partition area.** Vector extraction from the Bauantrag EG plan
+finds 8 cm face pairs totalling 105.6 m of run, but room perimeters imply only
+~42 m — the extractor is pairing non-wall lines 8 cm apart (door leaves,
+dimension ticks). The 42 m figure above is the geometric estimate
+(Σ 4.15·√A − external perimeter, halved) and carries **±20 %**. A manual
+take-off would settle it; per-pair `A_shared` for the coupling terms needs one
+anyway.
+
+Per-room floor areas for distributing `C_slab` and `q_int`: Wohnen/Essen 42.11,
+Kind 1 16.33, Kind 2 15.61, Schlafen 11.08, Bad 8.94, Diele 9.33, HWR 8.98,
+WC/Du 3.43 m² (EG, on the slab); Arbeit/Gäste 31.20 m² (OG, no slab).
 
 ### 6.2 Buffer: 5-node stratified tank
 One state per sensor zone `T_i` (i=1 top … 5 bottom), volumes `V_i` from
@@ -618,7 +723,15 @@ functions of the state — the planner's main quantities.
 ### 6.3 Heat pump: static map + telemetry
 No dynamic model needed (its own controller handles dynamics). Model:
 - `P_el ≈ g(f_comp, U_bus, I_comp)` from Modbus telemetry (0x801E, 0x8021,
-  0x8025) — calibrate g once against an external meter if available.
+  0x8025). **The unit is a Blaupunkt BLP08P1V1MR32** (docs/HEATPUMP.md):
+  single-phase 220–240 V, max 3.6 kW / 16.5 A, cooling 6.0 kW EER 2.99 at
+  A35/W18 and 5.5 kW EER 2.09 at A35/W7, modulating down to ~1.0 kW.
+  **What 0x8025 measures is still unresolved** — mains, inverter output, or DC
+  link — and the present `× 230 V` estimate is not usable for COP until it is.
+  Calibrate against the **utility Shelly**: regress its power step against the
+  0x8025 step on every compressor start/stop/frequency change. Slope ~230 W/A
+  means mains; ~374 W/A means DC link. The intercept also recovers the fan
+  (80 W), pump and controls the estimate currently omits.
 - `Q_th = ṁ·c·(T_leaving − T_return)` from 0x8012/0x800E + pump speed.
 - `COP(AT, T_leaving)` map: start from datasheet, refine by regression on
   logged (P_el, Q_th) pairs. The planner uses COP to price HP heat against
@@ -664,9 +777,9 @@ Practical choices:
 
 | Parameter | Initial value from drawings | Dedicated experiment | Online refinement |
 |---|---|---|---|
-| Room `UA_eo` (loss) | U-values × areas from building drawings | Night decay: heating off, fit exponential of T_air (gives UA/C pairs) | regression on winter logs |
+| Room `UA_eo` (loss) | **available now**: per-element U×A in docs/BUILDING.local.md | Night decay: heating off, fit exponential of T_air (gives UA/C pairs) | regression on winter logs |
 | `C_air`, `C_env` | air volume ×1.2 kJ/m³K; interior mass estimate | same decay fit (two time constants) | KF parameter augmentation, one at a time |
-| `C_slab`, `UA_sa` | screed volume × ~2.0 MJ/m³K; ~6–11 W/m²K floor emission × area | step test: full-open heat pulse 2–4 h, observe T_air/RL trajectories | slope of RL vs room curves (m per room) |
+| `C_slab`, `UA_sa` | **available now**: 8,691 Wh/K total, split by room floor area; ~6–11 W/m²K emission | step test: full-open heat pulse 2–4 h, observe T_air/RL trajectories | slope of RL vs room curves (m per room) |
 | `UA_ws`, NTU(opening) | pipe length & spacing from floor plan | per-circuit: sweep opening at constant VL, record steady RL | slow drift tracking |
 | `a_sol` | window area × g-value × orientation factor | clear-day, heating-off morning: regress T_air rise vs PV proxy | seasonal regression |
 | Buffer `V_i`, `UA_loss` | tank drawing, insulation spec | standby test: 24 h no charge/discharge, fit losses + `k_mix` | continuous |

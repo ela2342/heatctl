@@ -288,6 +288,23 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
       weather compensation, degree-day or COP-vs-ambient work at
       `sensor.fineoffset_wh65b_210_t`. See docs/HEATPUMP.md.
 
+- [ ] **Two geometry take-offs the model needs, both from the Bauantrag plans.**
+      docs/DESIGN.md 6.1 was rewritten 2026-07-28 against the building survey;
+      these are what it still lacks.
+      (a) **Per-ROOM glazing split.** We have window areas and true azimuths per
+          FACADE only, and the distribution is wildly uneven - Wohnzimmer holds
+          roughly 28 m2 of the house's 51 m2. Without the split, per-room solar
+          gain `q_sol,room` cannot be computed at all, and that is the dominant
+          summer disturbance. **Highest-value remaining geometry item.**
+      (b) **Shared wall area per room PAIR**, for the new `UA_nb` coupling
+          terms. Note the automated attempt FAILED and should not be repeated
+          naively: extracting 8 cm face pairs from the EG plan gives 105.6 m of
+          run, but room perimeters imply only ~42 m - it pairs door leaves and
+          dimension ticks. Do it by hand off the plan. The total is currently
+          a +/-20 % geometric estimate (~42 m run, ~100 m2, ~2,000 Wh/K), which
+          happens to close the overnight mass balance (15,300 predicted vs
+          15,700-18,300 measured) but is not good enough for per-pair coupling.
+
 - [!] **Measure the hydronic flow rate - it now gates every energy balance.**
       Highest-value missing instrument, promoted 2026-07-28 after the first
       model validation. The overnight mass estimate came out at 13,700-18,600
