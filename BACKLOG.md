@@ -780,6 +780,40 @@ controllers (Gefran, Eurotherm, Carlo Gavazzi, Celduc).
       (e) A free-decay window may exist after 2026-02-21 with control stopped.
           Check what the plant actually did between then and heatctl.
 
+- [!] **Solar gain is uncredited in the H estimate, and it is big enough to
+      matter.** Raised by the owner 2026-07-29; quantified below.
+      Over the analysis window (Oct 5 - Feb 21) the EnEV monthly figures give
+      **1,775 kWh of solar gain = 532 W continuous = 23 % of everything the
+      heat pump delivered.** And the certificate's *Ausnutzungsgrad* is
+      **1.000 in Dec/Jan** - in deep winter every kilowatt-hour of it is usable
+      heat, none is wasted.
+      **The analysis handled direct solar correctly** by restricting to dark
+      hours (18:00-07:00). **But that does not remove it - it delays it.** A
+      sunny day charges an 8,691 Wh/K slab which then discharges through the
+      night, so the following dark hours need less heat pump input, and the
+      balance credits that to nothing. The bias understates H:
+
+      | fraction of daytime gain persisting into dark hours | H understated by |
+      |---|---|
+      | 20 % | 6 W/K |
+      | 35 % | 10 W/K |
+      | 50 % | 15 W/K |
+      | 70 % | 21 W/K |
+
+      Against the 51 W/K gap between calculated 267 and measured 216, solar
+      plausibly explains **20-40 % of it** - material, but not the whole story.
+      **THE FIX, and it is a real improvement rather than a patch:** we now
+      have a far better solar model than EnEV's monthly means - per-facade
+      Forecast.Solar planes at the MEASURED azimuths, with per-room effective
+      collector areas (docs/BUILDING.local.md). Re-run the H estimate with an
+      **hourly solar term over ALL hours** instead of excluding daylight. That
+      removes the bias and gains ~4x the data at the same time.
+      **Caveat on the 1,775 kWh itself:** EnEV uses a standard reference
+      climate, not the actual weather of that window, so it could be off by
+      ±30 % either way. The Fine Offset station logged **lux** for
+      2025-10-05 to 2025-11-20 (~46 of the 139 days), which converts to
+      approximate irradiance and would give a real check over that third.
+
 - [ ] **Separate the DHW load properly, and reconcile the energy totals.**
       Two follow-ups from the eta decomposition (D-028).
       (a) **Classify the >8 kW episodes properly** rather than by a single
