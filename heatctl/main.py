@@ -550,11 +550,27 @@ class Controller:
             await self.plane.publish("hp/spread", f"{spread:.1f}")
         amps = self.hp.status.get(0x8025)
         if amps is not None:
-            # Rough electrical power. Compressor current x mains voltage - the
-            # same estimate the retired HA template made, kept because it is
-            # the only power figure available and energy-per-degree-day needs
-            # one. It ignores fans and pump and is NOT a metered value.
-            await self.plane.publish("hp/power_estimate", f"{amps * 0.1 * 230:.0f}")
+            # CALIBRATED against the utility meter over 129 days of winter data
+            # (D-027). 0x8025 is AC MAINS current - proven, not assumed: the
+            # grid meter's phase-A RMS current tracks it 0.92 A per reported A,
+            # and the DC-link hypothesis is dead because V_bus x I would give
+            # 3366 W where 2011 W was measured.
+            #
+            #   P_el = 198 * I + 200 W        R2 = 0.994 over 0-12 A
+            #
+            # The 200 W is fan + circulation pump + electronics and switches
+            # with UNIT POWER, not with the compressor - event-based fits
+            # return an intercept near zero precisely because those are already
+            # running when the compressor starts. So it is added whenever the
+            # unit is on, which is when this code runs.
+            #
+            # The old estimate was `I * 230`: 16 % too steep on slope, but
+            # omitting the overhead partly cancelled it. Net error was only
+            # +2..4 % at the 9-10 A where the machine lives, and 14 % LOW at
+            # 3 A - a SHAPE error, worst at part load, which is exactly where a
+            # future optimizer needs it to be right.
+            i_a = hpm.decode(hpm.by_name("compressor_current"), amps)
+            await self.plane.publish("hp/power_estimate", f"{198.0 * i_a + 200.0:.0f}")
         if self._peak_demand is not None:
             # PRE-normalisation peak. The commanded maximum is pinned at 100 %
             # by construction, so only this says whether there is enough

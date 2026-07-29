@@ -315,3 +315,45 @@ them without HA in the path. The existing Zigbee smart plugs stay where they
 are: observation. **Related:** [[D-003]] fail-open on lost knowledge, [[D-013]]
 single-writer on shared buses.
 
+## D-027 · `0x8025` is AC mains current — calibrated, not assumed
+Settled 2026-07-29 by regression against the utility meter over **129 days** of
+winter data (2025-10-05 → 2026-02-21), not by the single hot-afternoon test
+previously planned. **Result: `P_el = 198·I + 200 W`, R² = 0.994 over 0–12 A.**
+**Three independent proofs it is mains current, not DC link or inverter output:**
+the Shelly's phase-A RMS current tracks the register **0.92 A per reported A**
+(a DC-link current has no reason to); `V_bus × I` would give **3366 W** at 9 A
+where **2011 W** was measured; and 198 / 220.9 V measured mains = **PF 0.90**,
+normal for a single-phase inverter drive, consistent with the nameplate's
+3600 W / 16.5 A = 218 W/A. **The intercept switches with UNIT POWER, not with
+the compressor** — event-based fits return ≈0 W because fan and pump are
+already running when the compressor starts. So it is applied whenever the unit
+is energised. **Why the old `I × 230` was worse than it looked:** 16 % too
+steep on slope, but omitting the 200 W partly cancelled it — net only +2…4 % at
+the 9–10 A where the machine lives, and **14 % LOW at 3 A**. A *shape* error,
+worst at part load, which is exactly where an optimizer needs it right.
+**Also established:** the heat pump is on **phase A alone** (B and C carry
+literally none of it, R² 0.000 and 0.059), so per-phase beats the 3-phase total
+by 8 points of R².
+
+## D-028 · Winter data confirms the building model at two timescales
+Same analysis. **Flow: 0.345 l/s = 1.24 m³/h** (±10 % systematic, from the COP
+map), consistent with the manufacturer's 0.16–0.40 l/s band at its 80th
+percentile — and with our datasheet-plus-pump-speed estimate of 1.2–1.44 m³/h.
+**H = 245 W/K** (plausible 215–275) against our calculated **267 W/K**:
+consistent, slightly lower. **C is scale-dependent, and that is the finding**,
+not a defect — the 1R1C fit's capacity rises monotonically with averaging
+window, which is the signature of distributed storage:
+* **3–6 h (dark): 8,900–10,300 Wh/K** vs our calculated **slab alone 8,691**
+* **12 h: 18,256 ± 1,533 Wh/K** vs our summer-night **15,700–18,300**
+Two independent methods, two different seasons, two different timescales,
+agreeing with two independently calculated figures. **The as-built corrections
+(D-022 onward) are now confirmed twice over.** **The two-time-constant fit
+remains unidentifiable** — the longest dark free decay is 11.1 h over 1.2 K, and
+every two-exponential attempt ran to a search boundary with absurd parameters.
+**New dominant uncertainty in H: `η`**, the fraction of household electricity
+becoming room heat. Consumption was 6,491 kWh in 4.6 months ≈ **1,940 W
+continuous** — comparable to the heat pump's own thermal output — and free
+fitting gives η = 0.22 ± 0.19, i.e. nothing. It moves H from 196 (η=0.5) to 246
+(η=1.0). **This now outranks the ventilation-rate question**: n ≈ 0.57 h⁻¹ is
+merely *hinted*, and is within uncertainty, so do not revise it on this evidence.
+
