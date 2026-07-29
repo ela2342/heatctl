@@ -731,15 +731,17 @@ real sensor, bounding a Kalman estimate.
 measurements and carry no such disclaimer — considerably more trustworthy. Note
 `energyConsumption` has **1 kWh resolution and rolls over at 65535**.
 
-### ⚠️ Model-year gate — verify before spending anything
+### Model-year gate — RESOLVED: these are 2024 units
 
 Both Connect-module manuals require **"Modell ab 2022"**. The Kurzanleitung
 shipped with these pumps is **Ed.01/2021-01**. Article 4244375 spans both
 generations, so the article number does not settle it.
 
-**Check on the pumps:** with a module fitted, a `SW Version` entry should appear
-under `Externes Modul` in the menu. Otherwise read the Typenschild date code or
-ask Wilo with the serial numbers. **Do not order two modules before confirming.**
+**Resolved 2026-07-29:** the unit marking `24w11/074 0969 / I` reads as **week
+11 of 2024**, comfortably past the gate. The 2021-dated Kurzanleitung is simply
+old stock documentation and not evidence of the pump's age. Worth one
+confirmation when the first module is fitted — a `SW Version` entry should then
+appear under `Externes Modul`.
 
 ### Module options (Wilo list prices, excl. VAT)
 

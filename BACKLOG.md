@@ -508,15 +508,17 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
       Note the owner reports it **provides hydraulic isolation**, which bears
       directly on the mode-selection valve question below.
 
-- [!] **VERIFY THE PUMP MODEL YEAR BEFORE BUYING ANYTHING.** Wilo Connect
-      modules require **"Modell ab 2022"**; the Kurzanleitung shipped with our
-      pumps is Ed.01/**2021-01**, and article 4244375 spans both generations so
-      the number does not settle it. **This gates the entire telemetry route.**
-      Check: with a module fitted, a `SW Version` entry appears under
-      `Externes Modul`. Otherwise read the Typenschild date code or ask Wilo
-      with the serial numbers. Details in docs/HARDWARE.md.
+- [x] **RESOLVED 2026-07-29: pumps are 2024 models, Connect modules apply.**
+      Wilo gates Connect-module support on "Modell ab 2022". The unit marking
+      **`24w11/074 0969 / I`** reads as **week 11 of 2024** (owner's
+      interpretation, and the format is standard), comfortably past the gate.
+      The shipped Kurzanleitung being dated 2021-01 is just old stock
+      documentation. Worth one confirmation when a module is first fitted: a
+      `SW Version` entry should appear under `Externes Modul`.
 
-- [ ] **Decide the pump integration route** once the model year is known.
+- [ ] **DECIDED: Modbus RTU Connect modules, 2x.** Owner, 2026-07-29 - no
+      pump switching is planned, so telemetry is the whole point and only
+      Modbus provides it. Routes below kept for the record.
       * **Modbus RTU Connect module** (~EUR 234-251 each) - gives `flow`,
         `powerInput`, `energyConsumption`, `speed`, and setpoint write. Both
         pumps share one RS-485 segment; a new Modbus client alongside the
@@ -533,7 +535,9 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
       sanity-bounding. `powerInput`/`energyConsumption` are real electrical
       measurements and are trustworthy (1 kWh resolution, rolls at 65535).
 
-- [ ] **CORRECTION: the 750-517 cannot switch the pumps.** Wilo requires the
+- [x] **MOOT - no pump switching planned** (owner, 2026-07-29). Kept because
+      the constraint still applies to anyone who later adds a hard-off relay.
+      **The 750-517 cannot switch the pumps.** Wilo requires the
       switching relay to make **>=5 A inrush**; the 750-517 is a 2 A part. It
       remains fine for the Afriso ARM 343 (tens of mA) - the earlier note in
       HARDWARE.md said 750-517 was adequate without distinguishing the loads.
