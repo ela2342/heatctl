@@ -18,7 +18,8 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
 
 | # | Item | Part / spec | Qty | € gross | Supplier |
 |---|---|---|---|---|---|
-| 1 | Heat meter | **MULTICAL 403 W/K, qp 1.5, DN15, M-Bus** | 1 | 289 | energie-zaehler.com |
+| 1 | Heat meter | **MULTICAL 403 W/K, qp 1.5, DN15, supply `7` (230 VAC)** | 1 | ~289 | energie-zaehler.com |
+| 1b | Comms module | **Kamstrup Modbus RTU `HC-003-67`** (replaces the M-Bus master) | 1 | ~200 | Kamstrup distributor |
 | 2 | ~~M-Bus master~~ | ~~solvimus MBUS-GE20M~~ **WITHDRAWN — see below** | — | ~~474~~ | — |
 | 3 | Pump modules | **Wilo Connect RS485 `4268524`** | 2 | 597 | SHK wholesaler (list) |
 | 4 | PT1000 probes | **2-wire**, Ø6 mm, 2 m silicone, class B | 10 | 130 | heizlando.de |
@@ -80,6 +81,68 @@ time.
 **Recommendation:** buy the €30 USB M-Bus master now so the heat meter is not
 gated on the PLC200, and watch kleinanzeigen for a 753-649 under ~€150 as the
 permanent home once CODESYS is running. Do not buy the solvimus.
+
+### REVISED 2026-07-29 (owner: mains is available at the meter) — go Modbus RTU
+
+Mains at the meter position removes the only real objection, and the deciding
+argument then is **not cost**:
+
+> **heatctl already depends on pymodbus.** Modbus RTU over serial is the same
+> library, the same idioms and the same failure handling as the existing
+> `backends/modbus_direct.py`. Every M-Bus route instead means either a new
+> Python M-Bus implementation to maintain for thirty years, or CODESYS work on
+> the PLC200 plus a hard dependency on it. For a project whose stated premise
+> is boring technology and a minimal pinned dependency set, adding a second
+> metering protocol to read one meter is the expensive choice even when the
+> hardware is cheaper.
+
+**Decision: MULTICAL 403 with 230 VAC supply + Kamstrup Modbus RTU module,
+on the same RS-485 run as the two Wilo Connect modules.**
+
+Dropped entirely: solvimus MBUS-GE20M (€474), WAGO 753-649, USB M-Bus master.
+Added: Modbus module ~€200. The Delock 62501 (3 kV isolated, DIN) already on
+the list is the master, and it now carries three devices instead of two.
+
+**Ordering specifics, confirmed from the type-code table:**
+
+| Field | Value | Note |
+|---|---|---|
+| Supply | **digit `7`** | 230 VAC. (`8` = 24 VAC, `1`/`2` = battery, `0` = none) |
+| Modbus module | **`HC-003-67`**, ordered separately | The type-code Modules field lists only M-Bus (`20`/`21`) and wireless M-Bus (`30`) — **there is no Modbus digit**. The module is a plug-and-play accessory, auto-detected by the meter. |
+| Meter type | **`6`** (non-MID) | Unchanged and still binding: θhc heat/cool changeover is "nur möglich mit Zählertyp 6". |
+| Size | qp 1.5, DN15 | Unchanged. |
+
+Datasheet also confirms the 403 is explicitly a "heat meter, cooling meter or
+**combined heat/cooling meter**" on the ultrasonic principle — the
+bidirectional capability the plant needs.
+
+**Consequences to design around:**
+
+1. **One RS-485 run is now a single failure domain for both pumps and the heat
+   meter.** Acceptable, and worth stating explicitly rather than discovering:
+   this is layer-2 and telemetry data. The safety path stays on the WAGO node
+   over Ethernet and is unaffected by anything on this bus.
+2. **Daisy-chain, not star**, terminated at both ends. All three devices being
+   in the plant room makes this easy — do not be tempted into a star because
+   the cable runs are short.
+3. **Baud rate and parity must agree across meter and pumps.** Kamstrup does
+   300–115200 and addresses 1–247, with the **default address equal to the
+   last three digits of the meter's customer number** — set it deliberately
+   rather than inheriting that.
+4. **Registers appear at two addresses**, as IEEE float and as 32-bit signed
+   integer, 32-bit values spanning two registers. Pick one convention, write
+   it into `docs/HARDWARE.md`, and do not mix them.
+5. Battery and mains supplies are **interchangeable at any time**, so this is
+   not a one-way door if the mains supply is ever inconvenient.
+
+- [ ] **ASK THE DISTRIBUTOR: does mains supply shorten the measuring /
+      integration interval versus battery?** Could not be confirmed from the
+      datasheet — the text extraction was too mangled to trust and the figure
+      was not found. It matters more than it looks: `Q_heat` freshness is the
+      binding input on the layer-2 slab estimate (see `optimizer/params.yaml`,
+      `heat_input`), so a meter that integrates over minutes is worth much
+      less to the filter than one that updates every few seconds. Do not
+      assume mains helps here just because it enables Modbus.
 
 ### Corrections to my own specification
 
