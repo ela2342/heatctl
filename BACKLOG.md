@@ -347,6 +347,55 @@ inlet/outlet straight lengths exist between pump outlet and manifold input.
    the USB 300 on the Linux host where the decode and the timeout logic live
    next to the rest of heatctl.
 
+- [!] **`safety.setpoint_min_c: 15.0` is not a guard.** Owner flagged it
+      2026-07-29. The comment above it says "layer 2 may only set setpoints
+      WITHIN these bounds", which is exactly the scenario where the number has
+      to be tight — and 15 °C is not.
+
+      **In cooling a 15 °C room setpoint does not express a target, it expresses
+      "run forever".** The plant cannot deliver a 15 °C room, so the setpoint is
+      permanently unreachable: valves stay open, the water setpoint walks down
+      to the condensation floor and stays there, and nothing ever signals that
+      the goal was impossible. That is precisely the failure a clamp against a
+      malfunctioning layer 2 exists to prevent.
+
+      Same class of defect as the old `dew_floor_offset_c: 4.0` — a limit that
+      reads like a safety bound and does not bind.
+
+      **This needs per-mode bounds, and the numbers are the owner's call, not
+      mine.** The physics only says the cooling floor must sit at or above what
+      the plant can actually reach (~20 °C on this house); the heating floor is
+      a policy question, because a winter vacation setback may legitimately
+      want 16 while a normal heating minimum would be 18. A single symmetric
+      pair cannot express that, and picking one number at midnight to make
+      tonight work is how the last two bad constants got in.
+      NOTE `safety.frost_protect_c` is separate and unaffected — pipe
+      protection does not depend on this clamp.
+
+- [!] **Room setpoints are NOT an available layer-2 lever while the Controme
+      wall units own them.** Measured 2026-07-29 23:11: published 22.0 to
+      `heatctl/set/setpoint/{gaestebad,wohnzimmer,arbeitszimmer}`, and **49
+      seconds later the HA bridge automation republished 23.5 / 23.0** — it
+      pushes the wall-unit dial value every minute regardless of change. This is
+      already documented in a comment in `setpoint.py` ("the wall-unit bridge
+      republishes the dial value every minute whether or not it moved"); I read
+      it earlier the same evening and failed to connect it.
+
+      Consequence for pre-charging: **the designed interface for aiming below
+      comfort target is unavailable.** Options, in order of preference:
+      1. **Give layer 2 its own offset**, applied by layer 1 on top of whatever
+         the dial says, so the bridge and the optimizer stop fighting over one
+         value. Needs the expiry discussed in DESIGN.md §2.2.
+      2. Disable the bridge automation while pre-charging — works tonight,
+         reversible, but leaves the dial and the plant disagreeing.
+      3. Drive P04 (the water setpoint) directly and accept that the trim will
+         raise it again once the rooms reach target, which is exactly the
+         behaviour pre-charging needs to override.
+      Option 3 is why this cannot be solved by writing a register: the trim
+      correctly backs off when the house is satisfied, and "satisfied" is the
+      wrong criterion the night before a 37 °C day.
+
+
 ### PREDICTED LOAD for 2026-07-30 (the 37 degC day) — computed 2026-07-29
 
 First real use of the layer-2 model: Open-Meteo forecast + per-facade solar +
