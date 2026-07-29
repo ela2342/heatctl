@@ -552,3 +552,46 @@ n = 0.7 h⁻¹ is EnEV's assumption, not a blower-door result.
 **Still not fungible between rooms** for *sensible* cooling — the coil does
 nothing directly for Wohnzimmer. The latent path is the only route by which its
 surplus reaches the rest of the house, which is why it is worth the trouble.
+
+## Mixing valve: Afriso ARM 343, 3-point, 230 V, 120 s
+
+Owner, 2026-07-29. The slab-circuit mixing valve actuator is **fitted**. It is
+**3-point (three-wire)**: two 230 V inputs, one per direction, **120 s** for
+full travel, and **no end switches** — no position feedback of any kind.
+
+Sensor pockets (Tauchhülsen) for the stove and buffer are **already fitted**,
+so that item is closed.
+
+### What 3-point + no feedback forces on the design
+
+**1. Position must be dead-reckoned from run time.** There is nothing to read.
+heatctl would integrate energised time per direction to estimate position.
+
+**2. That collides with the "no state survives a restart" invariant** — a
+dead-reckoned position is exactly such state. **Resolution: re-reference, don't
+remember.** On start, drive hard to one end for >120 s and call that zero. Same
+principle as everywhere else in this codebase: restart == safe state, reached
+by *action* rather than by trusting a stored value. Note the Alpha 5 actuators
+solve the identical problem in firmware (D-022) — this one cannot, so heatctl
+must do it.
+
+**3. Relay wear is a real budget.** Mechanical relays last on the order of 10⁵
+switching operations. A naive per-cycle controller at 1 Hz would consume that
+in about a day. Needs a deadband, a minimum pulse (below which the actuator
+does not move meaningfully anyway), and a minimum rest between pulses — the
+same shape of reasoning as the heat pump's flash-write budget (D-013).
+
+**4. Mutual interlock is mandatory.** Both directions energised at once is a
+short across the actuator. Do it in hardware if the actuator does not already
+interlock internally, and in software regardless.
+
+**5. It is not a fast element.** 120 s full travel sits between the Alpha 5's
+150 s and the fan coil's seconds. Any cascade must treat it as slow.
+
+### Open hardware question
+
+The two relay modules are recorded here only as `2x750-5xx` — **the exact part
+numbers are unconfirmed**, and this now matters: driving the ARM 343 needs
+**230 V-rated** relay contacts with proper separation, and two channels of the
+four. Confirm what is actually fitted before wiring 230 V to it.
+

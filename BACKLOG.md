@@ -423,6 +423,28 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
           returns half the data. Same trap for room temps: winter has eight
           rooms, today three.
 
+- [ ] **Write a 3-point actuator driver for the Afriso ARM 343 mixing valve.**
+      Hardware is fitted (see docs/HARDWARE.md): 230 V, two directions, 120 s
+      full travel, **no end switches, no position feedback at all**.
+      Four requirements, and the second is the interesting one:
+      (a) Dead-reckon position by integrating energised time per direction.
+      (b) **Re-reference on start rather than persisting the estimate.** A
+          dead-reckoned position is precisely the kind of state the design
+          forbids surviving a restart. Drive hard to one end for >120 s and
+          call it zero. The Alpha 5 solves the same problem in firmware
+          (D-022); this actuator cannot, so heatctl owns it.
+      (c) **Relay wear budget.** Mechanical relays give ~10^5 operations; a
+          naive 1 Hz controller would spend that in a day. Needs a deadband, a
+          minimum pulse, and a minimum rest - structurally the same argument
+          as the heat pump's flash-write budget (D-013).
+      (d) Mutual interlock, in hardware if the actuator does not provide it
+          and in software regardless.
+      Also confirm the fitted relay modules: HARDWARE.md records only
+      "2x750-5xx" and driving 230 V needs the right part with proper
+      separation. **Unblocks the mixing circuit**, which in turn unblocks the
+      latent-lever strategy (fan coil below dew point while the slab stays
+      above it) that is currently impossible on H_DIRECT hydraulics.
+
 - [!] **WINTER DATA EXISTS: InfluxDB has 2025-10-03 to 2026-02-21 at full
       instrumentation, and it changes the priority order.** Found 2026-07-29.
       `http://<ha>:8086`, db `homeassistant`, HA's own influxdb credentials,
