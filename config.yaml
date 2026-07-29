@@ -499,7 +499,32 @@ safety:
   # no hidden reserve behind it. The margin covers measurement error and the
   # spread of indoor dew point between rooms. And note condensation inside the
   # slab is INVISIBLE - nothing will prompt anyone to notice it.
-  dew_point_margin_c: 2.0
+  # REDUCED 2.0 -> 1.0 on 2026-07-29 (owner). The 2 K was sized for the HEAT
+  # PUMP's leaving-water register, which is scaled 0.5 and therefore quantised
+  # to 0.5 K. But the guard that actually closes valves reads `vl_total` - a
+  # PT1000 on the manifold via the 750-463, decoded as degC*10, so **0.1 K**.
+  # The margin was covering a coarseness the binding sensor does not have.
+  #
+  # Worth 1 K of supply headroom across all ten circuits, which at a textbook
+  # 7 W/(m^2 K) is roughly 1 kW of extra slab capacity - and it lowers the
+  # setpoint floor by a full step, which is exactly the pre-charge that was
+  # otherwise unreachable the night before a 37 degC day.
+  #
+  # NOTE the trim's breach branch (setpoint.py) still reads the heat pump's
+  # 0.5 K register, so it effectively keeps ~0.5 K less margin than this. That
+  # is acceptable because it is a SOFT action - it raises the water setpoint -
+  # while the hard valve guard runs on the precise sensor.
+  #
+  # ⚠️ THE BINDING UNCERTAINTY IS NOW THE DEW POINT ITSELF, not the
+  # temperature. It is computed from room humidity, and a capacitive RH sensor
+  # at +-2-3 % RH is worth roughly +-0.5-0.9 K of dew point at 24 degC - which
+  # is most of this margin. Two things keep that tolerable: the value used is
+  # the MAXIMUM across every instrumented room, which is conservative by
+  # construction, and the guard reacts to measured supply rather than trusting
+  # a prediction. Do not reduce this further without knowing the humidity
+  # sensors' actual accuracy - condensation inside the slab is invisible, which
+  # is the whole reason this margin exists.
+  dew_point_margin_c: 1.0
   # Hysteresis on the condensation guard, and it applies to REOPENING ONLY -
   # the trip stays instantaneous, because closing is the protective direction
   # (D-023). Sized from measurement, not taste: supply and the dew point are
