@@ -18,7 +18,7 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
 
 | # | Item | Part / spec | Qty | € gross | Supplier |
 |---|---|---|---|---|---|
-| 1 | Heat meter | **MULTICAL 403 W/K, qp 1.5, DN15, supply `7` (230 VAC)** | 1 | ~289 | energie-zaehler.com |
+| 1 | Heat meter | **MULTICAL 403, qp 3.5, DN25 (G1¼B/R1), supply `7`** | 1 | ~289 | energie-zaehler.com |
 | 1b | Comms module | **Kamstrup Modbus RTU `HC-003-67`** (replaces the M-Bus master) | 1 | ~200 | Kamstrup distributor |
 | 2 | ~~M-Bus master~~ | ~~solvimus MBUS-GE20M~~ **WITHDRAWN — see below** | — | ~~474~~ | — |
 | 3 | Pump modules | **Wilo Connect RS485 `4268524`** | 2 | 597 | SHK wholesaler (list) |
@@ -110,7 +110,7 @@ the list is the master, and it now carries three devices instead of two.
 | Supply | **digit `7`** — 230 VAC. **SETTLED 2026-07-29.** | The owner's 24 V is **DC**, and the type code offers only "230 VAC Supply 7" and "24 V**AC** Supply 8" — there is no 24 VDC variant, so digit `8` is out. No cost: the meter sits ~1 m from the panel, whose 230 V is present anyway to feed the 24 V PSU. Connection is **two-wire, no protective earth** per the datasheet — tell the electrician, it is not the usual three-core. |
 | Modbus module | **`HC-003-67`**, ordered separately | The type-code Modules field lists only M-Bus (`20`/`21`) and wireless M-Bus (`30`) — **there is no Modbus digit**. The module is a plug-and-play accessory, auto-detected by the meter. |
 | Meter type | **`6`** (non-MID) | Unchanged and still binding: θhc heat/cool changeover is "nur möglich mit Zählertyp 6". |
-| Size | qp 1.5, DN15 | Unchanged. |
+| Size | **qp 3.5, DN25 (G1¼B / R1)** | **CORRECTED** — see the DN25 correction below. |
 
 Datasheet also confirms the 403 is explicitly a "heat meter, cooling meter or
 **combined heat/cooling meter**" on the ultrasonic principle — the
@@ -160,6 +160,57 @@ bidirectional capability the plant needs.
       less to the filter than one that updates every few seconds. Do not
       assume mains helps here just because it enables Modbus.
 
+### CORRECTION 2026-07-29 — take qp 3.5 / DN25, not qp 1.5 / DN15
+
+Owner: "Certainly DN25? Pump outlet to manifold input is all DN25." Correct,
+and **the earlier DN15 recommendation was wrong for a reason worth recording:
+I optimised a specification that never binds.**
+
+The original argument rejected larger sensors because `qi` (minimum flow)
+rises with `qp` — qp 2.5 giving qi 25 l/h against DN15's 15 l/h was called
+"the wrong trade for an instrument". That is only a trade if the plant ever
+operates near `qi`. **It does not, by two orders of magnitude.** At the heat
+pump's minimum modulation of 1.0–1.1 kW and a 5 K spread, flow is
+≈ **190 l/h**; even at an implausible 10 K spread it is 95 l/h. Against a
+qi of 35 l/h there is no contest. I never checked the number I was protecting.
+
+Flow-sensor options, from the type-code table:
+
+| qp | Connection | Pipe | Length | Δp at our 1.24 m³/h | Code |
+|---|---|---|---|---|---|
+| 1.5 | R¾ | DN15/20 | 130 mm | **≈ 0.17 bar** | A0 |
+| 2.5 | G1B (R¾) | DN20 | 190 mm | ≈ 0.06 bar | B0 |
+| **3.5** | **G1¼B (R1)** | **DN25** | **260 mm** | **≈ 0.03 bar** | **D0** |
+| 6.0 | G1¼B (R1) | DN25 | 260 mm | ≈ 0.01 bar | F0 |
+
+(Δp scales as flow², from a nominal 0.25 bar at qp.)
+
+**Three reasons DN25 wins, in order of weight:**
+
+1. **Pressure drop, and it fights the control strategy directly.** qp 1.5 costs
+   ≈ 0.17 bar at our measured 1.24 m³/h, against ≈ 0.03 bar for qp 3.5 —
+   about **14 kPa saved**, a substantial fraction of the circulator's
+   available head at this flow. This plant exists to *maximise* flow and
+   minimise spread for COP (D-017). Fitting a restriction that eats a quarter
+   of the pump head to gain resolution we cannot use is exactly backwards.
+2. **No reducers.** DN25→DN15→DN25 puts two disturbances immediately either
+   side of an ultrasonic transit-time sensor, which is the one place a flow
+   profile most needs to be undisturbed. Matching the pipework removes the
+   problem rather than managing it.
+3. **Accuracy is not the trade it appears to be.** MID class 2 is
+   ±(2 + 0.02·qp/q) %. At 1.24 m³/h that is **2.06 % for qp 3.5 against
+   2.02 % for qp 1.5** — four hundredths of a percent, swamped by the ±10 %
+   systematic already carried on the flow estimate this meter replaces.
+
+⚠️ **Check the installation length before ordering: 260 mm** for qp 3.5,
+against 130 mm for qp 1.5. That is the real constraint now, not the diameter.
+Confirm the straight run between pump outlet and manifold input takes it,
+*plus* the inlet/outlet straight lengths the sensor needs.
+
+**Revised meter spec:** MULTICAL 403, **qp 3.5, G1¼B (R1) / DN25**, meter type
+`6`, supply digit `7` (230 VAC), sensor pair Pt500 pockets, Modbus module
+`HC-003-67` separately.
+
 ### Corrections to my own specification
 
 1. **`403-T` is a PREFIX, not a suffix.** The type code is
@@ -171,11 +222,9 @@ bidirectional capability the plant needs.
    möglich mit Zählertyp 6"**. Buy the MID version (type 3) and you lose the
    parameter that makes a combined meter behave sensibly in a bidirectional
    plant. Target: **`403-T…6…`**.
-3. **Take qp 1.5 in DN15, not DN20.** qp 1.5 DN20 exists on paper (flow digit
-   70) but **no German shop stocks it** — configure-to-order, quote-only. The
-   other stocked option, qp 2.5 DN20, has **qi 25 l/h against DN15's 15 l/h**,
-   i.e. *worse* low-flow resolution. Wrong trade for an instrument. Adapt the
-   pipework instead.
+3. ~~**Take qp 1.5 in DN15, not DN20.**~~ **WITHDRAWN 2026-07-29** —
+   the pipework is DN25 throughout and the `qi` argument this rested on
+   never binds. See the DN25 correction above.
 4. **PT1000 must be 2-wire.** The **750-463 is 2-wire only** on all four
    channels (the 2-/3-/4-wire part is the 750-461). 3- or 4-wire heads are
    wasted money. On Pt1000 the 2-wire error over 2 m is **~0.08 K** — it would
