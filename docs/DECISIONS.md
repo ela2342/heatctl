@@ -357,3 +357,31 @@ fitting gives η = 0.22 ± 0.19, i.e. nothing. It moves H from 196 (η=0.5) to 2
 (η=1.0). **This now outranks the ventilation-rate question**: n ≈ 0.57 h⁻¹ is
 merely *hinted*, and is within uncertainty, so do not revise it on this evidence.
 
+**PARTLY RESOLVED the same day, from owner knowledge plus the grid signal.**
+η is not one number — it is a *mixture*, and the components are separable:
+
+| load | η | why |
+|---|---|---|
+| **Electric DHW** — currently made with electricity, **10–23 kW spikes** | **≈ 0.1–0.3** | the energy leaves down the drain; only pipe and standby losses stay |
+| Garage / Großküche / Sommerküche (the Hörnchenhaus-Kobel meter) | **0** | **outside the envelope** |
+| Well pump | ≈ 0, and **negligible in winter** — only runs frost-free | outside |
+| Ordinary indoor load | ≈ 0.9 | lights, fridge, electronics — all of it becomes room heat |
+
+**The DHW load is identifiable from the grid signal by magnitude alone**, which
+is what makes this tractable: nothing else in a house draws 10–20 kW. Over the
+window, >8 kW episodes occupy 3.5 % of the time and carry ~1,474 kWh gross;
+subtracting the 2,385 W baseline running underneath them leaves **≈ 1,193 kWh
+of heater proper**, roughly **28 %** of all non-heat-pump consumption.
+
+Blending on that basis gives **η ≈ 0.70 → H ≈ 216 W/K**, and it is
+insensitive: DHW anywhere from 20 % to 35 % of load moves H only 222 → 212 W/K.
+So **the estimate tightens from "unfittable" to ±10 W/K** on this reasoning
+alone, before any sub-metering.
+
+**Caveat, unresolved:** integrating 1-minute mean power over the window gives
+**8,848 kWh** against the analysis's **6,491 kWh** — a 36 % discrepancy, method
+not yet reconciled (power integration vs energy counters, or a differing
+window). The *ratios* above are robust to it; the absolute kWh are not. Settle
+this before quoting any absolute energy figure.
+
+

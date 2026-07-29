@@ -780,6 +780,33 @@ controllers (Gefran, Eurotherm, Carlo Gavazzi, Celduc).
       (e) A free-decay window may exist after 2026-02-21 with control stopped.
           Check what the plant actually did between then and heatctl.
 
+- [ ] **Separate the DHW load properly, and reconcile the energy totals.**
+      Two follow-ups from the eta decomposition (D-028).
+      (a) **Classify the >8 kW episodes properly** rather than by a single
+          threshold. Nothing else in the house draws 10-23 kW, so electric DHW
+          is cleanly identifiable by magnitude - a first pass puts it at
+          ~1,193 kWh, ~28 % of non-heat-pump consumption, which tightens eta
+          to ~0.70 and H to ~216 +/- 10 W/K. Doing it by episode shape and
+          duration rather than a flat threshold would tighten it further, and
+          also yields the household's DHW demand profile - which the planner
+          will need anyway once the tank is connected and DHW moves onto the
+          heat pump.
+      (b) **RECONCILE: integrating 1-minute mean power over the window gives
+          8,848 kWh; the winter analysis reported 6,491 kWh.** A 36 %
+          discrepancy. Candidates: power integration vs energy-counter
+          differencing, a different window, or per-phase vs total. The eta
+          RATIOS are robust to this but every absolute energy figure we have
+          quoted depends on it, including the seasonal COP of 3.35.
+          **Settle it before quoting absolute energy anywhere.**
+
+- [ ] **Sub-meter the dwelling separately from the annexe.** The
+      Sommerkueche/Grosskueche/Garage sit **outside the thermal envelope** and
+      their consumption is inside the winter grid total with no way to remove
+      it. A dedicated meter exists on the Hoernchenhaus/Kobel but only from
+      June 2026. Adding dwelling-only metering converts eta from a reasoned
+      estimate into a measurement, and would then make a blower-door test the
+      dominant remaining question rather than a secondary one.
+
 - [!] **BUY: combined heating/cooling heat meter (Waerme-/Kaeltezaehler).**
       Decided 2026-07-29. Supersedes the "measure the flow rate" item below by
       choosing the instrument; that item's reasoning still applies.
