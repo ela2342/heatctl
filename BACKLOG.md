@@ -211,6 +211,61 @@ Confirm the straight run between pump outlet and manifold input takes it,
 `6`, supply digit `7` (230 VAC), sensor pair Pt500 pockets, Modbus module
 `HC-003-67` separately.
 
+### ACTION: heat meter enquiry — ready to send (written 2026-07-29 evening)
+
+- [ ] **MEASURE FIRST — three numbers, before contacting anyone.** Each one can
+      invalidate the order, and all three are quicker to take than to correct
+      after a 4–5 week lead time.
+
+      1. **Pocket bore diameter and immersion depth**, both pockets. The
+         fitted pockets decide the sensor part, and the stocked configurations
+         ship Ø5.0 mm *direct-immersion* sensors that do not belong in a
+         pocket at all. A sensor that is too short sits in an air gap and
+         reads the pocket rather than the water — slow, plausible, and exactly
+         the corruption that would poison the heat figure the layer-2 slab
+         estimate depends on.
+      2. **Straight run between pump outlet and manifold input**: needs
+         **260 mm** for the qp 3.5 body *plus* the sensor's own inlet and
+         outlet straight lengths. If it does not fit, the fallback is qp 2.5
+         DN20 at 130 mm with reducers — worse, but not fatal.
+      3. **Cable distance from each pocket to the calculator position**, to
+         choose between the 1.5 m and 3.0 m sensor leads.
+
+- [ ] **THEN send this.** energie-zaehler.com, **+49 9854 9799 820**,
+      `info@energie-zaehler.com` — they stock combined heat/cooling 403s, so
+      the configuration is familiar to them and they advertise Fachberatung.
+      Alternates: zaehleronlineshop.de (has the DN25 mains body and sells a
+      Modbus + 230 V combination, so they clearly configure), then
+      stark-elektronik.de.
+
+      > Angebot erbeten: **Kamstrup MULTICAL 403**, Konfiguration:
+      >
+      > - **Wärme-/Kältezähler, Zählertyp 6** (nicht MID — die
+      >   θhc-Umschaltschwelle wird benötigt und ist laut Kamstrup
+      >   "nur möglich mit Zählertyp 6")
+      > - Durchflusssensor **qp 3,5 m³/h, G1¼B (R1) / DN25, Baulänge 260 mm**
+      > - **Netzteil 230 V AC** (Versorgungscode 7), zweiadrig ohne
+      >   Schutzleiter
+      > - **Fühlerpaar für Tauchhülsen** (NICHT Direkteintauch) — Bohrung
+      >   ⌀ ___ mm, Einbaulänge ___ mm; Kabellänge ___ m
+      > - **Modbus-RTU-Modul HC-003-67** (RS-485)
+      >
+      > Bitte Lieferzeit, Tauchhülsen-Kompatibilität und den vollständigen
+      > Typenschlüssel zur Gegenprüfung angeben.
+
+      **Ask for the full type code back** and check it before paying: the
+      three fields that have already gone wrong once each are meter type
+      (`6`), supply (`7`), and the sensor pair (pocket, not direct).
+
+- [ ] **Expect ≈ €600–700 net and 4–5 weeks.** Not the €289 quoted earlier —
+      that was a stocked qp 1.5 DN15 wM-Bus unit, the right meter type in the
+      wrong size with the wrong comms. Budget impact is about +€350 on the
+      shopping list.
+
+- [ ] **Nothing else on the list is gated on this.** The meter improves the
+      layer-2 slab estimate; it does not block the 750-1606 work (2 → 12
+      controllable circuits), which remains the best outcome-per-euro item.
+
 ### ORDERING REALITY CHECK 2026-07-29 — our configuration is not a stocked item
 
 Searched the German vendors. **Nothing on a shelf matches the spec**, and the
