@@ -107,7 +107,7 @@ the list is the master, and it now carries three devices instead of two.
 
 | Field | Value | Note |
 |---|---|---|
-| Supply | **digit `7`** (230 VAC) or **`8`** (24 V**AC**) | ⚠️ **Both mains options are AC. There is no 24 VDC option** — the type code lists only "230 VAC Supply 7" and "24 VAC Supply 8". A control cabinet's 24 V is normally **DC** (the WAGO 750 system runs on 24 VDC), and 24 VDC will NOT power a 24 VAC supply module. Verify AC vs DC with a meter before ordering: if the 24 V is DC, take digit `7` and feed it from the panel's 230 V, which is present anyway to supply the 24 V PSU. |
+| Supply | **digit `7`** — 230 VAC. **SETTLED 2026-07-29.** | The owner's 24 V is **DC**, and the type code offers only "230 VAC Supply 7" and "24 V**AC** Supply 8" — there is no 24 VDC variant, so digit `8` is out. No cost: the meter sits ~1 m from the panel, whose 230 V is present anyway to feed the 24 V PSU. Connection is **two-wire, no protective earth** per the datasheet — tell the electrician, it is not the usual three-core. |
 | Modbus module | **`HC-003-67`**, ordered separately | The type-code Modules field lists only M-Bus (`20`/`21`) and wireless M-Bus (`30`) — **there is no Modbus digit**. The module is a plug-and-play accessory, auto-detected by the meter. |
 | Meter type | **`6`** (non-MID) | Unchanged and still binding: θhc heat/cool changeover is "nur möglich mit Zählertyp 6". |
 | Size | qp 1.5, DN15 | Unchanged. |
