@@ -416,7 +416,27 @@ control:
     # is deliberately sluggish: switching the whole plant is expensive and
     # slow to undo, and only three of seven rooms have an air sensor, so the
     # "house average" is an average of three.
-    auto_mode: true
+    # DISABLED 2026-07-29 (owner). Automatic changeover decided the season from
+    # indoor deviation alone, and that question cannot be answered without a
+    # forecast: a cool house at dawn means "well pre-cooled" in July and "needs
+    # heat" in October, and the deviation is identical.
+    #
+    # Measured failure the same morning: at 05:56, before a day that reached
+    # 31 degC, it flipped the plant cooling -> heating on a house average of
+    # +1.10 K held for exactly one hour and rewrote the heat pump's mode
+    # register. That overnight cooling was ~16 kWh of stored capacity - most of
+    # the pre-charge the next day needed - and heating it away would have cost
+    # an afternoon of fighting an 8 h slab.
+    #
+    # Two fixes were tried and withdrawn, both because they invented a constant
+    # to make one incident come out right: an outdoor-temperature threshold
+    # (outdoor was 10.5 degC at the moment of the flip, colder than autumn
+    # mornings when heating is correct, so no instantaneous value separates the
+    # cases) and a recent-maximum threshold. See BACKLOG.md.
+    #
+    # Re-enable only once layer 2's forecast can gate it. Holding the mode a
+    # human chose is always safe; guessing it from indoor temperature is not.
+    auto_mode: false
     # Flow floor as MEAN opening across all water-carrying circuits, counting
     # unactuated ones as 100 % (they are open pipe). 40 % is the owner's
     # measured figure - below it the system runs into trouble and eventually
