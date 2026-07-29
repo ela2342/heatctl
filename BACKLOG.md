@@ -446,6 +446,51 @@ is at or below minimum modulation, which is exactly the regime where the unit
 cycles regardless. A quiet night proves nothing either way.
 
 
+#### F10 = 2 RESULT (2026-07-29 21:17–21:22) — half the hypothesis confirmed
+
+Forced a test by writing the cooling setpoint 20 → 19 at 21:16:56, because the
+compressor had been idle for 50 minutes with return water 1.6 K **above** its
+setpoint and the house 1.17 K too warm.
+
+**Finding 1 — the setpoint was what held the machine off.** The compressor
+started **22 seconds** after the write. So the unit has a restart differential
+it was not meeting at 21.6 vs 20.0, and the plant can sit idle with real demand
+simply because the setpoint is too close to the return water. Worth knowing
+independently of F10: **"heat pump idle" does not mean "no demand"**.
+
+**Finding 2 — F10 = 2 works, on the pump.** The pump held **100 % throughout**,
+against the 90→80→70→60→50 % throttling seen on both baseline cycles. The unit
+no longer trades flow for spread. That is a real win for distribution (D-017)
+even though it is not the win that was being chased.
+
+**Finding 3 — and it does NOT cap the spread.** Spread still reached
+**4.7–4.9 K** against 5.7–5.8 baseline: about 1 K, not the ~3.5 K hoped for.
+Because with the pump already at maximum, ΔT = Q/(ṁ·c) and ṁ is pinned — so the
+spread is set by **compressor output alone**, and the compressor ramped to
+**89 Hz**.
+
+Confirmed by the guard firing on cue: at 21:21:59 leaving water 16.0 against a
+16.4 limit, setpoint jumped 19 → 20. The new constraint memory recorded
+`blocked ≤ 19 @ 16.4` and will not re-attempt 19 until the limit falls — its
+first live exercise, behaving correctly.
+
+**Conclusion: the binding lever is compressor frequency, not the pump.**
+`powerful_mode` (`0x0001` bit 4, currently **ON**) is promoted from speculation
+to the evidenced hypothesis: the unit ramps to 85–89 Hz on every single cycle,
+and at maximum flow that frequency *is* the spread. F10 has removed the pump
+from the equation, so a `powerful_mode` test is now cleanly attributable
+against this as the new baseline.
+
+⚠️ **Expect a real trade.** Lower frequency means less capacity per unit time.
+That is likely net positive while the plant is condensation-limited rather than
+capacity-limited — which is what today's data says — but it is a genuine
+trade-off and not a free win. Test it on a day with real load, and watch house
+deviation, not just spread.
+
+**Keep F10 = 2 regardless.** Holding flow at 100 % is right for this plant
+independently of what happens to the spread.
+
+
 - [ ] **Set F10 = 2 and observe for a day**, comparing: peak spread, leaving
       water against the condensation limit, number of setpoint breaches, and
       compressor cycle count. If breaches fall to near zero the constraint
