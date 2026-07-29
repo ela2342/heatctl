@@ -347,6 +347,75 @@ inlet/outlet straight lengths exist between pump outlet and manifold input.
    the USB 300 on the Linux host where the decode and the timeout logic live
    next to the rest of heatctl.
 
+### F10 (`0x010B`) IS THE LEVER — the unit is holding a 5 K spread on purpose
+
+Owner's question, 2026-07-29: "Can we adjust the target spread? I'd rather have
+a 2 K spread at low compressor setting than cycling." **Yes — and the measured
+behaviour says it matters more than expected.**
+
+`0x010B` = F10 DC pump inlet/outlet ΔT setting, range **2–30, currently 5**,
+writable. It modulates the **circulation pump** to hold that spread.
+
+**It is actively throttling flow to build spread.** Measured 19:43–19:52:
+
+| time | pump | compressor | spread |
+|---|---|---|---|
+| 19:43 | 90 % | →85 Hz | — |
+| 19:44 | 80 % | 85 Hz | **5.7–5.8 K** |
+| 19:49 | 70 % | 79→40 Hz | 5.0→4.1 |
+| 19:50 | 60 % | 40 Hz | 2.6–3.2 |
+| 19:51 | **50 %** | 39 Hz | 2.4–3.0 |
+| 19:52 | 100 % | 0 Hz (stopped) | — |
+
+As the compressor winds down the unit **cuts the pump to 50 %** to keep ΔT near
+its 5 K target. Flow therefore falls to roughly 0.2 l/s, close to the unit's
+own 0.16 l/s minimum.
+
+**Three reasons this is the wrong policy for this plant:**
+
+1. **It directly contradicts D-017.** heatctl's entire distribution strategy is
+   "maximise flow, minimise spread" for COP and even emitter temperatures. The
+   heat pump is doing the opposite one layer upstream, and winning.
+2. **It consumes the condensation budget.** P04 targets RETURN water, so
+   leaving water sits a full spread below the setpoint. At ΔT 5.7 K that is
+   5.7 K of headroom spent on the unit's own ΔT policy — and condensation is
+   governed by the leaving water. This is the dominant reason the limit bound
+   all afternoon.
+3. **5 K is a radiator-era default.** Underfloor emitters want low ΔT and high
+   flow. Nothing in this plant benefits from a wide spread.
+
+**Expected effect of F10 = 2:** spread roughly halves, so leaving water rises
+~3.5 K for the same setpoint, and the pump stops being throttled at low
+compressor speed. That converts almost directly into usable setpoint range —
+the plant could then run *colder* water and deliver *more* cooling without
+breaching, which is the opposite of today's outcome.
+
+**Risk assessment: low.**
+- Fully reversible, one register, documented range 2–30.
+- Higher flow stays inside the unit's 0.16–0.40 l/s window (100 % ≈ 0.40).
+- Lower ΔT across the plate exchanger is if anything *better* for compressor
+  duty and COP; it is standard practice for underfloor systems.
+- One flash write, against a 30/hour budget.
+
+⚠️ **What this does NOT fix.** Minimum modulation is 1.0–1.1 kW, so when the
+load is below that the unit must still cycle — see docs/HEATPUMP.md, which
+records that the *overnight* cycling was min-modulation-limited and not a
+control fault. Today's afternoon behaviour is a different problem: not too
+little load, but the unit rushing to 85 Hz and then holding a wide spread.
+Do not conflate the two.
+
+- [ ] **Set F10 = 2 and observe for a day**, comparing: peak spread, leaving
+      water against the condensation limit, number of setpoint breaches, and
+      compressor cycle count. If breaches fall to near zero the constraint
+      memory added in D-029 will rarely engage, which is the desired outcome —
+      it exists to handle a constraint we would rather not hit at all.
+- [ ] Also worth investigating: **`powerful_mode` is currently ON**
+      (`0x0001` bit 4). The unit ramps to 85 Hz on every cycle. If that flag
+      raises the frequency ceiling, clearing it would give longer, gentler runs
+      and a naturally smaller spread. Undocumented in the manual extract we
+      have, so test it deliberately and separately from F10 — changing both at
+      once makes neither attributable.
+
 - [ ] **The setpoint→supply gap is DYNAMIC and nothing in layer 1 measures it.**
       Recorded 2026-07-29 after an attempt to exploit it was withdrawn the same
       day.
