@@ -347,6 +347,56 @@ inlet/outlet straight lengths exist between pump outlet and manifold input.
    the USB 300 on the Linux host where the decode and the timeout logic live
    next to the rest of heatctl.
 
+### PREDICTED LOAD for 2026-07-30 (the 37 degC day) — computed 2026-07-29 23:xx
+
+First real use of the layer-2 model: Open-Meteo forecast + per-facade solar +
+the measured building physics, hourly, house held at 24 degC.
+
+| local | T_out | fabric | solar | NET | vs emitter |
+|---|---|---|---|---|---|
+| 09:00 | 24.4 | +0.11 | +4.90 | **+4.95** | over |
+| 12:00 | 33.0 | +2.40 | +6.54 | **+8.88** | over |
+| 15:00 | 37.2 | +3.53 | +5.47 | **+8.95** | over |
+| 16:00 | 37.9 | +3.71 | +5.26 | **+8.92** | over |
+| 19:00 | 36.2 | +3.26 | +2.43 | **+5.63** | over |
+
+- **Daily cooling load 94.1 kWh, peak 8.95 kW.**
+- **Emitter ceiling 3.4–4.8 kW** (docs/HEATPUMP.md — the FLOOR is the
+  constraint, not the heat pump's 5.7 kW).
+- **31.4 kWh of the day's load cannot be dissipated in real time.**
+
+**Three conclusions, in order of leverage.**
+
+1. **Solar is 61 % of the peak load.** At 15:00: 5.47 kW solar against 3.53 kW
+   of fabric gain. External shading on the east and south glazing is worth up
+   to ~3.8 kW — **more than the entire cooling system can deliver.** Nothing in
+   the control system comes close to this. It is the answer.
+2. **Pre-cooling overnight is worth 31 kWh, and it is the only way to absorb
+   the excess.** Whole-building capacity is 15.3 kWh/K (slab 8.7 + air/fabric
+   6.6), so 31.4 kWh needs **~2.05 K of drawdown below target** before the day
+   starts. Overnight the load is NEGATIVE (−1.7 to −3.0 kW from 22:00 to
+   07:00), giving roughly **18.8 kWh of free cooling** — about 1.2 K — with the
+   plant able to add the rest at the lowest setpoint the dew point allows.
+3. **24 degC will not hold tomorrow afternoon.** 8.95 kW against a 4.8 kW
+   ceiling is not a control problem, it is a capacity fact. The realistic goal
+   is to start cold enough that the excursion is small and late, not to avoid
+   it.
+
+**And this reframes the 05:56 mode flip completely.** The overnight cooling that
+made the house 1.10 K "too cold" is the single most valuable thing that happens
+all night — it is ~18 kWh of stored cooling, roughly four hours of peak-load
+absorption. auto_mode saw an asset and called it a fault, then spent energy
+destroying it. The defect is not the threshold; it is asking the question
+without a forecast.
+
+**Model caveats, unchanged from params.yaml:** H = 267 W/K is measured and
+solid; the 16.10 m2 solar aperture carries frame/shading/dirt uncertainty of
+tens of percent; internal gains are a flat 350 W and plainly are not; the
+3.4–4.8 kW emitter limit is itself an estimate. The 61 % solar share is robust
+to all of that — it would take a factor-two error in aperture to change the
+ranking.
+
+
 ### F10 (`0x010B`) IS THE LEVER — the unit is holding a 5 K spread on purpose
 
 Owner's question, 2026-07-29: "Can we adjust the target spread? I'd rather have
