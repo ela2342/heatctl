@@ -422,6 +422,46 @@ inlet/outlet straight lengths exist between pump outlet and manifold input.
       wrong criterion the night before a 37 °C day.
 
 
+### The setpoint correction tomorrow's forecast implies (computed 2026-07-29 ~24:00)
+
+The optimizer produces the **energy** requirement (22.3 kWh, 1.46 K equivalent)
+and stops there. It does not convert that into a water setpoint. Done by hand
+with the same 2-state model, from air 24.2 / slab 21.0 over the 7 h to dawn:
+
+| Q_cool | air | slab | air kWh | slab kWh | **stored** |
+|---|---|---|---|---|---|
+| 0 W | 21.44 | **21.59** | +18.2 | **−5.1** | **+13.1** |
+| 1000 W | 21.21 | 20.98 | +19.7 | +0.1 | +19.9 |
+| 2000 W | 20.98 | 20.38 | +21.2 | +5.4 | +26.6 |
+| 3000 W | 20.75 | 19.77 | +22.7 | +10.7 | +33.4 |
+| 5000 W | 20.30 | 18.56 | +25.8 | +21.2 | +46.9 |
+
+**The trap: free drift alone stores only 13.1 kWh of the 22.3 needed, because
+it cools the AIR and WARMS the slab.** The air node (6.6 kWh/K, 5.2 h) drops
+2.8 K unaided, falls below the slab, and the slab then feeds heat *into* it —
+21.0 → 21.59 — cancelling 5.1 kWh of the air's 18.2 kWh gain. Reading air
+temperature alone says the pre-charge is free. It is not: **only active cooling
+charges the slab, and the slab is 8.7 of the 15.3 kWh/K.**
+
+This is also why last night's drift, which the mode flip reacted to, looked like
+success and was not: the air had cooled, the slab had not.
+
+**Required: ~1.5 kW sustained, i.e. hold the setpoint at the condensation floor
+all night.** Floor right now is 17 °C (limit 14.9 + measured spread 2.2), and it
+falls as the indoor dew point falls. Currently commanded 18.
+
+⚠️ **The reactive trim will undo this around 02:00–03:00.** Its efficiency
+branch backs off once the house is satisfied and the valves go idle — and by the
+model the air reaches comfort target then, with four hours of useful slab
+charging still available. "Satisfied" is the wrong criterion the night before a
+37 °C day, and no reactive rule can know that.
+
+**In setpoint terms that is the whole gap: hold ~18 °C versus the ~21–22 °C the
+trim will choose.** Three to four kelvin, worth roughly 17 kWh of slab charge.
+That is precisely what the layer-2 offset would carry, and tonight it needs a
+human to hold the number.
+
+
 ### PREDICTED LOAD for 2026-07-30 (the 37 degC day) — computed 2026-07-29
 
 First real use of the layer-2 model: Open-Meteo forecast + per-facade solar +
