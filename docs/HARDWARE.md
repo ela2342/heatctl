@@ -595,3 +595,55 @@ numbers are unconfirmed**, and this now matters: driving the ARM 343 needs
 **230 V-rated** relay contacts with proper separation, and two channels of the
 four. Confirm what is actually fitted before wiring 230 V to it.
 
+## Plant inventory as built — owner, 2026-07-29
+
+Recorded here because none of it is discoverable from the running system.
+
+| Item | Detail | Status |
+|---|---|---|
+| **Mixing valve** | **Afriso ARM 343**, 3-point, 230 V per direction, **120 s** full travel, **no end switches** | fitted — see the section above |
+| **Circulation pumps ×2** | **Wilo Stratos PICO plus 25/0.5-6 (DACH)**, art. **4244375**, unit marking `24w11/074 0969 / I`. One on distribution, one on the heat exchanger — **identical parts** | fitted, **no control interface yet** |
+| **Buffer tank** | 1000 L (Buderus Logalux P990.6 M-C per the EnEV papers), 5 stratification pockets | **in place, not yet filled or connected** |
+| **Electric element** | **8 kW in the tank** | **fitted, NO control path** — needs contactor/SSR + a DO channel + interlock |
+| **Sensor pockets** | stove VL/RL and buffer stratification | **fitted** |
+| **Mode-selection valve** | a motorised 3-way is on hand; final topology undecided | **open question — see below** |
+| Floor actuators | Möhlenhoff Alpha 5 APV 42505-00 | 2 of 12 fitted |
+| Heat pump | Blaupunkt BLP08P1V1MR32 (PW58321 controller) | fitted, on Modbus |
+| Stove | Lohberger Varioline AC 105, external air duct fitted | fitted |
+
+### The mixer is on the HEATING side only
+
+**Important, and it corrects an earlier note in this file.** The current
+hydraulic design routes only the **heating** circuit through the ARM 343; the
+**cooling** path bypasses it. Consequences:
+
+* The mixer does **not**, as plumbed, enable the "latent lever" (running the
+  fan coil below dew point while the slab stays above it). That idea needs a
+  low-temperature branch **in cooling**, which this topology does not provide.
+  An earlier entry claiming the mixing circuit unblocks it was wrong.
+* In cooling the slab therefore receives whatever the heat pump produces,
+  which is exactly why the condensation guard has to act on the source
+  temperature and why D-024's headroom matters so much.
+* If the latent lever is ever wanted, it needs a *cooling-side* mixing or
+  injection arrangement, not this one.
+
+### Open: mode-selection valve topology
+
+Requirement (docs/DESIGN.md §1.2): switch the heat pump between charging the
+buffer and feeding the floor circuit directly, and do it for both heating and
+cooling. The owner has a motorised 3-way valve and asks whether that plus a
+non-return valve suffices, or whether 4-way, or two 4-way, is needed.
+
+The consideration that decides it: a 3-way diverter switches the **flow** path
+only. The **return** then has to be handled too, or the idle branch stays
+hydraulically connected. A non-return valve blocks *forced* backflow but does
+**not** block **thermosiphon** — and this buffer sits **outside the thermal
+envelope** with a documented 3.14 kWh/d standby loss, so a parasitic
+convective loop into it during cooling is a direct, continuous loss of exactly
+the capacity we are short of on a design day. Two-valve or 4-way isolation
+removes that failure mode by construction rather than by relying on
+pressure relationships holding in every operating state.
+
+Not decided here — it depends on pipe geometry and relative heights that are
+not documented. Flagged so the reasoning is on record when it is decided.
+
