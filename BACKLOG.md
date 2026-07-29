@@ -107,7 +107,7 @@ the list is the master, and it now carries three devices instead of two.
 
 | Field | Value | Note |
 |---|---|---|
-| Supply | **digit `7`** | 230 VAC. (`8` = 24 VAC, `1`/`2` = battery, `0` = none) |
+| Supply | **digit `7`** (230 VAC) or **`8`** (24 V**AC**) | ⚠️ **Both mains options are AC. There is no 24 VDC option** — the type code lists only "230 VAC Supply 7" and "24 VAC Supply 8". A control cabinet's 24 V is normally **DC** (the WAGO 750 system runs on 24 VDC), and 24 VDC will NOT power a 24 VAC supply module. Verify AC vs DC with a meter before ordering: if the 24 V is DC, take digit `7` and feed it from the panel's 230 V, which is present anyway to supply the 24 V PSU. |
 | Modbus module | **`HC-003-67`**, ordered separately | The type-code Modules field lists only M-Bus (`20`/`21`) and wireless M-Bus (`30`) — **there is no Modbus digit**. The module is a plug-and-play accessory, auto-detected by the meter. |
 | Meter type | **`6`** (non-MID) | Unchanged and still binding: θhc heat/cool changeover is "nur möglich mit Zählertyp 6". |
 | Size | qp 1.5, DN15 | Unchanged. |
@@ -115,6 +115,22 @@ the list is the master, and it now carries three devices instead of two.
 Datasheet also confirms the 403 is explicitly a "heat meter, cooling meter or
 **combined heat/cooling meter**" on the ultrasonic principle — the
 bidirectional capability the plant needs.
+
+**The meter sits within ~1 m of the controls**, which simplifies three things:
+
+- **Mains is free.** A 1 m run from the panel means the 230 VAC supply costs
+  no wiring work, so the supply requirement stops being an argument against
+  the Modbus route entirely.
+- **Termination and isolation stop mattering on the meter leg.** At 1 m and
+  9600–19200 baud, RS-485 reflections are irrelevant. They still matter on the
+  run out to the pumps, which is where the Delock's 3 kV isolation earns its
+  place — motors and drives, not the meter.
+- **A dedicated adapter becomes an option worth considering.** Consequence 1
+  above (one bus as a single failure domain for pumps *and* meter) can simply
+  be bought off for a second €112 adapter, giving the meter its own bus with
+  no baud/parity negotiation against the Wilo modules. Not required — but if
+  the pumps and the meter turn out to disagree on a comfortable baud rate,
+  this is the cheap escape rather than a compromise setting.
 
 **Consequences to design around:**
 
