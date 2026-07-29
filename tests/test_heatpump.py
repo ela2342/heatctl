@@ -370,3 +370,61 @@ def test_by_name_returns_the_register_with_its_own_scale():
 def test_by_name_rejects_an_unknown_register():
     with pytest.raises(KeyError):
         hm.by_name("no_such_register")
+
+
+# ---------- named control bits in shared registers ----------
+
+class _BitHP:
+    """Minimal stand-in exposing just what set_control_bit touches."""
+    def __init__(self, config):
+        self.config = dict(config)
+        self.writes = []
+
+    async def write_register(self, addr, raw, why):
+        self.writes.append((addr, raw, why))
+        self.config[addr] = raw
+        return True
+
+    set_control_bit = HeatPump.set_control_bit
+
+
+async def test_setting_a_control_bit_preserves_the_others():
+    """0x0001 packs seven unrelated settings and heatctl exposes two of them.
+    Anything that reconstructs the register from the visible bits silently
+    rewrites the other five to whatever it guessed - which is why this is
+    read-modify-write against a value actually read from the device."""
+    hp = _BitHP({0x0001: 0b1101_0110})       # bit4 set, plus several others
+    assert await hp.set_control_bit("powerful_mode", False, "test")
+    addr, raw, _ = hp.writes[0]
+    assert addr == 0x0001
+    assert raw == 0b1100_0110                # ONLY bit 4 cleared
+    assert raw & 0b0000_0110 == 0b0000_0110  # low bits untouched
+    assert raw & 0b1100_0000 == 0b1100_0000  # high bits untouched
+
+
+async def test_an_unread_register_is_refused_not_invented():
+    """The failure that would be invisible: writing a register we have never
+    read means inventing every bit we do not own. Refuse instead."""
+    hp = _BitHP({})
+    assert await hp.set_control_bit("powerful_mode", False, "test") is False
+    assert hp.writes == []
+
+
+async def test_a_no_op_bit_write_is_dropped_before_it_costs_a_flash_cycle():
+    """Every write wears the unit's flash (docs/HEATPUMP.md), so a command
+    that changes nothing must not reach the bus."""
+    hp = _BitHP({0x0001: 0b0000_0000})
+    assert await hp.set_control_bit("powerful_mode", False, "test") is True
+    assert hp.writes == []
+
+
+async def test_an_unknown_bit_name_is_refused():
+    hp = _BitHP({0x0001: 0xFF})
+    assert await hp.set_control_bit("no_such_flag", True, "test") is False
+    assert hp.writes == []
+
+
+async def test_setting_a_bit_on_leaves_the_register_otherwise_alone():
+    hp = _BitHP({0x0001: 0b0000_0011})
+    assert await hp.set_control_bit("silent_mode", True, "test")
+    assert hp.writes[0][1] == 0b0010_0011     # bit 5 set, bits 0-1 kept

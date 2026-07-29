@@ -223,6 +223,39 @@ class HeatPump:
             return False
         return await self.set_mode(want, f"plant mode is {plant_mode}")
 
+    async def set_control_bit(self, name: str, on: bool,
+                              why: str = "heatctl") -> bool:
+        """Set one named bit in a shared control register.
+
+        Generalises `set_power` below, and exists for the same reason: these
+        registers pack several unrelated settings, so the only safe write is
+        read-modify-write against a value we have ACTUALLY READ. Register
+        0x0001 alone carries seven settings, of which heatctl exposes two - so
+        anyone reconstructing it from the two visible bits would silently
+        rewrite the other five to whatever they guessed.
+
+        Refuses if the register has never been read, rather than assuming
+        zeros. Also refuses to write when nothing would change, because every
+        write wears the unit's flash (docs/HEATPUMP.md).
+        """
+        entry = next(((addr, bit) for (addr, bit), n
+                      in hm.CONTROL_BITS.items() if n == name), None)
+        if entry is None:
+            log.warning("no control bit named %r", name)
+            return False
+        addr, bit = entry
+        cur = self.config.get(addr)
+        if cur is None:
+            log.error("refusing to touch 0x%04X: never read it, so a "
+                      "read-modify-write would invent its other bits", addr)
+            return False
+        raw = (cur | (1 << bit)) if on else (cur & ~(1 << bit))
+        if raw == cur:
+            log.info("%s already %s - no write", name, "on" if on else "off")
+            return True
+        return await self.write_register(
+            addr, raw, f"{name} {'on' if on else 'off'}: {why}")
+
     async def set_power(self, on: bool, why: str = "heatctl") -> bool:
         """Register 0 bit 0 is the unit's POWER, not the water pump.
 

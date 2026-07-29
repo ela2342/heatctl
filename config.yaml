@@ -367,6 +367,29 @@ control:
     # floor reintroduces the oscillation this exists to kill.
     constraint_retry_margin_c: 0.5
 
+    # DYNAMIC COOLING FLOOR (2026-07-29). The setpoint targets RETURN water
+    # while condensation is about the water reaching the slab, so the floor has
+    # to be the condensation limit PLUS however far below the setpoint the
+    # leaving water lands - the machine's measured delta-T. `dew_floor_offset_c`
+    # above is now only the backstop for start-up, before any spread has been
+    # measured; the live estimate takes over and can only ever tighten it.
+    #
+    # Why measured and not a constant: on this evening the spread went from
+    # 5.8 K to 2.0 K within an hour on two register writes - F10 (pump delta-T
+    # target 5 -> 2) and clearing powerful_mode, which took the compressor from
+    # 85-89 Hz bursts to a steady 39-40 Hz. An earlier attempt to tune a
+    # constant offset was withdrawn precisely because the quantity moves.
+    #
+    # The estimate is a DECAYING MAXIMUM, not an average: it feeds a safety
+    # floor, so it must rise the instant the machine produces a wide spread and
+    # relax only slowly. An average would sit mid-distribution and let half of
+    # all excursions through. 0.995 per 5 s heat-pump poll is a ~10 min
+    # relaxation time - long enough to cover a full compressor ramp, short
+    # enough to exploit a genuine improvement within the hour.
+    spread_decay: 0.995
+    spread_min_c: 1.0         # never trust a spread below this
+    spread_max_c: 8.0         # nor let a garbage reading drive the floor absurd
+
   # Source demand and minimum flow - ONE decision, see docs/DESIGN.md 4.3.
   # Aggregate per-ROOM deviation into a signed house demand (too cold ->
   # heating, too warm -> cooling) and engage the source only when that demand

@@ -359,3 +359,108 @@ def test_a_satisfied_house_at_the_limit_is_not_an_alarm(sp):
     d = call(c, mode="cooling", dev=0.0, open_pct=10.0, current=25.0,
              dew=12.0, limit=14.0, leaving=25.0, now=5_000.0)
     assert d.target is None and not d.demand_unmet
+
+
+def test_a_plant_change_invalidates_the_constraint_memory(sp):
+    """The memory reasons about machine behaviour but watches only the dew
+    point for release, so a change to the machine must invalidate it
+    explicitly.
+
+    Measured 2026-07-29: clearing powerful_mode took the compressor from 85-89
+    Hz bursts to a steady 39-40 Hz and the spread from 4.7-5.8 K to 1.9-2.5 K.
+    Every recorded-infeasible setpoint became feasible with ~1.8 K to spare,
+    while the dew point barely moved - so nothing would have released the
+    block, and the plant would have sat needlessly warm.
+    """
+    c = sp()
+    call(c, current=18.0, leaving=14.5, limit=14.7, dew=12.7, now=0.0)
+    assert call(c, current=19.0, dev=-1.0, open_pct=100.0, limit=14.7,
+                now=2_000.0).kind == BLOCKED
+    c.forget_constraint()               # the plant was reconfigured
+    freed = call(c, current=19.0, dev=-1.0, open_pct=100.0, limit=14.7,
+                 now=4_000.0)
+    assert freed.target == 18 and freed.kind == TRIM
+
+
+# ---------- dynamic, spread-aware cooling floor ----------
+
+def test_the_cooling_floor_tracks_the_MEASURED_spread_not_a_constant(sp):
+    """The setpoint targets RETURN water; condensation is about the water
+    reaching the slab. So the floor must be the condensation limit plus however
+    far below the setpoint the leaving water actually lands - the machine's
+    measured delta-T.
+
+    Measured 2026-07-29: the spread moved from 5.8 K to 2.0 K within an hour on
+    two register writes (F10 and powerful_mode). No constant can track that,
+    which is why the earlier attempt to tune one was withdrawn.
+    """
+    wide = sp()
+    for _ in range(5):
+        wide.observe_spread(5.8)
+    narrow = sp()
+    for _ in range(5):
+        narrow.observe_spread(2.0)
+    limit = 16.2
+    floor_wide = wide._clamp("cooling", 5.0, dew_point=14.2, supply_limit=limit)
+    floor_narrow = narrow._clamp("cooling", 5.0, dew_point=14.2,
+                                 supply_limit=limit)
+    assert floor_wide > floor_narrow, "the floor must follow the spread"
+    # Each must place leaving water at or above the condensation limit.
+    assert floor_wide - 5.8 >= limit - 0.5
+    assert floor_narrow - 2.0 >= limit - 0.5
+
+
+def test_the_spread_estimate_rises_at_once_and_relaxes_slowly(sp):
+    """A decaying MAXIMUM, not an average. This feeds a safety floor, so it
+    must jump the moment the machine produces a wide spread; an average would
+    sit mid-distribution and let half of all excursions through."""
+    c = sp()
+    c.observe_spread(2.0)
+    c.observe_spread(6.0)
+    assert c.spread_estimate == pytest.approx(6.0)   # instant rise
+    for _ in range(20):
+        c.observe_spread(2.0)
+    assert 2.0 < c.spread_estimate < 6.0             # slow relaxation
+
+
+def test_an_idle_compressor_does_not_erase_the_floor(sp):
+    """With the compressor off the spread collapses to ~0. Sampling that would
+    remove the floor exactly when the next start is about to produce a real
+    spread - so `None` must be ignored, not treated as zero."""
+    c = sp()
+    for _ in range(5):
+        c.observe_spread(5.0)
+    before = c.spread_estimate
+    for _ in range(50):
+        c.observe_spread(None)
+    assert c.spread_estimate == before
+
+
+def test_the_static_offset_survives_as_a_backstop_before_any_measurement(sp):
+    """Start-up, and any moment the limit is unknown: there is no estimate yet,
+    so the old constant must still hold the line rather than leaving no floor
+    at all."""
+    c = sp()
+    assert c.spread_estimate is None
+    floor = c._clamp("cooling", 5.0, dew_point=12.0, supply_limit=14.0)
+    assert floor >= 12.0 + c.dew_floor_offset_c
+
+
+def test_the_dynamic_floor_can_only_tighten_the_static_one(sp):
+    """Taken with max(), so a small measured spread can never relax the floor
+    below the static backstop - the two are belt and braces, not alternatives."""
+    c = sp()
+    for _ in range(5):
+        c.observe_spread(1.0)                       # very narrow
+    floor = c._clamp("cooling", 5.0, dew_point=12.0, supply_limit=14.0)
+    assert floor >= 12.0 + c.dew_floor_offset_c
+
+
+def test_the_spread_estimate_is_bounded(sp):
+    """A garbage reading must not be able to drive the floor to absurdity."""
+    c = sp()
+    c.observe_spread(500.0)
+    assert c.spread_estimate == c.spread_max_c
+    d = sp()
+    d.observe_spread(-3.0)                          # sign confusion upstream
+    assert d.spread_estimate == pytest.approx(3.0)

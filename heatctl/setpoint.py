@@ -114,6 +114,40 @@ class SetpointController:
         self._blocked_setpoint: float | None = None
         self._blocked_limit: float | None = None
 
+        # --- measured leaving/return spread (2026-07-29) ---
+        # The clamp below needs to know how far BELOW the setpoint the water
+        # reaching the slab will land, and that distance is the machine's own
+        # delta-T. It is a measured, dynamic quantity - never a constant.
+        self.spread_decay = float(s.get("spread_decay", 0.995))
+        self.spread_min_c = float(s.get("spread_min_c", 1.0))
+        self.spread_max_c = float(s.get("spread_max_c", 8.0))
+        self._spread_est: float | None = None
+
+    def observe_spread(self, spread: float | None) -> None:
+        """Feed the measured leaving/return delta-T. None means "not running".
+
+        Deliberately a DECAYING MAXIMUM rather than an average: this feeds a
+        safety floor, so it must rise immediately when the machine starts
+        producing a wide spread and relax only slowly afterwards. An average
+        would sit in the middle of the distribution and let half of all
+        excursions through.
+
+        Only sample while the compressor runs - the spread is meaningless when
+        it is off, and feeding those zeros in would collapse the estimate and
+        quietly remove the floor.
+        """
+        if spread is None:
+            return
+        spread = min(self.spread_max_c, max(self.spread_min_c, abs(spread)))
+        if self._spread_est is None:
+            self._spread_est = spread
+        else:
+            self._spread_est = max(spread, self._spread_est * self.spread_decay)
+
+    @property
+    def spread_estimate(self) -> float | None:
+        return self._spread_est
+
     def _remember_breach(self, setpoint: float, limit: float) -> None:
         """Record that `setpoint` breached while the limit was `limit`.
 
@@ -157,7 +191,22 @@ class SetpointController:
             return False
         return target <= self._blocked_setpoint
 
-    def _forget_constraint(self) -> None:
+    def forget_constraint(self) -> None:
+        """Discard what we learned about which setpoints breach.
+
+        Call this when the PLANT changes, not when the weather does. The
+        memory reasons about one thing only - "setpoint S breached at supply
+        limit L" - and it watches the dew point for release. It cannot see a
+        change to the machine itself.
+
+        Measured 2026-07-29: clearing `powerful_mode` took the compressor from
+        85-89 Hz bursts to a steady 39-40 Hz, and the leaving/return spread
+        from 4.7-5.8 K to 1.9-2.5 K. Every setpoint the memory had recorded as
+        infeasible was suddenly feasible with ~1.8 K to spare - but the dew
+        point had barely moved, so nothing would have released the block. The
+        plant would have sat needlessly warm holding a grudge about a machine
+        that no longer behaves that way.
+        """
         self._blocked_setpoint = None
         self._blocked_limit = None
 
@@ -173,7 +222,7 @@ class SetpointController:
         # Leaving cooling invalidates everything the memory knows: it is all
         # about the condensation limit, which does not apply in heating.
         if mode != "cooling":
-            self._forget_constraint()
+            self.forget_constraint()
 
         # --- safety first, and it ignores the cadence ---
         if (mode == "cooling" and leaving_water is not None
@@ -184,7 +233,8 @@ class SetpointController:
             # actionable, and dropping it when `target <= current` would leave
             # the trim to rediscover the same failure later.
             self._remember_breach(current, supply_limit)
-            target = self._clamp(mode, dew_point + self.breach_jump_c, dew_point)
+            target = self._clamp(mode, dew_point + self.breach_jump_c,
+                                 dew_point, supply_limit)
             if target > current:
                 self._last_change = now
                 return SetpointDecision(
@@ -217,7 +267,8 @@ class SetpointController:
             why = (f"house {deviation:+.2f} K and valves at {max_open:.0f}% - "
                    "not enough capacity")
             if mode == "cooling":
-                proposed = self._clamp(mode, current + delta, dew_point)
+                proposed = self._clamp(mode, current + delta, dew_point,
+                                       supply_limit)
                 if self._is_known_infeasible(proposed, supply_limit):
                     # Do not burn a 30-minute cycle re-proving this. Report it
                     # instead: the house wants more, the plant cannot legally
@@ -237,7 +288,7 @@ class SetpointController:
             return SetpointDecision(None, f"house {deviation:+.2f} K, valves "
                                           f"{max_open if max_open is None else round(max_open)}%")
 
-        target = self._clamp(mode, current + delta, dew_point)
+        target = self._clamp(mode, current + delta, dew_point, supply_limit)
         if target == current:
             # Reached from the capacity branch this is NOT a quiet hold: the
             # house wants more and the plant cannot legally supply it, which is
@@ -250,9 +301,23 @@ class SetpointController:
         self._last_change = now
         return SetpointDecision(target, why, TRIM)
 
-    def _clamp(self, mode: str, value: float, dew_point: float | None) -> float:
+    def _clamp(self, mode: str, value: float, dew_point: float | None,
+               supply_limit: float | None = None) -> float:
         if mode == "cooling":
             lo, hi = self.cooling_min_c, self.cooling_max_c
+            # DYNAMIC FLOOR, and the honest one. The setpoint targets RETURN
+            # water while condensation is about the water reaching the slab, so
+            # the floor has to be the condensation limit PLUS however far below
+            # the setpoint the leaving water actually lands - which is the
+            # machine's measured delta-T, not a constant.
+            #
+            # `supply_limit` is already dew point + margin, so this reads
+            # directly as "high enough that leaving water lands at or above the
+            # limit". Measured 2026-07-29 the spread moved from 5.8 K to 2.0 K
+            # within an hour on two register writes; no fixed offset can track
+            # that, which is why the earlier attempt to tune one was withdrawn.
+            if supply_limit is not None and self._spread_est is not None:
+                lo = max(lo, supply_limit + self._spread_est)
             if dew_point is not None:
                 # Heuristic only - P04 targets RETURN water, so this cannot
                 # guarantee the water reaching the slab is safe. The measured
@@ -264,6 +329,9 @@ class SetpointController:
                 # in flow, load and modulation, so no constant can represent
                 # it. See config.yaml for the withdrawn attempt and why its
                 # evidence was selection-biased.
+                # Static backstop, kept BELOW the dynamic floor by max() so it
+                # can only ever tighten, never relax it. Covers start-up before
+                # any spread has been measured, and a stale/absent limit.
                 lo = max(lo, dew_point + self.dew_floor_offset_c)
         else:
             lo, hi = self.heating_min_c, self.heating_max_c

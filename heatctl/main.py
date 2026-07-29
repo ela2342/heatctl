@@ -215,8 +215,26 @@ class Controller:
                                         "mqtt")
             elif key == "mode":
                 await self.hp.set_mode(payload.strip(), "mqtt")
+            elif key.startswith("bit/"):
+                # Named bit in a shared control register. Routed separately
+                # from write_named because these are not standalone registers -
+                # see HeatPump.set_control_bit on why only read-modify-write
+                # against a real read is safe.
+                await self.hp.set_control_bit(
+                    key.split("/", 1)[1],
+                    payload.strip() in ("1", "on", "true"), "mqtt")
             else:
                 await self.hp.write_named(key, float(payload), "mqtt")
+            # Any heat-pump config write may have changed how the machine
+            # behaves, and the setpoint trim's constraint memory reasons about
+            # machine behaviour while only watching the dew point for release.
+            # A plant change it cannot observe must therefore invalidate it -
+            # otherwise the trim holds a grudge about a machine that has been
+            # reconfigured (see SetpointController.forget_constraint).
+            # Excludes the setpoint itself: writing that IS the trim's own
+            # output, not a change to the plant.
+            if key not in ("setpoint_cooling", "setpoint_heating"):
+                self.water_sp.forget_constraint()
         except Exception:
             log.exception("heat pump command failed: %s = %r", key, payload)
 
@@ -565,6 +583,15 @@ class Controller:
         if lw is not None and rw is not None:
             spread = hpm.decode(rw_reg, rw) - hpm.decode(lw_reg, lw)
             await self.plane.publish("hp/spread", f"{spread:.1f}")
+            # Feed the water-setpoint floor. ONLY while the compressor runs:
+            # with it off the spread collapses to ~0, and an idle machine's
+            # zero would erase the floor exactly when the next start is about
+            # to produce a real one.
+            freq = self.hp.status.get(hpm.by_name("compressor_freq").addr)
+            self.water_sp.observe_spread(spread if freq else None)
+            est = self.water_sp.spread_estimate
+            if est is not None:
+                await self.plane.publish("water_sp/spread_est", f"{est:.2f}")
         amps = self.hp.status.get(0x8025)
         if amps is not None:
             # CALIBRATED against the utility meter over 129 days of winter data
