@@ -19,7 +19,7 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
 | # | Item | Part / spec | Qty | € gross | Supplier |
 |---|---|---|---|---|---|
 | 1 | Heat meter | **MULTICAL 403 W/K, qp 1.5, DN15, M-Bus** | 1 | 289 | energie-zaehler.com |
-| 2 | M-Bus master | **solvimus MBUS-GE20M** → **Modbus TCP**, 20 loads | 1 | 474 | stark-elektronik.de |
+| 2 | ~~M-Bus master~~ | ~~solvimus MBUS-GE20M~~ **WITHDRAWN — see below** | — | ~~474~~ | — |
 | 3 | Pump modules | **Wilo Connect RS485 `4268524`** | 2 | 597 | SHK wholesaler (list) |
 | 4 | PT1000 probes | **2-wire**, Ø6 mm, 2 m silicone, class B | 10 | 130 | heizlando.de |
 | 5 | Window contacts | **Eltako FTK** (solar, batteryless) | 8 | 568 | voelkner.de |
@@ -28,6 +28,58 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
 | 7 | Element meter | Shelly Pro 3EM | 1 | 76 | eBay merchants |
 | 8 | USB-RS485 | **Delock 62501**, 3 kV isolated, DIN rail | 1 | 112 | reichelt.de |
 | 8 | Bus cable | Lapp UNITRONIC BUS LD 2×2×0.22, 20 m | 1 | 32 | — |
+
+### CORRECTION — the M-Bus master line was badly over-specified
+
+**Reject the solvimus MBUS-GE20M at €474.** It is a 20-load M-Bus → Modbus
+TCP gateway, specified to read **one** heat meter. Owner caught it. The line
+is withdrawn and the shopping-list total drops from ≈ €3,142 to **≈ €2,668**
+before whichever replacement below is chosen.
+
+| Option | Cost | Needs | Verdict |
+|---|---|---|---|
+| solvimus MBUS-GE20M | €474 | nothing | **reject** — 20 loads for 1 meter |
+| **WAGO 753-649** used | **~€80–150** | **PLC200 + CODESYS** | **preferred once the PLC lands** |
+| WAGO 753-649 new | €323 | same | only if no used unit appears |
+| USB M-Bus master (TSS721) | **~€15–40** | Python M-Bus in heatctl | **unblocks today** |
+| Kamstrup Modbus RTU module | ~€200 | **mains-powered meter** | see the trap below |
+
+**WAGO 753-649 is the "nice 750 module" — with one hard condition.** It is the
+M-Bus master for the 750/753 system, **40 slaves per module**, and WAGO ships
+M-Bus libraries including one specifically for heat meters
+(`M-Bus Wärmezähler`) with no restriction on meter make.
+
+⚠️ **It does NOT work on the 750-352 alone.** WAGO's own guide requires
+WAGO-I/O-PRO-CAA, i.e. a controller — the coupler cannot run the M-Bus stack.
+On the bare coupler it degrades to a byte-wise mailbox in the process image,
+which is the exact reason the 750-642 EnOcean module was rejected. **The
+PLC200 already on order is what makes this module the right answer**, and it
+is worthless before then. 40 slaves also leaves room for water and electricity
+meters later, which the one-meter alternatives do not.
+
+**The €30 answer that works today:** a TSS721-based USB M-Bus master on the
+Linux host, with heatctl speaking M-Bus directly. M-Bus is a polled
+request/response protocol, so unlike EnOcean there is no lost-telegram hazard
+in a mailbox — you control when you ask. For a single meter this is entirely
+adequate and carries no dependency on the PLC200 timeline.
+
+⚠️ **Trap in the Modbus-RTU alternative.** Kamstrup does make a plug-and-play
+Modbus RTU (RS-485) module for the 403, auto-detected, and it could share the
+RS-485 run with the two Wilo pumps — but **it is powered from the meter's
+230 VAC or 24 VAC supply, so it will not work with a battery meter.** Choosing
+it means a mains-powered 403 plus 230 V at the meter position. That is a
+wiring job and a different meter type code, and it is why this route is not
+the recommendation despite looking tidy on paper.
+
+⚠️ **Check what the €289 meter quote actually includes.** The communication
+module is a digit in the 403 type code, so the price moves with it. Confirm
+the quote is for the M-Bus variant before ordering, and re-confirm the
+`403-T…6…` requirement (type 6 for the θhc heat/cool threshold) at the same
+time.
+
+**Recommendation:** buy the €30 USB M-Bus master now so the heat meter is not
+gated on the PLC200, and watch kleinanzeigen for a 753-649 under ~€150 as the
+permanent home once CODESYS is running. Do not buy the solvimus.
 
 ### Corrections to my own specification
 
