@@ -561,6 +561,46 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
       phase-angle control**. Settings survive a mains interruption, so relay
       on/off is safe configuration-wise.
 
+- [!] **PLC200 ordered to replace the 750-352 + HA-container combo, giving
+      CODESYS for the DHW loop.** Owner, 2026-07-29. The 1606 is ordered too,
+      which unblocks the ten actuators.
+      **The motivation is sound.** A 100 ms DHW loop (ROADMAP Milestone 2) run
+      from a container over Ethernet is fragile in exactly the way that
+      matters: it depends on the host, the network and the container runtime
+      all behaving, for a loop whose whole point is determinism. Running it in
+      CODESYS on the same backplane as the I/O removes all three dependencies.
+      That is the right call for that loop.
+      **Five things to settle before it lands, in rough order of danger:**
+      (a) **SINGLE-WRITER OWNERSHIP.** Two controllers will touch one I/O rail.
+          Which outputs belong to CODESYS and which to heatctl must be
+          explicit and enforced, not conventional. This is the same failure
+          class as the HA-vs-heatctl Modbus contention we removed in July
+          (D-013), and it will be harder to see because both writers will be
+          "ours".
+      (b) **THE COUPLER WATCHDOG DOES NOT COME ALONG.** heatctl's outermost
+          safety net is the 750-352's own Modbus watchdog zeroing outputs when
+          writes stop - the one failsafe that survives a heatctl crash
+          entirely. A PLC200 runs its own program; that behaviour must be
+          re-created in CODESYS deliberately. **Do not migrate before this is
+          designed**, or the plant silently loses its last line of defence.
+      (c) **Register map changes again.** A PLC200's Modbus server maps its
+          process image differently from a 352 coupler. `config.yaml`
+          hardcodes `base_register: 12` for both sensors and valves. Re-verify
+          against the device - this is the third time this rule has come up.
+      (d) **Division of labour.** Least disruptive: the PLC exposes Modbus TCP
+          exactly as the 352 did, heatctl keeps its architecture unchanged,
+          and CODESYS owns *only* the fast DHW loop. Most disruptive: migrate
+          control into CODESYS. Decide deliberately rather than by drift.
+      (e) **CODESYS is a large new dependency**, and worth naming honestly
+          against this project's stated premise of boring technology and
+          minimal pinned dependencies. It means two languages, two toolchains,
+          two deployment paths and two sets of failure modes, maintained for
+          thirty years. The DHW determinism argument justifies it *for that
+          loop*; it does not automatically justify moving anything else.
+      **Do not let scope drift.** The strongest version of this is: CODESYS
+      owns the one loop that genuinely needs hard real-time, heatctl keeps
+      everything else, and the boundary is written down before any code moves.
+
 - [!] **The 8 kW tank element is FITTED with no control path at all.** Owner,
       2026-07-29. Needs a contactor or SSR rated for 8 kW, one of the WAGO's
       spare relay outputs, and an interlock.
