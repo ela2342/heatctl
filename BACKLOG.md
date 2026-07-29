@@ -11,6 +11,40 @@ been forgotten cannot be prioritised — it just sits here.
 Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
 `[x]` here means rejected, kept so it is not re-proposed.
 
+### SHOPPING LIST (consolidated 2026-07-29)
+
+**Not needed — corrections:**
+* ~~10x Möhlenhoff Alpha 5~~ — **all on hand**, survived the surge. Blocked
+  only on the 750-1606, which is ordered.
+* ~~Sensor pockets~~ — already fitted.
+* 750-series modules (2x 750-463, 750-1606, EnOcean module) — owner sourcing
+  second-hand.
+
+**To buy:**
+
+| # | Item | Spec / part | Notes |
+|---|---|---|---|
+| 1 | **Heat meter** | Kamstrup MULTICAL **403-T**, heat+cool, **qp 1.5**, DN20/G1", M-Bus module | the **-T** suffix is the condensation-proof cooling variant and is mandatory. Ask Kamstrup whether the 0.01 K response threshold holds in COMBINED mode |
+| 2 | **M-Bus master** | M-Bus → MQTT or → Modbus TCP gateway | needed because the Kamstrup is M-Bus only; must supply bus power |
+| 3 | **Pump modules ×2** | Wilo Connect module **Modbus RTU**, art. 4263625 *or* 4268524 | confirm which SKU is correct — Wilo's DE/AT catalogues disagree |
+| 4 | **PT1000 probes ×10** | immersion, for the fitted pockets | **easy to miss**: the 750-463s are inputs, these are the sensors. 5 buffer + 2 stove + 1 after-mixer + 2 DHW |
+| 5 | **EnOcean contacts** | **solar** (STM 330 class, e.g. Eltako FTKB-hg), ~6–8 | solar for the heartbeat — see the EnOcean item |
+| 6 | **Element contactor** | **depends on phasing — see below** | |
+| 7 | **Element meter** | Shelly Pro 1PM (1~) or 3EM (3~) | electrical metering is exact; this is the plant's calibration reference |
+| 8 | **RS-485 kit** | cable, 120 Ω termination, USB-RS485 or serial gateway | for the two pump modules |
+| 9 | **RC snubbers ×2** | across the ARM 343 relay contacts | inductive load, contact erosion |
+
+**OPEN QUESTION blocking items 6 and 7 — is the 8 kW element single- or
+three-phase?** It changes everything about the switchgear:
+
+| | current | contactor | meter |
+|---|---|---|---|
+| 1~ 230 V | **34.8 A** | AC-1 40 A+ | Shelly Pro 1PM |
+| 3~ 400 V | 11.5 A/phase | AC-1 25 A | Shelly Pro 3EM |
+
+34.8 A on a single phase is a serious load — it would want its own way and
+probably a dedicated circuit. Check the element's rating plate before ordering.
+
 ### Milestone 0 - bring-up (manual, no code)
 
 - [~] Hardware: the **2x 750-559 arrived and are fitted** (2026-07-27,
