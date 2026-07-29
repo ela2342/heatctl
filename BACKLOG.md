@@ -780,6 +780,36 @@ controllers (Gefran, Eurotherm, Carlo Gavazzi, Celduc).
       (e) A free-decay window may exist after 2026-02-21 with control stopped.
           Check what the plant actually did between then and heatctl.
 
+- [x] **WEATHER DATA SOURCE FOUND AND TESTED 2026-07-29 — Open-Meteo, wrapping
+      DWD ICON.** All three endpoints verified working for our exact
+      coordinates, hourly, **no API key**:
+      | endpoint | use | gives |
+      |---|---|---|
+      | `archive-api.open-meteo.com/v1/archive` | full history (ERA5) | `temperature_2m`, `shortwave_radiation`, **`direct_normal_irradiance`**, `diffuse_radiation`, `wind_speed_10m` |
+      | `api.open-meteo.com/v1/forecast?models=icon_d2` | planner, 48 h | same + `cloud_cover`. **DWD ICON-D2, 2.2 km** - the owner was right that this is the high-precision short-term model |
+      | `historical-forecast-api.open-meteo.com/v1/forecast?models=icon_seamless` | **re-analysis** | archived HIGH-RES model runs rather than ERA5 |
+      **Two things this unlocks immediately:**
+      * **DNI and DHI separately** - which is what makes plane-of-array
+        irradiance computable per facade at the measured azimuths. GHI alone
+        would not do it. This is the input the solar-corrected H re-analysis
+        needs.
+      * **Wind for the WHOLE window**, not just the 46 days the local station
+        ran. The infiltration-vs-conduction test (does H scale with wind?)
+        becomes possible after all - it failed earlier purely for lack of
+        wind-speed coverage and dynamic range.
+      **CAVEAT, and it matters: ERA5 and ICON disagree on DNI by 2x.** Spot
+      check for 2026-01-10 13:00: GHI agrees well (198 vs 204 W/m2) but DNI is
+      **180 vs 384 W/m2**. DNI is what drives directional facade gain, so this
+      is not a rounding difference - it would roughly double or halve
+      Wohnzimmer's computed morning load. **Prefer the historical-forecast
+      (ICON) endpoint over the ERA5 archive**, and arbitrate using the Fine
+      Offset **lux** series for 2025-10-05..11-20 where we have ground truth.
+      **Maintainability**: free, no key, open-source and self-hostable, and the
+      underlying data is DWD ICON available directly from opendata.dwd.de - so
+      there is a fallback if Open-Meteo goes away. **Layer 1 must never depend
+      on it**: forecast is layer-2/planner input only, and heatctl already
+      keeps that separation.
+
 - [!] **Solar gain is uncredited in the H estimate, and it is big enough to
       matter.** Raised by the owner 2026-07-29; quantified below.
       Over the analysis window (Oct 5 - Feb 21) the EnEV monthly figures give
