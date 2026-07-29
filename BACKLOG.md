@@ -404,9 +404,20 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
       heating and cooling registers. Note MID (MI-004) covers heating only -
       cooling registers are never legal-for-trade, which is irrelevant here.
       SPECIFICATION, in order of how easily it goes wrong:
-      * **`DTmin` <= 1 K.** THE TRAP. Most meters specify accuracy only above
-        1-3 K. Our observed cooling spread was **0.10-1.01 K** overnight, so a
-        3 K device would be blind precisely when we need it.
+      * **CORRECTED 2026-07-29 after a market survey. My original spec of
+        "DTmin <= 1 K" was WRONG and would have disqualified every meter made.**
+        `DTmin = 3 K` is universal - it is the MID *approval* range, not a
+        measurement cut-off. The figure that actually matters for non-billing
+        use is the separately published **response threshold**
+        (`Ansprechgrenze` / `Anlauf-DT`), which runs **0.01-0.5 K** by model.
+        Specify on THAT.
+        The underlying worry was right and is in fact worse: **below 3 K no
+        manufacturer states an error bound at all.** Applying Kamstrup's own
+        sensor-pair and calculator formulae gives roughly +/-4 % at 3 K,
+        +/-8 % at 1 K, +/-15 % at 0.5 K and **+/-60 % at 0.1 K**. At the bottom
+        of our measured spread NO purchasable meter yields usable energy
+        accuracy. That is a physics limit of the matched pair, not a product
+        gap - so plan around it rather than shopping for a way out.
       * **Ultrasonic**, not vane-wheel: turndown, and no moving parts on a
         30-year horizon.
       * `qp` ~1.5 m3/h for our 0.58-1.44 range - and check **`qi`**, the low
@@ -417,9 +428,49 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
       * M-Bus or Modbus RTU on **its own bus** - must not share the heat
         pump's line, which is under a 200 ms inter-transaction constraint and
         a single-master rule (D-013).
-      Families to look at: Kamstrup MULTICAL, Diehl SHARKY, Engelmann
-      SensoStar, Sontex Supercal - all have heating/cooling variants. Verify
-      the specs above per model rather than trusting the family.
+      **SURVEYED 2026-07-29. Two survive; recommendation is Kamstrup.**
+
+      | | Kamstrup MULTICAL 403-T | Diehl SHARKY 775 |
+      |---|---|---|
+      | response threshold | **0.01 K**, "no cut-off" | 0.125 K |
+      | sensor pair | **explicitly matched** | not stated |
+      | temp range | 2-130 degC | 5-105 degC |
+      | turndown | 1:250, qi 6 l/h | 1:250, qi 6 l/h |
+      | interface | **M-Bus only** | native Modbus RTU |
+      | price DE | **EUR 217.85 net, in stock** | quote only |
+      | cooling duty | 403-**T** = mandatory condensation-proof variant | IP65 potted sensor |
+
+      Choose **Kamstrup MULTICAL 403-T** despite the Diehl's native Modbus:
+      * 0.01 vs 0.125 K is a 12x difference sitting exactly in our band, whose
+        floor is 0.10 K.
+      * Kamstrup states the pair is MATCHED; Diehl does not. At sub-1 K dT the
+        pair matching IS the measurement.
+      * It avoids a trap the Diehl has: SHARKY only books cooling when flow is
+        below 20 degC, so a shoulder-season 21 degC supply would silently
+        register as HEAT. Kamstrup lets the heat/cool switchover threshold be
+        disabled (set theta_hc to 250 degC) so dT alone routes energy - correct
+        for us since we are not billing.
+      * The Modbus advantage is smaller than it looks: we cannot share the heat
+        pump's RS485 line anyway (200 ms rule, single-master, D-013), so it is
+        a second interface either way.
+      REJECTED: Zenner zelsius C5-IUF (no published threshold, no Modbus,
+      battery-only); Sontex Supercal 5 S (fluidic oscillator, not ultrasonic);
+      Landis+Gyr UH50/T550 (legacy family, not for a new 30-year install).
+      **ASK KAMSTRUP BEFORE ORDERING:** does the 0.01 K threshold hold in
+      COMBINED heat/cool mode? Engelmann degrades 0.05 -> 0.5 K when combined,
+      and the others may too without publishing it.
+
+- [ ] **Filter design note from the meter survey: feed VOLUME, not ENERGY.**
+      The meter's energy register inherits the dT error above - up to +/-60 %
+      at 0.1 K - and presents it as a single opaque number the filter cannot
+      weight. The **volume/flow output is ultrasonic and independent of dT**,
+      so it stays accurate across the whole range. Take volume as the strong
+      observation, compute energy from flow plus our own temperature sensors,
+      and let the filter weight the temperature term by its actual
+      dT-dependent variance. This is also the concrete vindication of buying
+      for flow rather than for energy: flow collapses the
+      `m_dot` / `UA_ws` / `NTU` identifiability tangle regardless of how poor
+      the temperature difference gets.
       **Worst case is still a win:** even if the energy register is poor at low
       spread, the ultrasonic FLOW output is unaffected by dT - and flow is what
       collapses the `m_dot` / `UA_ws` / `NTU` identifiability tangle that
