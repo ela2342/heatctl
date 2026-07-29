@@ -423,6 +423,31 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
           returns half the data. Same trap for room temps: winter has eight
           rooms, today three.
 
+- [!] **The 8 kW tank element is FITTED with no control path at all.** Owner,
+      2026-07-29. Needs a contactor or SSR rated for 8 kW, one of the WAGO's
+      spare relay outputs, and an interlock.
+      Worth doing properly rather than minimally, because this is the one heat
+      source whose energy we can measure **exactly**: resistive heating is
+      100 % efficient by construction, so a Shelly on its supply gives true
+      kWh with none of the dT and flow uncertainty that dogs every hydronic
+      measurement here. That makes it the **calibration reference for the
+      whole plant** - a known 8 kW into a known 1000 L of water is the
+      cleanest experiment available for separating C from H, which is exactly
+      the degeneracy the summer-night fit could not break.
+      Only useful once the tank is filled and connected.
+
+- [ ] **Choose the mode-selection valve topology** - 3-way plus non-return, vs
+      4-way, vs two 4-way. Owner has a motorised 3-way on hand.
+      The crux: a 3-way diverter switches the FLOW path only, so the return
+      must be handled too or the idle branch stays hydraulically connected.
+      A non-return valve blocks *forced* backflow but **not thermosiphon**.
+      And the buffer is **inside** the thermal envelope (owner, 2026-07-29 -
+      the EnEV papers say otherwise and are wrong), so a parasitic loop is not
+      a loss to outdoors: in COOLING the plant cools the buffer and the buffer
+      re-warms off the house, spending capacity to move heat in a circle. In
+      heating the same loop is comparatively benign.
+      Needs pipe geometry and relative heights, which are documented nowhere.
+
 - [ ] **Write a 3-point actuator driver for the Afriso ARM 343 mixing valve.**
       Hardware is fitted (see docs/HARDWARE.md): 230 V, two directions, 120 s
       full travel, **no end switches, no position feedback at all**.
@@ -441,9 +466,10 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
           and in software regardless.
       Also confirm the fitted relay modules: HARDWARE.md records only
       "2x750-5xx" and driving 230 V needs the right part with proper
-      separation. **Unblocks the mixing circuit**, which in turn unblocks the
-      latent-lever strategy (fan coil below dew point while the slab stays
-      above it) that is currently impossible on H_DIRECT hydraulics.
+      separation. **Unblocks the mixing circuit FOR HEATING.** Correction
+      2026-07-29: the mixer is on the heating side only and the cooling path
+      bypasses it, so it does NOT unblock the latent lever - that needs a
+      cooling-side low-temperature branch this topology does not provide.
 
 - [!] **WINTER DATA EXISTS: InfluxDB has 2025-10-03 to 2026-02-21 at full
       instrumentation, and it changes the priority order.** Found 2026-07-29.

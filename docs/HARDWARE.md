@@ -603,7 +603,7 @@ Recorded here because none of it is discoverable from the running system.
 |---|---|---|
 | **Mixing valve** | **Afriso ARM 343**, 3-point, 230 V per direction, **120 s** full travel, **no end switches** | fitted — see the section above |
 | **Circulation pumps ×2** | **Wilo Stratos PICO plus 25/0.5-6 (DACH)**, art. **4244375**, unit marking `24w11/074 0969 / I`. One on distribution, one on the heat exchanger — **identical parts** | fitted, **no control interface yet** |
-| **Buffer tank** | 1000 L (Buderus Logalux P990.6 M-C per the EnEV papers), 5 stratification pockets | **in place, not yet filled or connected** |
+| **Buffer tank** | 1000 L (Buderus Logalux P990.6 M-C per the EnEV papers), 5 stratification pockets. **INSIDE the thermal envelope** — the EnEV papers say "außerhalb der therm. Hülle, Keller" and are **wrong** (owner, 2026-07-29) | **in place, not yet filled or connected** |
 | **Electric element** | **8 kW in the tank** | **fitted, NO control path** — needs contactor/SSR + a DO channel + interlock |
 | **Sensor pockets** | stove VL/RL and buffer stratification | **fitted** |
 | **Mode-selection valve** | a motorised 3-way is on hand; final topology undecided | **open question — see below** |
@@ -637,10 +637,10 @@ non-return valve suffices, or whether 4-way, or two 4-way, is needed.
 The consideration that decides it: a 3-way diverter switches the **flow** path
 only. The **return** then has to be handled too, or the idle branch stays
 hydraulically connected. A non-return valve blocks *forced* backflow but does
-**not** block **thermosiphon** — and this buffer sits **outside the thermal
-envelope** with a documented 3.14 kWh/d standby loss, so a parasitic
-convective loop into it during cooling is a direct, continuous loss of exactly
-the capacity we are short of on a design day. Two-valve or 4-way isolation
+**not** block **thermosiphon**. The buffer is **inside** the envelope, so a
+parasitic loop is not a loss to outdoors — in cooling it is worse: the plant
+cools the buffer, the buffer re-warms off the house, and capacity is spent
+moving heat in a circle. Two-valve or 4-way isolation
 removes that failure mode by construction rather than by relying on
 pressure relationships holding in every operating state.
 
