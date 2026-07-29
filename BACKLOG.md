@@ -11,89 +11,62 @@ been forgotten cannot be prioritised — it just sits here.
 Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
 `[x]` here means rejected, kept so it is not re-proposed.
 
-### SHOPPING LIST (consolidated 2026-07-29)
+### SHOPPING LIST — sourced and priced 2026-07-29 (≈ €3,142 gross)
 
-**Not needed — corrections:**
-* ~~10x Möhlenhoff Alpha 5~~ — **all on hand**, survived the surge. Blocked
-  only on the 750-1606, which is ordered.
-* ~~Sensor pockets~~ — already fitted.
-* 750-series modules (2x 750-463, 750-1606, EnOcean module) — owner sourcing
-  second-hand.
+**Not needed:** Möhlenhoff actuators (all on hand) · sensor pockets (fitted) ·
+750-series modules (owner sourcing second-hand).
 
-**To buy:**
+| # | Item | Part / spec | Qty | € gross | Supplier |
+|---|---|---|---|---|---|
+| 1 | Heat meter | **MULTICAL 403 W/K, qp 1.5, DN15, M-Bus** | 1 | 289 | energie-zaehler.com |
+| 2 | M-Bus master | **solvimus MBUS-GE20M** → **Modbus TCP**, 20 loads | 1 | 474 | stark-elektronik.de |
+| 3 | Pump modules | **Wilo Connect RS485 `4268524`** | 2 | 597 | SHK wholesaler (list) |
+| 4 | PT1000 probes | **2-wire**, Ø6 mm, 2 m silicone, class B | 10 | 130 | heizlando.de |
+| 5 | Window contacts | **Eltako FTK** (solar, batteryless) | 8 | 568 | voelkner.de |
+| 5 | EnOcean receiver | **USB 300** (not the WAGO module — see below) | 1 | 36 | unitronic / berrybase |
+| 6 | Element control | **my-PV AC•THOR 9s** | 1 | 829 | geizhals (51 offers) |
+| 7 | Element meter | Shelly Pro 3EM | 1 | 76 | eBay merchants |
+| 8 | USB-RS485 | **Delock 62501**, 3 kV isolated, DIN rail | 1 | 112 | reichelt.de |
+| 8 | Bus cable | Lapp UNITRONIC BUS LD 2×2×0.22, 20 m | 1 | 32 | — |
 
-| # | Item | Spec / part | Notes |
-|---|---|---|---|
-| 1 | **Heat meter** | Kamstrup MULTICAL **403-T**, heat+cool, **qp 1.5**, DN20/G1", M-Bus module | the **-T** suffix is the condensation-proof cooling variant and is mandatory. Ask Kamstrup whether the 0.01 K response threshold holds in COMBINED mode |
-| 2 | **M-Bus master** | M-Bus → MQTT or → Modbus TCP gateway | needed because the Kamstrup is M-Bus only; must supply bus power |
-| 3 | **Pump modules ×2** | Wilo Connect module **Modbus RTU**, art. 4263625 *or* 4268524 | confirm which SKU is correct — Wilo's DE/AT catalogues disagree |
-| 4 | **PT1000 probes ×10** | immersion, for the fitted pockets | **easy to miss**: the 750-463s are inputs, these are the sensors. 5 buffer + 2 stove + 1 after-mixer + 2 DHW |
-| 5 | **EnOcean contacts** | **solar** (STM 330 class, e.g. Eltako FTKB-hg), ~6–8 | solar for the heartbeat — see the EnOcean item |
-| 6 | **Element power controller** | **modulating, 3-phase, 0–8 kW** — not a contactor | see below |
-| 7 | **Element meter** | **Shelly Pro 3EM** | element is 3-phase, 11.5 A/phase |
-| 8 | **RS-485 kit** | cable, 120 Ω termination, USB-RS485 or serial gateway | for the two pump modules |
-| 9 | **RC snubbers ×2** | across the ARM 343 relay contacts | inductive load, contact erosion |
+### Corrections to my own specification
 
-**RESOLVED 2026-07-29: three-phase, 11.5 A per phase.** And the owner wants
-**continuous modulating control, not on/off** — which changes item 6 from a
-contactor into a different class of device entirely.
-
-### Why modulating control matters — and the limit on it
-
-On/off would make the element a crude heat source. Continuous control makes it
-a **system-identification instrument**: resistive heating is 100 % efficient by
-construction, so a precisely known, continuously variable input is the cleanest
-excitation signal available — step tests, staircases, even PRBS. That is what
-breaks the C/H degeneracy a free decay cannot: a decay gives only τ = C/H,
-whereas a known input gives H directly and C follows. It is also the honest
-answer to "n = 0.7 h⁻¹ is 44 % of our loss coefficient and rests on nothing".
-
-**CORRECTION 2026-07-29 (owner).** An earlier version of this said "a known
-8 kW into a known 1000 L is the cleanest experiment available", which
-overstates it. **The SLS-1000 stratifies when charged externally, but the
-immersion element creates convective turbulence and destroys those layers.**
-
-The distinction that matters:
-
-* **Energy is conserved regardless of mixing.** The electrical input is still
-  exactly known, and total energy delivered is still exactly known. So the
-  element remains a valid *excitation source*.
-* **Stratification is not.** The 5-point temperature profile stops representing
-  a settled column the moment the element runs, so **integrating those sensors
-  over assumed layer volumes gives the wrong tank energy content** during and
-  shortly after operation.
-
-Two consequences:
-
-1. **Do not measure the experiment at the tank.** Measure the heat *delivered
-   to the house* on the hydronic side. The tank is an intermediary whose
-   internal state is exactly what element operation makes unobservable.
-2. **The 5-node tank model (docs/DESIGN.md §6.2) needs a mixed mode**, and
-   element operation becomes another **switched input** — the same pattern as
-   doors, windows and the stove. Running the stratified model through an
-   element period will produce confident nonsense.
-
-This also reopens **heat-meter placement**. The recommendation was the heat
-pump's own circuit, for COP. But building identification wants heat *into the
-house*, which is the distribution circuit and captures all three sources.
-Those are different measurements answering different questions; if the element
-is to serve as the identification source, the distribution side is the one that
-sees it.
-
-### What to buy instead of a contactor
-
-Requirements: 3-phase, 0–8 kW continuous, **Modbus (preferred) or 0–10 V**, and
-**not crude phase-angle control on a load this size** — zero-cross burst-fire
-or a purpose-built device that manages flicker. An 8 kW load switching in
-bursts on a domestic supply is a real EN 61000-3-3 concern, not a theoretical
-one.
-
-Candidates under research: **my-PV AC•THOR 9s** (purpose-built, 3-phase, ~9 kW,
-Modbus TCP — but verify it accepts an *external setpoint* rather than only
-chasing PV surplus autonomously, which is the difference between an instrument
-and an appliance), Askoma Askoheat-E (usually a *replacement* element, so may
-not suit an already-fitted one), and generic industrial thyristor power
-controllers (Gefran, Eurotherm, Carlo Gavazzi, Celduc).
+1. **`403-T` is a PREFIX, not a suffix.** The type code is
+   `403-□ □□ □ □□ □□ □ □□`, and **T is the first digit** = Pt500 + cooling /
+   heat-cooling. Saying "403-T" to a distributor is ambiguous — you need the
+   whole string.
+2. **Order meter type digit `6` (non-MID), and not just to save money.** Per
+   Kamstrup's own word list the heat/cool changeover threshold **θhc is "nur
+   möglich mit Zählertyp 6"**. Buy the MID version (type 3) and you lose the
+   parameter that makes a combined meter behave sensibly in a bidirectional
+   plant. Target: **`403-T…6…`**.
+3. **Take qp 1.5 in DN15, not DN20.** qp 1.5 DN20 exists on paper (flow digit
+   70) but **no German shop stocks it** — configure-to-order, quote-only. The
+   other stocked option, qp 2.5 DN20, has **qi 25 l/h against DN15's 15 l/h**,
+   i.e. *worse* low-flow resolution. Wrong trade for an instrument. Adapt the
+   pipework instead.
+4. **PT1000 must be 2-wire.** The **750-463 is 2-wire only** on all four
+   channels (the 2-/3-/4-wire part is the 750-461). 3- or 4-wire heads are
+   wasted money. On Pt1000 the 2-wire error over 2 m is **~0.08 K** — it would
+   be ~0.8 K on Pt100, which is where the technique's bad reputation comes from.
+   ⚠️ **Check pocket bore before ordering: Ø6 mm probes need Ø6 mm+ pockets.**
+5. **Wilo `4268524`, not `4263625`.** Not a pricing inconsistency — 4263625 is
+   the outgoing **Modbus-only** part (one retailer quotes 191 working days, a
+   discontinued-line signature); 4268524 is the current **dual-protocol**
+   RS485/BACnet part, market availability 2026-07-01.
+6. **EnOcean: Eltako `FTK`, and mind the family names.** FTK = solar,
+   batteryless, **transmits status every ~20 min** — that is the heartbeat the
+   design needs. **`FTKE` is the electrodynamic one to avoid**; `TF-FKB` is
+   Eltako's proprietary Tipp-Funk, also avoid. `FTKB` (solar + backup battery)
+   is worth the premium for deep or north-facing reveals.
+   ⚠️ **Charge them in daylight for hours before fitting** or they look dead.
+7. **Do NOT buy the WAGO 750-642 EnOcean module.** €440–541 against €36 for a
+   USB stick, and it exposes only **3 data bytes plus a status byte** in the
+   process image — a byte-wise mailbox. Reassembling and de-duplicating
+   telegrams over polled Modbus TCP makes **a missed poll a lost telegram**,
+   which is exactly wrong for a latched input with a 20-minute heartbeat. Put
+   the USB 300 on the Linux host where the decode and the timeout logic live
+   next to the rest of heatctl.
 
 ### Milestone 0 - bring-up (manual, no code)
 
@@ -779,6 +752,49 @@ controllers (Gefran, Eurotherm, Carlo Gavazzi, Celduc).
           worth buying for ongoing accuracy and drift detection.
       (e) A free-decay window may exist after 2026-02-21 with control stopped.
           Check what the plant actually did between then and heatctl.
+
+- [!] **CONFIRMED: the site runs 2–4 K colder than the forecast on clear calm
+      nights — river-valley cold pooling.** Owner's anecdote, validated
+      2026-07-29 against 949 paired hours (local Fine Offset WH65B vs
+      Open-Meteo `icon_seamless`, 2025-10-05..11-20).
+
+      **Overall the model is fine** — mean bias −0.30 K, median −0.15 K. The
+      bias is **conditional**, and the conditioning variables are exactly the
+      textbook cold-pooling ones:
+
+      | condition | n | median (station − model) |
+      |---|---|---|
+      | cloud <25 % | 95 | **−1.42 K** |
+      | cloud >90 % | 660 | −0.10 K |
+      | wind <4 km/h | 100 | −0.69 K |
+      | wind >8 km/h | 428 | +0.00 K |
+      | **night + clear + calm** | 6 | **−2.90 K** (min −4.01) |
+
+      Whole-distribution p05 is **−3.00 K**, matching the owner's "up to 3 K"
+      exactly. Mechanism: clear sky drives radiative surface cooling, calm air
+      lets the inversion stand, and cold dense air drains into the valley. ICON
+      at ~2 km cannot resolve a small river valley, so it returns the regional
+      value.
+
+      **Why this matters more than a 1.4 K average suggests:**
+      (a) **The bias is worst precisely on the nights that size the plant** —
+          cold, clear, calm. A planner using raw forecast will under-predict
+          overnight loss exactly when the margin is thinnest.
+      (b) **It plausibly explains the 2026-07-29 05:56 incident.** After a
+          clear calm night the house drifted 1.1 K below target and `auto_mode`
+          switched to heating half an hour before sunrise. A planner that knew
+          the site runs colder than forecast under those conditions would have
+          pre-charged the slab instead of reacting.
+      (c) It is **learnable**: bias ≈ f(cloud cover, wind speed, hour). Even a
+          lookup table over those three would capture most of it. All three are
+          in the same Open-Meteo response as the temperature.
+
+      **Caveats.** n=6 for the strictest bin — the *gradient* across the cloud
+      and wind bins (n=95–660 each) is what carries the finding, not that
+      cell. And **daytime comparisons are suspect on the STATION side**: a Fine
+      Offset radiation shield is imperfect, and the day+clear bin scatters from
+      −5.9 to +2.8 K. Night comparisons have no such error and are the clean
+      ones. Re-validate over a full winter once the station is back.
 
 - [x] **WEATHER DATA SOURCE FOUND AND TESTED 2026-07-29 — Open-Meteo, wrapping
       DWD ICON.** All three endpoints verified working for our exact
