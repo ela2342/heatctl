@@ -607,10 +607,50 @@ with outdoors, so omitting this pushes a large real flux into whatever
 disturbance state sits nearest. Add `UA_nb,n = 1.05 × A_shared`.
 
 Separately, **Wohnzimmer and Arbeitszimmer share an open air path** — the OG
-`Luftraum` over the living room. That is advective, not conductive: potentially
-larger than any wall term, and asymmetric because warm air rises. It needs its
-own `ṁ_adv` term, and a buoyancy-driven one is a function of ΔT, so linearise
-around the operating point and let the filter track the coefficient.
+`Luftraum` over the living room, plus a door the owner leaves open. That is
+advective, not conductive, and **it is far larger than any wall term.**
+
+**CORRECTION 2026-07-29: `ṁ_adv` is a SWITCHED INPUT, not a parameter to
+identify.** An earlier draft of this section had the filter track it as a slowly
+varying coefficient. That is wrong, and the magnitudes show why. Standard
+buoyancy-driven two-way doorway exchange,
+`V̇ = ⅓·C_d·W·H^1.5·√(g·ΔT/T̄)`, for a 0.9 × 2.0 m opening:
+
+| ΔT | exchange flow | heat | effective UA |
+|---|---|---|---|
+| 0.5 K | 236 m³/h | 39 W | 79 W/K |
+| 1.0 K | 333 m³/h | 112 W | 112 W/K |
+| **2.0 K** | **471 m³/h** | **316 W** | **158 W/K** |
+| 5.0 K | 745 m³/h | 1248 W | 250 W/K |
+
+Against a **closed** door at ~3.6 W/K, that is a **factor of ~44**. And 158 W/K
+is **59 % of the entire building's H_total (267 W/K)** — one doorway, moving
+nearly a full air change of the heated volume per hour. A state this large
+cannot be a parameter: opening a door changes the plant's topology, and a
+filter that models it as drift will corrupt every parameter it touches.
+
+Note also `UA_eff ∝ √ΔT`, so it is nonlinear, and it is **directional**: warm
+air crosses high, cool air returns low.
+
+**Strategically this door is worth keeping open** (owner, 2026-07-29). The
+`Luftraum` and the fan coil are *above* Wohnzimmer, so the stack effect delivers
+the house's warmest, most humid air straight to the coil — maximum sensible ΔT
+and maximum latent capture — and returns cooled, denser air downward by gravity.
+That is a free thermosiphon, and it is the thermodynamically correct place for a
+cooling emitter: cooling from above works *with* buoyancy, whereas floor cooling
+works against it, which is exactly why the slab is limited to 25–35 W/m². It
+also partly defeats the "capacity is not fungible between rooms" limitation
+elsewhere in this document — air does what the hydraulics cannot.
+
+Same treatment for **infiltration**: `n` is not a constant 0.7 h⁻¹, it is
+0.7 plus whatever an open window is doing. Also a switched input.
+
+**Neither switch is observable today** — see BACKLOG for door/window contacts.
+Until they exist, both `ṁ_adv` and the window term must be treated as
+unmeasured disturbances with wide process noise, and any parameter
+identification run must be discarded if a door or window state changed during
+it. Fitting through an open-window hour yields a much higher `UA_eo` that the
+filter will then carry forever.
 
 **Decoupling is preserved**: neighbour temperature enters as a *measured input*,
 exactly like VL — not as a shared state. §7.1's one-filter-per-room structure

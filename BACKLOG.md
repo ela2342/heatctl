@@ -346,6 +346,48 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
           happens to close the overnight mass balance (15,300 predicted vs
           15,700-18,300 measured) but is not good enough for per-pair coupling.
 
+- [!] **Door and window contacts - they switch the model's topology, not just
+      its comfort.** Owner raised it 2026-07-29 while the Arbeitszimmer door
+      and a Wohnzimmer window were both open.
+      **Why this is not merely telemetry.** An open door between Wohnzimmer and
+      the OG Luftraum carries **~158 W/K** of buoyancy-driven exchange at a
+      2 K difference - 471 m3/h, close to one air change of the whole heated
+      volume per hour, through one doorway. Closed, the same door is ~3.6 W/K.
+      A **factor of ~44**, and the open value is 59 % of the entire building's
+      H_total. An open window likewise changes `n` from the assumed 0.7 h-1 to
+      something much larger.
+      Consequences if we cannot see them:
+      (a) **Parameter identification is corrupted.** A window-open hour looks
+          exactly like a much higher `UA_eo`; the filter fits it and carries
+          the error afterwards.
+      (b) **Disturbance states absorb the difference** - misattributed to
+          solar, occupancy or slab exchange, which are the very things we are
+          trying to estimate.
+      (c) The docs/DESIGN.md 7.1 innovation-whiteness gate would correctly
+          flag the filter as mis-parameterised but could not say WHY, so we
+          would lose planner confidence with no diagnosis.
+      Priority order for fitting: **Wohnzimmer windows first** (that room holds
+      48 % of the house's glazing), then the **Arbeitszimmer/Luftraum door**
+      because it switches a coupling term rather than a loss term, then
+      Kind 1 / Kind 2, then the bathroom.
+      Until they exist: treat both as unmeasured disturbances with wide process
+      noise, and **discard any identification run during which a door or window
+      state changed**.
+
+- [ ] **The open Arbeitszimmer door is a deliberate strategy, not an accident**
+      (owner, 2026-07-29) - record it so nobody "fixes" it. The Luftraum and
+      the fan coil sit ABOVE Wohnzimmer, so the stack effect carries the
+      house's warmest and most humid air to the coil, giving it maximum
+      sensible dT and maximum latent capture, and returns cooled denser air
+      downward under gravity. A free thermosiphon, and the thermodynamically
+      right place for a cooling emitter: cooling from above works WITH
+      buoyancy, while floor cooling works against it - which is precisely why
+      the slab is capped at 25-35 W/m2. It also partly defeats the "capacity
+      is not fungible between rooms" limitation, since air moves what the
+      hydraulics cannot. Worth testing deliberately once the door sensor
+      exists: compare Wohnzimmer cooling rate with the door open vs shut, at
+      matched solar and supply conditions.
+
 - [!] **BUY: combined heating/cooling heat meter (Waerme-/Kaeltezaehler).**
       Decided 2026-07-29. Supersedes the "measure the flow rate" item below by
       choosing the instrument; that item's reasoning still applies.
