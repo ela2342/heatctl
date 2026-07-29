@@ -347,6 +347,32 @@ inlet/outlet straight lengths exist between pump outlet and manifold input.
    the USB 300 on the Linux host where the decode and the timeout logic live
    next to the rest of heatctl.
 
+- [x] **VERIFIED 2026-07-29: no legacy HA automation writes to the plant.**
+      Single-writer is intact; nothing needed disabling. Checked because
+      `docs/HA_INTEGRATION.md` records that a lot of control logic still lives
+      in Home Assistant, which made a second writer plausible.
+
+      | automation | state | last fired |
+      |---|---|---|
+      | Climate: Prevent Condensation (Modbus fallback) | off | 27 Jul 13:55 |
+      | Climate: Chilling Setpoint Supervisory Loop | off | 27 Jul 13:58 |
+      | Heat pump: circulation pump request | off | 27 Jul 13:55 |
+      | Steuerung der Wasserpumpe (einschalten) | off | 28 Jun |
+      | Steuerung der Wasserpumpe (ausschalten) | off | 26 Jul |
+
+      All five were disabled in the **same second** — 2026-07-28 23:25:42 —
+      which is a deliberate cutover, not drift.
+
+      Still enabled, and correctly so, because they are INPUTS rather than
+      writers: `heatctl: bridge legacy wall units to MQTT (temperature +
+      setpoint)` and `heatctl: publish indoor dew point to MQTT`. The first is
+      the one that overwrites room setpoints every minute (see the pre-charge
+      entry below); the second feeds the condensation guard, so disabling it
+      would leave safety on its static fallback and stop cooling entirely.
+
+      Worth re-checking after any HA restore from backup — a snapshot taken
+      before 2026-07-28 23:25 would bring all five back enabled.
+
 - [!] **`safety.setpoint_min_c: 15.0` is not a guard.** Owner flagged it
       2026-07-29. The comment above it says "layer 2 may only set setpoints
       WITHIN these bounds", which is exactly the scenario where the number has
