@@ -29,21 +29,44 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
 | 3 | **Pump modules ×2** | Wilo Connect module **Modbus RTU**, art. 4263625 *or* 4268524 | confirm which SKU is correct — Wilo's DE/AT catalogues disagree |
 | 4 | **PT1000 probes ×10** | immersion, for the fitted pockets | **easy to miss**: the 750-463s are inputs, these are the sensors. 5 buffer + 2 stove + 1 after-mixer + 2 DHW |
 | 5 | **EnOcean contacts** | **solar** (STM 330 class, e.g. Eltako FTKB-hg), ~6–8 | solar for the heartbeat — see the EnOcean item |
-| 6 | **Element contactor** | **depends on phasing — see below** | |
-| 7 | **Element meter** | Shelly Pro 1PM (1~) or 3EM (3~) | electrical metering is exact; this is the plant's calibration reference |
+| 6 | **Element power controller** | **modulating, 3-phase, 0–8 kW** — not a contactor | see below |
+| 7 | **Element meter** | **Shelly Pro 3EM** | element is 3-phase, 11.5 A/phase |
 | 8 | **RS-485 kit** | cable, 120 Ω termination, USB-RS485 or serial gateway | for the two pump modules |
 | 9 | **RC snubbers ×2** | across the ARM 343 relay contacts | inductive load, contact erosion |
 
-**OPEN QUESTION blocking items 6 and 7 — is the 8 kW element single- or
-three-phase?** It changes everything about the switchgear:
+**RESOLVED 2026-07-29: three-phase, 11.5 A per phase.** And the owner wants
+**continuous modulating control, not on/off** — which changes item 6 from a
+contactor into a different class of device entirely.
 
-| | current | contactor | meter |
-|---|---|---|---|
-| 1~ 230 V | **34.8 A** | AC-1 40 A+ | Shelly Pro 1PM |
-| 3~ 400 V | 11.5 A/phase | AC-1 25 A | Shelly Pro 3EM |
+### Why modulating control matters more than it looks
 
-34.8 A on a single phase is a serious load — it would want its own way and
-probably a dedicated circuit. Check the element's rating plate before ordering.
+On/off would make the element a crude heat source. Continuous control makes it
+**the plant's system-identification instrument**. Resistive heating is 100 %
+efficient by construction, so a *precisely known and continuously variable*
+heat input into a known 1000 L of water is the cleanest excitation signal
+available to us — step tests, staircases, even PRBS if we wanted. That is
+exactly what breaks the C/H degeneracy the summer-night fit could not: a single
+free decay gives only the ratio τ = C/H, whereas a known input gives H
+directly, and then C follows.
+
+It is also the honest answer to "n = 0.7 h⁻¹ is 44 % of our loss coefficient
+and rests on nothing" — with a known input you can measure H rather than
+assume its largest component.
+
+### What to buy instead of a contactor
+
+Requirements: 3-phase, 0–8 kW continuous, **Modbus (preferred) or 0–10 V**, and
+**not crude phase-angle control on a load this size** — zero-cross burst-fire
+or a purpose-built device that manages flicker. An 8 kW load switching in
+bursts on a domestic supply is a real EN 61000-3-3 concern, not a theoretical
+one.
+
+Candidates under research: **my-PV AC•THOR 9s** (purpose-built, 3-phase, ~9 kW,
+Modbus TCP — but verify it accepts an *external setpoint* rather than only
+chasing PV surplus autonomously, which is the difference between an instrument
+and an appliance), Askoma Askoheat-E (usually a *replacement* element, so may
+not suit an already-fitted one), and generic industrial thyristor power
+controllers (Gefran, Eurotherm, Carlo Gavazzi, Celduc).
 
 ### Milestone 0 - bring-up (manual, no code)
 
