@@ -388,6 +388,50 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
       exists: compare Wohnzimmer cooling rate with the door open vs shut, at
       matched solar and supply conditions.
 
+- [!] **WINTER DATA EXISTS: InfluxDB has 2025-10-03 to 2026-02-21 at full
+      instrumentation, and it changes the priority order.** Found 2026-07-29.
+      `http://<ha>:8086`, db `homeassistant`, HA's own influxdb credentials,
+      **retention `autogen` = `0s` = INFINITE**. Earliest datapoint overall
+      2023-05-23; 210 entities in the degC measurement alone.
+      The usable window is **2025-10-03 -> 2026-02-21**, which matches the
+      owner's account exactly: moved in August 2025, no proper doors and
+      windows until October, so earlier data is test-bench only. The Controme
+      died **2026-02-21 ~16:20** - every Controme-sourced entity stops within
+      17 minutes, a precisely timestamped step change in control.
+      **What is in that window - far more than we have today:**
+      * **8 rooms**, not 3: `raumtemperatur_{wohnzimmer,gastebad,
+        elternschlafzimmer}` plus `{bad,gastebad,kinderzimmer_naomi,
+        kinderzimmer_natalie,schlafzimmer_eltern}_eg_current_temperature`
+      * **all 12 circuit returns** `rl_1`..`rl_12`
+      * heat pump: leaving/return water, outdoor ambient, tank, and the
+        refrigerant side (cooling coil, exhaust gas, external coil, suction
+        gas, economizer)
+      * room **setpoints** (`solltemperatur_*`) - so the control target is
+        known, not inferred
+      * **the utility Shelly**: `netzstrom_*` active power PER PHASE and
+        total, plus energy counters, plus `compressor_current`
+      Density in Jan 2026: outdoor every ~80 s, leaving water every ~2.2 min,
+      circuit returns every ~3.3 min, room temps every ~11 min.
+      **Why this outranks several open items:**
+      (a) **Winter dT is 2-3x summer.** Our 0.1 K quantisation is a far
+          smaller relative error against a 15-25 K spread than against the
+          0.65 K we fought all this week.
+      (b) **8 rooms makes the per-room model identifiable** - the constraint
+          that docs/DESIGN.md 6.1.1 names as binding.
+      (c) **The 0x8025 calibration can be done retrospectively**, on four
+          months and thousands of compressor start/stop events, instead of
+          waiting for one hot afternoon. The heat pump is single-phase, so
+          use the PER-PHASE Shelly channel rather than the total to isolate
+          it. This supersedes "watch it at full output tomorrow".
+      (d) **Flow may be derivable without the meter**: calibrated electrical
+          power -> datasheet COP map -> thermal output -> with measured
+          leaving/return dT -> `m_dot`. Caveats: nameplate COP is not this
+          unit, part-load COP differs from rated, and the house has other
+          loads. Worth attempting before the meter arrives; the meter remains
+          worth buying for ongoing accuracy and drift detection.
+      (e) A free-decay window may exist after 2026-02-21 with control stopped.
+          Check what the plant actually did between then and heatctl.
+
 - [!] **BUY: combined heating/cooling heat meter (Waerme-/Kaeltezaehler).**
       Decided 2026-07-29. Supersedes the "measure the flow rate" item below by
       choosing the instrument; that item's reasoning still applies.
