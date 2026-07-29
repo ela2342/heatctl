@@ -193,6 +193,47 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
       deliberately and briefly, not by accident, and only once the actuators
       are in; tripping a flow failsafe repeatedly is not free wear-wise.
 
+- [!] **auto_mode heated the house in July, for correct reasons. 2026-07-29.**
+      First time `auto_mode` (D-020) has ever flipped the plant, and it flipped
+      the wrong way half an hour before sunrise. Sequence:
+        * compressor OFF from ~23:00, mean 0.00 Hz through to 05:00 - the plant
+          was not cooling at all. The house lost ~0.65 K to an 11-13 degC night
+          through the envelope (~2.3 kW against H_total 267 W/K).
+        * the water-setpoint loop walked the cooling setpoint 19 -> 25 and
+          **hit `cooling_max_c` at 02:00**, then sat saturated for four hours.
+          Raising a cooling setpoint cannot stop passive envelope loss; in
+          cooling mode there is no actuator for "stop losing heat".
+        * 05:56 the house average reached 1.10 K cold, clearing
+          `mode_deadband_c: 1.0` and `mode_dwell_s: 3600` -> switched to HEATING.
+        * 06:37 raised the heating setpoint 25 -> 26; supply peaked at 30.1
+          degC and charged the slab, immediately before ~20 kWh of morning sun
+          arrived through the east facade. Wohnzimmer reached 26.4 against a
+          23.0 target. Owner had it flipped back manually at 07:39.
+      **Every step was correct on the information available.** The gap is
+      anticipation - the same one as the 2026-07-28 solar item, now biting in
+      the opposite and more expensive direction: yesterday we merely failed to
+      pre-cool, today we actively charged the slab before the load arrived.
+      THREE separate fixes, in increasing order of ambition:
+      (a) **Cheapest and available now: use setpoint-loop saturation as an
+          early warning.** The loop hit its clamp at 02:00 - nearly four hours
+          before the mode flip. A saturated compensation loop means the mode is
+          probably wrong, and it is a local signal needing no forecast. At
+          minimum it should be published and alarmed; arguably it should damp
+          the mode switch rather than accelerate it.
+      (b) **`off` was probably the right answer at 05:56, not `heating`.**
+          Turning the plant off does not stop envelope loss either, but it does
+          not charge the slab. Check whether `demand.py` can ever choose `off`
+          as the plant mode, or only heating/cooling - and whether it should.
+      (c) **Forecast-aware mode switching** (docs/DESIGN.md WP-H). A planner
+          holding the east-facade solar forecast would never have started
+          heating at 05:56. This is the same planner the solar item needs.
+      **And the structural problem underneath, which no mode logic fixes:**
+      Gaestebad wanted heat (22.3 vs 23.5) while Wohnzimmer wanted cooling
+      (26.4 vs 23.0) AT THE SAME TIME, on one water temperature. Distribution
+      can share energy between rooms; it cannot reverse its sign. That is an
+      argument for the fan coil's independence, and eventually for a mixing
+      circuit - see the latent-lever item.
+
 - [!] **The condensation guard is BLIND to showers - measured 2026-07-28.**
       The owner showered in Gaestebad in the morning and asked whether it
       showed up. It did not, anywhere. `sensor.luftfeuchte_gastebad` stayed
