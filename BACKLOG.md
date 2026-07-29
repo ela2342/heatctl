@@ -795,6 +795,33 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
       **on the station side**, and the correction below deliberately applies at
       night only.
 
+      **PRECISION CAVEAT — the WU history path returns INTEGER degC.** All
+      3,389 values are whole numbers, 11 distinct values across an 11 K band.
+      The station side of the winter analysis is therefore quantised to 1 K.
+      What that does and does not damage:
+      - **Headline survives.** Rounding is symmetric and near-unbiased, so a
+        median over n=50 and n=263 is not moved by it, and 1 K of quantisation
+        cannot manufacture a 30-fold contrast between −3.00 and −0.10 K.
+      - **Do not over-read the exact −3.00.** Medians of integers land on
+        integers and half-integers preferentially; that it matches the anecdote
+        to the decimal is partly an artefact of the grid. The honest claim is
+        "about 3 K", which is what was anecdotally reported anyway.
+      - **The sd figures are inflated**, by roughly 0.29 K in quadrature
+        (uniform rounding over 1 K). True scatter on the clear-calm-night cell
+        is nearer 0.98 than 1.02 K.
+      - **The RMSE improvements are understated if anything** — quantisation
+        noise is irreducible error the correction cannot fit, so real skill is
+        slightly better than the measured 20.6 % / 65 %.
+      - **A fog/saturation test on this data is NOT valid.** Comparing two
+        independently-rounded integers against a 1 K threshold is meaningless;
+        an earlier "84 % of clear calm night hours are saturated" figure from
+        this data is withdrawn. The owner's direct visual observation of
+        valley mist is better evidence than that number was.
+
+      **Consequence for the refit:** the restored local path carries 0.1 K
+      resolution. Refit on local data from now on, and use WU only to backfill
+      gaps, accepting the coarser resolution where it is the only source.
+
 - [ ] **PLAN: learn the forecast temperature bias (layer 2 / planner only).**
       Candidate model, fitted and validated 2026-07-29. Every input comes from
       the same forecast response as the temperature, so it is computable at
