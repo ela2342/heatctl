@@ -13,7 +13,7 @@ outputs fall to a safe state when writes stop.
 | 2   | 750-652   | RS485 (unused)                      | IR/HR 0-11 |
 | 3-6 | 4x750-463 | 16x PT1000, degC*10, 2's complement | input reg. 12-27 |
 | 7-10| 4x750-559 | **16x 0-10V (0..32767)**            | holding reg. 12-27 |
-| 11-12| 2x750-5xx| 4 relays (2DO each)                 | coils 0-3 |
+| 11-12| **2x750-517**| 4 relay outputs (2 changeover each), potential-free | coils 0-3 |
 |     | 750-600   | bus end terminal                    | -      |
 
 **Changed 2026-07-27: two more 750-559 fitted** (positions 9 and 10), so
@@ -588,12 +588,39 @@ interlock internally, and in software regardless.
 **5. It is not a fast element.** 120 s full travel sits between the Alpha 5's
 150 s and the fan coil's seconds. Any cascade must treat it as slow.
 
-### Open hardware question
+### Relay modules: 750-517 — adequate, with one caveat
 
-The two relay modules are recorded here only as `2x750-5xx` — **the exact part
-numbers are unconfirmed**, and this now matters: driving the ARM 343 needs
-**230 V-rated** relay contacts with proper separation, and two channels of the
-four. Confirm what is actually fitted before wiring 230 V to it.
+Confirmed by the owner 2026-07-29: the relay modules are **2× 750-517**,
+potential-free changeover contacts, AC 250 V rated. Driving the ARM 343 needs
+two of the four channels and is well inside the contact rating — a 3-point
+valve actuator of this class draws single-digit watts, so tens of mA at 230 V.
+
+**The caveat is wear, not rating.** These are *mechanical* relays switching an
+*inductive* AC load (a motor). Inductive switching arcs on break, which erodes
+contacts considerably faster than the datasheet's resistive-load operation
+count suggests. So the relay-wear budget already required for the ARM 343
+driver — deadband, minimum pulse, minimum rest — is **more** binding than the
+bare 10⁵-operation figure implies, and an **RC snubber across each contact** is
+worth fitting. Cheap now, tedious once the panel is closed.
+
+### Power injection: 750-602 and 750-612 both on hand
+
+The owner holds both against the internal-bus / field-potential budget, which
+covers the concern either way. Worth keeping the two problems distinct, because
+they are different failure modes and only one is about module count:
+
+* **Internal system bus (5 V, regenerated from 24 V)** — the coupler feeds a
+  finite current down the internal bus. Adding modules eventually exceeds it,
+  and the symptom is not a clean failure but modules dropping out or reading
+  nonsense at the far end of the rail.
+* **Field-side potential** — the 24 V supplying the I/O itself, and segmenting
+  it so one group's fault does not take out another.
+
+Before adding the 750-463 modules the buffer and stove sensors need, sum the
+modules' internal-bus current draw against the 750-352's budget. WAGO's own
+configurator does this arithmetic; do not eyeball it. **Which of the two
+modules is the right answer depends on which limit you actually hit** — verify
+each part's role in its datasheet rather than assuming from the number.
 
 ## Plant inventory as built — owner, 2026-07-29
 

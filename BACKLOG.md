@@ -494,9 +494,12 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
           as the heat pump's flash-write budget (D-013).
       (d) Mutual interlock, in hardware if the actuator does not provide it
           and in software regardless.
-      Also confirm the fitted relay modules: HARDWARE.md records only
-      "2x750-5xx" and driving 230 V needs the right part with proper
-      separation. **Unblocks the mixing circuit FOR HEATING.** Correction
+      Relay modules confirmed as **2x750-517** (owner, 2026-07-29),
+      potential-free changeover, AC 250 V - adequate for the ARM 343 with room
+      to spare. **But add an RC snubber per contact**: these switch an
+      inductive motor load, and arcing on break erodes contacts far faster
+      than the datasheet's resistive-load operation count suggests, which
+      makes (c) more binding rather than less. **Unblocks the mixing circuit FOR HEATING.** Correction
       2026-07-29: the mixer is on the heating side only and the cooling path
       bypasses it, so it does NOT unblock the latent lever - that needs a
       cooling-side low-temperature branch this topology does not provide.
