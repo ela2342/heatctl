@@ -68,6 +68,64 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
    the USB 300 on the Linux host where the decode and the timeout logic live
    next to the rest of heatctl.
 
+### Layer 2 — first cut shipped 2026-07-29 (WP-F scaffold, observe-only)
+
+- [x] **`optimizer/` exists and runs.** Own process, MQTT only, allowed to
+      fail. `venv/bin/python -m optimizer.main ./config.yaml`.
+      46 tests, no new runtime dependencies (pure-Python linear algebra and
+      `urllib`, deliberately — the dependency set is part of the 30-year
+      promise).
+
+- [x] **It structurally cannot steer the plant.** Every publish goes through
+      `_publish()`, which prefixes `heatctl/opt/` and raises on any attempt to
+      escape the namespace; `heatctl/set/#` is unreachable from layer 2 and a
+      test holds it. This is not staging discipline — DESIGN.md §2.2 records
+      that `ControlPlane` applies commands immediately with **no receive
+      timestamp and no expiry sweep**, so a layer 2 that hung after sending a
+      setpoint would leave the house steered by its last thought indefinitely.
+
+- [x] **Whole-house 2-state model, not the per-room 3-state one.** DESIGN.md
+      §6.1.1 is explicit that the 3-state form needs the per-room Shelly H&T
+      sensors and is otherwise unidentifiable; today only two rooms have any
+      air measurement. Modelled time constants: **air 5.2 h, slab 8.4 h.**
+
+- [x] **Per-facade solar, at the measured true azimuths.** Replaces a lumped
+      aperture. Beam and diffuse are separated (projecting GHI onto a vertical
+      window with a cosine is meaningless under overcast), solar position is
+      computed hourly, and the survey's flat 0.9 non-perpendicular factor is
+      deliberately NOT applied on top — solar.py computes the real incidence.
+      Effective aperture **16.10 m²**, i.e. the earlier lumped 8 m² guess was
+      out by a factor of two.
+
+      Live check, a clear summer day: east peaks 08:00 UTC at 4.2 kW, south
+      12:00 at 3.5 kW, west 16:00 at 1.1 kW. **60.4 kWh/day through the
+      glazing, 6.37 kW peak**, against a 3.31 kW steady-state demand to hold
+      21 °C at the coldest hour ahead. Solar gain is roughly twice the design
+      heating load — the owner's instinct that solar dominates is confirmed
+      with a wide margin.
+
+- [ ] **Two weeks of innovation whiteness is the next gate** (WP-F). The
+      filter records innovations and publishes mean/sd/lag-1 for exactly this.
+      Expect the daytime residual to be the first thing to move, because
+      `f_sol` (the air/floor split of solar gain) is a guess.
+
+- [ ] **Known weak inputs, in order.** Each is a named parameter with its
+      confidence in `optimizer/params.yaml` rather than a buried constant:
+      1. **`Q_heat`** — no heat meter, so delivered heat is a calibrated
+         current fit times a flat seasonal COP. DESIGN.md §6.1.1 calls flow
+         "a model prerequisite, not an accounting nicety". The MULTICAL 403 on
+         the shopping list retires this. Slab process noise is set high to say
+         so.
+      2. **`ua_sa`** (slab→air, 1000 W/K) — estimated, not surveyed.
+      3. **`f_sol`** (0.30) — a guess.
+      4. **house air = mean of two rooms** — a biased estimate of a
+         seven-room house, knowingly used as one.
+
+- [ ] **Before layer 2 may command anything:** command TTL + expiry sweep in
+      `ControlPlane` (DESIGN.md §2.2), then WP-H's planner. Do not shortcut
+      the order — the existing two set topics are already TTL-less, and adding
+      more without it makes them strictly less safe.
+
 ### Milestone 0 - bring-up (manual, no code)
 
 - [~] Hardware: the **2x 750-559 arrived and are fitted** (2026-07-27,

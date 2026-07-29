@@ -6,8 +6,14 @@ boring technology, minimal pinned dependencies, single-file hardware truth.
 
 - **Layer 1** (`heatctl/`): control core + safety + telemetry. Keeps the
   house warm with Home Assistant, the optimizer, or the network dead.
-- **Layer 2** (`optimizer/`, planned): weather/PV-aware setpoint
-  optimization over MQTT. Allowed to fail.
+- **Layer 2** (`optimizer/`): weather/PV-aware setpoint optimization over
+  MQTT. Allowed to fail. **Observe-only today** — it runs the thermal model
+  and publishes what it believes under `heatctl/opt/…`, and it structurally
+  cannot send a set command (see `optimizer/estimator.py`). Setpoint
+  optimization proper is gated on `ControlPlane` gaining command TTL and on
+  the model earning trust against its own innovation statistics.
+
+      venv/bin/python -m optimizer.main ./config.yaml
 
 ## Architecture
 

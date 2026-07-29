@@ -1,0 +1,140 @@
+# Layer 2 model parameters.
+#
+# PROVENANCE MATTERS MORE THAN THE NUMBERS HERE. Every value carries where it
+# came from and how well it is known, because the whole point of running a
+# filter is to improve the badly-known ones from data - and you cannot tell
+# which those are from the values alone. Confidence levels follow
+# docs/DESIGN.md 6.1.2.
+#
+# Site-specific figures are derived in docs/BUILDING.local.md (git-excluded).
+# What appears here is the thermal reduction only, which carries no site
+# identity, so this file is safe in the repository.
+
+building:
+  # Air -> outdoor. Fabric+bridges 148.83 W/K (fair; 18 % of it is a Bbl 2
+  # default) plus ventilation 118.40 W/K at n = 0.7 /h (POOR - assumed, never
+  # measured; a blower-door test is on BACKLOG). Their sum, 267.2 W/K, is
+  # independently corroborated by the measured whole-house H of ~267 W/K,
+  # which is a genuinely good sign for the total even though the SPLIT
+  # between fabric and ventilation remains unverified. That split does not
+  # matter for a 2-state model; it will matter for per-room work.
+  ua_ao: 267.2          # W/K   confidence: good in total, poor in split
+
+  # Slab core -> room air. NOT a survey figure. EN 1264's upward surface
+  # coefficient of ~10.8 W/(m^2 K) over 136.40 m^2 would give ~1470 W/K, but
+  # that is the floor SURFACE to air, and what this model needs is the pipe
+  # plane to air - the screed cover above the pipes is a series resistance
+  # that the surface figure excludes. 1000 W/K is that number de-rated by
+  # roughly a third.
+  ua_sa: 1000.0         # W/K   confidence: POOR - estimated, learn this one
+
+  # Slab -> ground. From the as-built floor build-up.
+  ua_sg: 29.0           # W/K   confidence: good
+
+  # Everything that is not the slab: air, furniture, internal partitions,
+  # plaster. Whole-building C is predicted at ~15,300 Wh/K and measured at
+  # 15,700-18,300 Wh/K; taking the predicted total less the slab gives this.
+  # The partition contribution inside it (~2,000 Wh/K) carries +-20 % on its
+  # own because the internal wall run is a geometric estimate, not a take-off.
+  c_air_wh: 6600.0      # Wh/K  confidence: fair
+
+  # Floor slab, from as-built layers: 63.7 Wh/(m^2 K) x 136.40 m^2.
+  c_slab_wh: 8691.0     # Wh/K  confidence: good
+
+  # Split of solar gain between air and floor. Through large windows most of
+  # the beam lands on the floor, so the majority goes to the slab. This is a
+  # guess with no measurement behind it and is a prime candidate for the
+  # identification ladder - it is also the parameter most likely to be
+  # responsible for a daytime innovation bias.
+  f_sol: 0.30           # -     confidence: POOR - guess
+
+  # Internal gains: people, appliances, standing losses. Derived from the
+  # household-gain decomposition (see BACKLOG.md) at roughly +-10 W/K
+  # equivalent. Treated as a constant here; it plainly is not one, and the
+  # diurnal pattern is another candidate for the innovation to expose.
+  q_internal_w: 350.0       # W     confidence: fair on the daily mean
+
+  # Undisturbed ground temperature under the slab. Annual mean air temperature
+  # is the standard first approximation; it drifts seasonally by a couple of K
+  # under a heated slab and is treated as a constant here because ua_sg is
+  # small enough that the resulting error is well under the noise.
+  t_ground: 10.0        # degC  confidence: fair
+
+# Per-facade glazing, from the certificate's own area build-ups (which sum
+# exactly to its stated per-orientation totals) and the measured true
+# azimuths. Window areas and orientations describe a building's shape, not its
+# location - the coordinates that would locate it stay in the environment and
+# in docs/BUILDING.local.md, never here.
+#
+# THE AZIMUTHS ARE MEASURED, NOT THE DRAWING LABELS. The building is rotated
+# 16.3 deg from north, so the elevation named "Ost" actually faces 106.3 deg
+# (ESE) and catches sun appreciably earlier than a true-east wall would. Using
+# the nominal 0/90/180/270 would put the morning gain peak in the wrong hour,
+# which for a slab-charging planner is worse than getting the magnitude wrong.
+#
+# `aperture_m2` = brutto x 0.70 frame x 0.90 shading x 0.50 g-value.
+# The building survey's "effective collector area" also folds in a flat 0.9
+# for non-perpendicular incidence; that constant is DELIBERATELY EXCLUDED here
+# because solar.py computes the real incidence angle hourly. Re-applying it
+# would double-count and under-predict gain by about a tenth.
+solar:
+  albedo: 0.20              # -   grass/gravel; fresh snow reaches ~0.8
+  facades:
+    - {name: N, azimuth_deg:  16.3, aperture_m2: 1.550}   # brutto  4.92 m^2
+    - {name: E, azimuth_deg: 106.3, aperture_m2: 6.785}   # brutto 21.54 m^2
+    - {name: S, azimuth_deg: 196.3, aperture_m2: 6.180}   # brutto 19.62 m^2
+    - {name: W, azimuth_deg: 286.3, aperture_m2: 1.588}   # brutto  5.04 m^2
+
+# Filter tuning. These are NOT physical parameters - they encode how much we
+# distrust the model against how much we distrust the sensors.
+filter:
+  # Process noise, per state, as a standard deviation in K per hour. The slab
+  # gets much more than the air because its driving input Q_heat is derived
+  # from an assumed pump curve rather than measured (no heat meter yet), so
+  # the slab equation is the one carrying the unmodelled error. Revisit both
+  # when the MULTICAL 403 is fitted.
+  q_air_k_per_h: 0.15
+  q_slab_k_per_h: 0.40
+
+  # Measurement noise on room air temperature. The Controme wall units report
+  # to 0.1 K, but they are wall-mounted at one point in a room and read the
+  # wall as much as the air, so the useful figure is far worse than the
+  # resolution. This is a stand-in until the Shelly H&T units land.
+  r_air_k: 0.50
+
+  # Initial state uncertainty. Air starts well known (we measure it); the slab
+  # starts badly known, because nothing measures it directly and its initial
+  # value is a guess from the air temperature.
+  p0_air_k: 1.0
+  p0_slab_k: 5.0
+
+# Turning the heat pump's electrical power estimate into thermal watts.
+# THIS IS THE MODEL'S WEAKEST INPUT and the reason the slab process noise is
+# set as high as it is. There is no heat meter yet, so delivered heat is
+# inferred from a calibrated current-to-power fit and a flat assumed COP,
+# which ignores that COP varies strongly with supply temperature and outdoor
+# conditions. docs/DESIGN.md 6.1.1 calls flow "a model prerequisite, not an
+# accounting nicety"; the MULTICAL 403 on the shopping list is what retires
+# this block.
+heat_input:
+  assumed_cop: 3.35         # -     confidence: POOR - seasonal average, flat
+  # Below this electrical power the pump is treated as off rather than
+  # modulating, so standby draw is not integrated into the slab as heat.
+  standby_w: 250.0
+
+# Forecast bias correction for the local river valley. Derived 2026-07-29 from
+# 3,388 paired winter hours; see BACKLOG.md for the derivation, the
+# out-of-sample validation, and the 1 K quantisation caveat on the source
+# data. These are SITE CONSTANTS - they describe this valley and must never be
+# imported from elsewhere.
+#
+#   dT = -a * (1 - cloud_cover/100) * exp(-wind_10m / w0)      [night only]
+#
+weather:
+  bias_a_k: 5.0         # K       amplitude at zero cloud, zero wind
+  bias_w0_kmh: 8.0      # km/h    wind scale that kills the inversion
+  # Refuse to apply a correction larger than this. A refit that goes wrong
+  # should degrade to the raw forecast, not steer the plant with nonsense.
+  bias_clamp_k: 5.0
+  latitude: null        # set in the deployed config; site-identifying
+  longitude: null
