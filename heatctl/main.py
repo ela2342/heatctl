@@ -364,7 +364,7 @@ class Controller:
                 await self.plane.publish(f"override/{valve}", reason)
 
         await self._hold_source_power()
-        await self._trim_water_setpoint(now)
+        await self._trim_water_setpoint(state, now)
 
         # Make the heat pump's own mode follow the plant's, and shout if it
         # does not. Cheap to call every cycle: the client drops a write that
@@ -428,7 +428,7 @@ class Controller:
             return          # nothing read yet; set_power would refuse anyway
         await self.hp.set_power(d.source_request, d.reason)
 
-    async def _trim_water_setpoint(self, now: float) -> None:
+    async def _trim_water_setpoint(self, state, now: float) -> None:
         """Move the heat pump's water setpoint to match the house's demand.
 
         Slow and integer by design (1 K / 30 min): every write wears the
@@ -441,7 +441,18 @@ class Controller:
         reg = "setpoint_cooling" if self.mode == "cooling" else "setpoint_heating"
         addr = 0x0090 if self.mode == "cooling" else 0x0091
         current = self.hp.config.get(addr)
-        leaving = self.hp.status.get(0x8012)
+        # The MANIFOLD supply sensor, same one Safety.apply reads, and for the
+        # same reason: condensation is about the water reaching the slab. It is
+        # also a PT1000 at 0.1 K against the heat pump register's 0.5 K, so the
+        # soft loop and the hard guard can no longer disagree about whether a
+        # breach is happening. Heat pump leaving water stays as the fallback -
+        # decoded through the register map, never with a hardcoded factor
+        # (see heatpump_map.py on the 0.5-for-both bug).
+        supply = state.temps.get("vl_total")
+        if supply is None or "vl_total" in state.faults:
+            lw = hpm.by_name("leaving_water")
+            raw = self.hp.status.get(lw.addr)
+            supply = None if raw is None else hpm.decode(lw, raw)
         dp = self.plane.dew_point(self.safety.dew_max_age)
 
         decision = self.water_sp.step(
@@ -450,7 +461,7 @@ class Controller:
             max_open=self._peak_demand,
             current=None if current is None else float(current),
             dew_point=dp,
-            leaving_water=None if leaving is None else leaving * 0.5,
+            supply_temp=supply,
             supply_limit=(self.safety.cooling_supply_limit()
                           if self.mode == "cooling" else None),
             now=now)

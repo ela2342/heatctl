@@ -33,8 +33,17 @@ and pointless. Roughly 4-10 writes a day.
 safety event, not a trim, so it jumps immediately and ignores the interval.
 Note P04 targets RETURN water while condensation is about the water reaching
 the slab, so no clamp on the setpoint can guarantee anything - feedback on the
-MEASURED leaving water is the actual mechanism, and the floor below is a
-heuristic backstop.
+MEASURED supply is the actual mechanism, and the floor below is a heuristic
+backstop.
+
+**It reads the same sensor the safety guard does** (`vl_total`, the manifold
+PT1000 at 0.1 K) rather than the heat pump's leaving-water register (scaled
+0.5, so quantised to 0.5 K). Two controllers answering the same physical
+question - "is the water reaching the slab dangerous" - from two different
+sensors at two different resolutions is a defect in itself, quite apart from
+the precision: it means the soft loop and the hard guard can disagree about
+whether a breach is happening. The heat pump register remains as a FALLBACK
+for when the manifold sensor is faulted, because some reading beats none.
 
 Honest limitation while only two circuits are actuated: the other eight are
 open pipe and cannot throttle, so `max_open` barely reflects load and this
@@ -212,7 +221,7 @@ class SetpointController:
 
     def step(self, mode: str, deviation: float | None, max_open: float | None,
              current: float | None, dew_point: float | None,
-             leaving_water: float | None, supply_limit: float | None,
+             supply_temp: float | None, supply_limit: float | None,
              now: float) -> SetpointDecision:
         if not self.enabled or mode not in ("heating", "cooling"):
             return SetpointDecision(None, "disabled")
@@ -225,8 +234,8 @@ class SetpointController:
             self.forget_constraint()
 
         # --- safety first, and it ignores the cadence ---
-        if (mode == "cooling" and leaving_water is not None
-                and supply_limit is not None and leaving_water < supply_limit
+        if (mode == "cooling" and supply_temp is not None
+                and supply_limit is not None and supply_temp < supply_limit
                 and dew_point is not None):
             # Record BEFORE deciding whether to jump. The breach is real
             # information about this setpoint whether or not the jump is
@@ -239,7 +248,7 @@ class SetpointController:
                 self._last_change = now
                 return SetpointDecision(
                     target,
-                    f"leaving water {leaving_water:.1f} below limit "
+                    f"supply {supply_temp:.1f} below limit "
                     f"{supply_limit:.1f} - jumping",
                     BREACH)
 

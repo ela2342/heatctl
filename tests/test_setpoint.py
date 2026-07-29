@@ -38,9 +38,9 @@ def sp(cfg):
 
 
 def call(c, mode="cooling", dev=-1.0, open_pct=95.0, current=20.0,
-         dew=12.0, leaving=20.0, limit=14.0, now=10_000.0):
+         dew=12.0, supply=20.0, limit=14.0, now=10_000.0):
     return c.step(mode=mode, deviation=dev, max_open=open_pct, current=current,
-                  dew_point=dew, leaving_water=leaving, supply_limit=limit,
+                  dew_point=dew, supply_temp=supply, supply_limit=limit,
                   now=now)
 
 
@@ -110,7 +110,7 @@ def test_a_measured_breach_jumps_immediately(sp):
     c = sp()
     call(c, now=10_000.0)                                   # consume the interval
     d = c.step(mode="cooling", deviation=-2.0, max_open=95.0, current=16.0,
-               dew_point=14.0, leaving_water=15.0, supply_limit=16.0,
+               dew_point=14.0, supply_temp=15.0, supply_limit=16.0,
                now=10_000.0 + 10)
     assert d.kind == BREACH
     assert d.target == 20                                   # dew 14 + 6
@@ -120,7 +120,7 @@ def test_a_breach_never_lowers_the_setpoint(sp):
     """If the setpoint is already above the jump target, leave it there."""
     c = sp()
     d = c.step(mode="cooling", deviation=-2.0, max_open=95.0, current=24.0,
-               dew_point=14.0, leaving_water=15.0, supply_limit=16.0,
+               dew_point=14.0, supply_temp=15.0, supply_limit=16.0,
                now=10_000.0)
     assert d.kind != BREACH
 
@@ -128,7 +128,7 @@ def test_a_breach_never_lowers_the_setpoint(sp):
 def test_no_breach_when_the_supply_is_above_the_limit(sp):
     c = sp()
     d = c.step(mode="cooling", deviation=0.0, max_open=10.0, current=20.0,
-               dew_point=12.0, leaving_water=20.0, supply_limit=14.0,
+               dew_point=12.0, supply_temp=20.0, supply_limit=14.0,
                now=10_000.0)
     assert d.kind == TRIM
 
@@ -196,7 +196,7 @@ def test_the_breach_branch_still_acts_during_start_up_settling(sp):
     """Safety is not subject to the settling delay."""
     c = sp(primed=False)
     d = c.step(mode="cooling", deviation=-2.0, max_open=95.0, current=16.0,
-               dew_point=14.0, leaving_water=15.0, supply_limit=16.0,
+               dew_point=14.0, supply_temp=15.0, supply_limit=16.0,
                now=50_000.0)
     assert d.kind == BREACH
 
@@ -221,11 +221,11 @@ def test_a_setpoint_the_condensation_guard_rejected_is_not_retried(sp):
     d = call(c, current=19.0, dev=-1.0, open_pct=100.0, limit=14.7, now=0.0)
     assert d.target == 18 and d.kind == TRIM
     # 12:31 - leaving water breaches at 18; the guard jumps it back to 19.
-    d = call(c, current=18.0, leaving=14.5, limit=14.7, dew=12.7, now=420.0)
+    d = call(c, current=18.0, supply=14.5, limit=14.7, dew=12.7, now=420.0)
     assert d.kind == BREACH and d.target > 18
     # 13:01 - the interval has elapsed and the house is still warm. Before the
     # fix this trimmed straight back to 18 and the cycle began again.
-    d = call(c, current=19.0, dev=-1.0, open_pct=100.0, leaving=20.0,
+    d = call(c, current=19.0, dev=-1.0, open_pct=100.0, supply=20.0,
              limit=14.8, dew=12.8, now=2_300.0)
     assert d.target is None
     assert d.kind == BLOCKED
@@ -236,7 +236,7 @@ def test_the_block_lifts_when_the_supply_limit_actually_falls(sp):
     """The constraint moving is the ONLY thing that may re-open the attempt.
     Air drying out is real new information; the clock is not."""
     c = sp()
-    call(c, current=18.0, leaving=14.5, limit=14.7, dew=12.7, now=0.0)
+    call(c, current=18.0, supply=14.5, limit=14.7, dew=12.7, now=0.0)
     blocked = call(c, current=19.0, dev=-1.0, open_pct=100.0, limit=14.7,
                    now=2_000.0)
     assert blocked.kind == BLOCKED
@@ -251,7 +251,7 @@ def test_a_rising_limit_does_not_lift_the_block(sp):
     the limit rose all afternoon, 14.1 to 16.1 degC - which makes the rejected
     setpoint MORE infeasible, not less."""
     c = sp()
-    call(c, current=18.0, leaving=14.5, limit=14.7, dew=12.7, now=0.0)
+    call(c, current=18.0, supply=14.5, limit=14.7, dew=12.7, now=0.0)
     d = call(c, current=19.0, dev=-1.0, open_pct=100.0, limit=16.1, dew=14.1,
              now=9_000.0)
     assert d.kind == BLOCKED
@@ -261,7 +261,7 @@ def test_a_less_aggressive_setpoint_is_still_allowed(sp):
     """Blocking 18 must not block 20. Only setpoints at or below the rejected
     one are known-infeasible; blocking everything would strand the plant."""
     c = sp()
-    call(c, current=18.0, leaving=14.5, limit=14.7, dew=12.7, now=0.0)
+    call(c, current=18.0, supply=14.5, limit=14.7, dew=12.7, now=0.0)
     d = call(c, current=21.0, dev=-1.0, open_pct=100.0, limit=14.7, now=2_000.0)
     assert d.target == 20 and d.kind == TRIM
 
@@ -270,8 +270,8 @@ def test_the_memory_keeps_the_least_aggressive_failure(sp):
     """If 19 breaches, 18 certainly would too. Remembering 18 instead would
     leave 19 to be rediscovered the hard way, one wasted cycle at a time."""
     c = sp()
-    call(c, current=18.0, leaving=14.0, limit=14.7, dew=12.7, now=0.0)
-    call(c, current=19.0, leaving=14.5, limit=14.7, dew=12.7, now=60.0)
+    call(c, current=18.0, supply=14.0, limit=14.7, dew=12.7, now=0.0)
+    call(c, current=19.0, supply=14.5, limit=14.7, dew=12.7, now=60.0)
     d = call(c, current=20.0, dev=-1.0, open_pct=100.0, limit=14.7, now=2_000.0)
     assert d.kind == BLOCKED          # 19 is blocked, so 19 must not be tried
 
@@ -280,7 +280,7 @@ def test_heating_is_unaffected_by_the_cooling_constraint_memory(sp):
     """The memory is about condensation, which does not exist in heating.
     Carrying it across would silently cap the heating setpoint."""
     c = sp()
-    call(c, current=18.0, leaving=14.5, limit=14.7, dew=12.7, now=0.0)
+    call(c, current=18.0, supply=14.5, limit=14.7, dew=12.7, now=0.0)
     d = call(c, mode="heating", dev=+1.0, open_pct=95.0, current=30.0,
              limit=None, now=2_000.0)
     assert d.target == 31 and d.kind == TRIM
@@ -291,7 +291,7 @@ def test_an_unknown_limit_fails_toward_trying(sp):
     costs one wasted step - while wrongly blocking would strand the plant at a
     setpoint it could have improved on."""
     c = sp()
-    call(c, current=18.0, leaving=14.5, limit=14.7, dew=12.7, now=0.0)
+    call(c, current=18.0, supply=14.5, limit=14.7, dew=12.7, now=0.0)
     d = call(c, current=19.0, dev=-1.0, open_pct=100.0, limit=None, now=2_000.0)
     assert d.target == 18 and d.kind == TRIM
 
@@ -300,7 +300,7 @@ def test_backing_off_is_never_blocked(sp):
     """The efficiency branch raises the cooling setpoint, which can only make
     condensation less likely. Blocking it would trap the plant cold."""
     c = sp()
-    call(c, current=18.0, leaving=14.5, limit=14.7, dew=12.7, now=0.0)
+    call(c, current=18.0, supply=14.5, limit=14.7, dew=12.7, now=0.0)
     d = call(c, current=18.0, dev=0.0, open_pct=10.0, limit=14.7, now=2_000.0)
     assert d.target == 19 and d.kind == TRIM
 
@@ -320,7 +320,7 @@ def test_the_full_afternoon_settles_instead_of_oscillating(sp):
         for _ in range(4):                            # four 30-min slots/hour
             t += 1800.0
             d = call(c, current=current, dev=-1.0, open_pct=100.0,
-                     leaving=limit + 0.4, limit=limit, dew=limit - 2.0, now=t)
+                     supply=limit + 0.4, limit=limit, dew=limit - 2.0, now=t)
             if d.kind == BLOCKED:
                 blocked_cycles += 1
             if d.target is not None:
@@ -328,7 +328,7 @@ def test_the_full_afternoon_settles_instead_of_oscillating(sp):
                 current = d.target
                 # The guard reacts to the colder water within the next cycle.
                 t += 360.0
-                b = call(c, current=current, leaving=limit - 0.2, limit=limit,
+                b = call(c, current=current, supply=limit - 0.2, limit=limit,
                          dew=limit - 2.0, now=t)
                 if b.target is not None:
                     writes += 1
@@ -346,7 +346,7 @@ def test_the_dew_floor_binding_also_reports_demand_unmet(sp):
     c = sp()
     # dew 14.1 -> floor 18.1 -> ceil 19, so 19 cannot be trimmed below.
     d = call(c, current=19.0, dev=-1.0, open_pct=100.0, dew=14.1, limit=16.1,
-             leaving=19.0, now=5_000.0)
+             supply=19.0, now=5_000.0)
     assert d.target is None
     assert d.kind == BLOCKED and d.demand_unmet
 
@@ -357,7 +357,7 @@ def test_a_satisfied_house_at_the_limit_is_not_an_alarm(sp):
     ignore the alarm."""
     c = sp()
     d = call(c, mode="cooling", dev=0.0, open_pct=10.0, current=25.0,
-             dew=12.0, limit=14.0, leaving=25.0, now=5_000.0)
+             dew=12.0, limit=14.0, supply=25.0, now=5_000.0)
     assert d.target is None and not d.demand_unmet
 
 
@@ -373,7 +373,7 @@ def test_a_plant_change_invalidates_the_constraint_memory(sp):
     block, and the plant would have sat needlessly warm.
     """
     c = sp()
-    call(c, current=18.0, leaving=14.5, limit=14.7, dew=12.7, now=0.0)
+    call(c, current=18.0, supply=14.5, limit=14.7, dew=12.7, now=0.0)
     assert call(c, current=19.0, dev=-1.0, open_pct=100.0, limit=14.7,
                 now=2_000.0).kind == BLOCKED
     c.forget_constraint()               # the plant was reconfigured
@@ -464,3 +464,31 @@ def test_the_spread_estimate_is_bounded(sp):
     d = sp()
     d.observe_spread(-3.0)                          # sign confusion upstream
     assert d.spread_estimate == pytest.approx(3.0)
+
+
+def test_the_breach_branch_reads_the_precise_manifold_sensor(sp):
+    """The trim and the safety guard must answer "is the water reaching the
+    slab dangerous" from the SAME sensor.
+
+    The trim used to read the heat pump's leaving-water register, scaled 0.5 and
+    so quantised to 0.5 K, while Safety.apply reads vl_total - a manifold PT1000
+    at 0.1 K. Two controllers on the same physical question at different
+    resolutions can disagree about whether a breach is happening, quite apart
+    from the precision loss. This asserts the trim reacts at 0.1 K granularity,
+    which is only possible on the manifold sensor.
+    """
+    c = sp()
+    limit = 15.0
+    # 0.1 K below the limit: invisible to a 0.5 K-quantised reading.
+    d = call(c, current=19.0, supply=14.9, limit=limit, dew=14.0, now=5_000.0)
+    assert d.kind == BREACH, "a 0.1 K breach must be seen"
+    assert "supply 14.9" in d.reason
+
+
+def test_a_breach_is_not_declared_on_the_limit_itself(sp):
+    """Strictly below, so sitting exactly on the limit is not a breach - the
+    release hysteresis (D-023) exists precisely because load compensation parks
+    the supply there on purpose."""
+    c = sp()
+    d = call(c, current=19.0, supply=15.0, limit=15.0, dew=14.0, now=5_000.0)
+    assert d.kind != BREACH
