@@ -44,6 +44,7 @@ remaining actuators are fitted.
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 
 log = logging.getLogger("heatctl.setpoint")
@@ -208,8 +209,10 @@ class SetpointController:
         saturated = max_open is not None and max_open >= self.saturated_pct
         idle = max_open is not None and max_open <= self.idle_pct
 
+        wants_capacity = False
         if wants_more and saturated:
             # More aggressive water: hotter in heating, colder in cooling.
+            wants_capacity = True
             delta = self.step_c if mode == "heating" else -self.step_c
             why = (f"house {deviation:+.2f} K and valves at {max_open:.0f}% - "
                    "not enough capacity")
@@ -236,7 +239,14 @@ class SetpointController:
 
         target = self._clamp(mode, current + delta, dew_point)
         if target == current:
-            return SetpointDecision(None, f"{why} (already at the limit)")
+            # Reached from the capacity branch this is NOT a quiet hold: the
+            # house wants more and the plant cannot legally supply it, which is
+            # the same demand-unmet condition the constraint memory reports.
+            # Which mechanism stopped us - the dew-point floor here, or the
+            # remembered breach above - is an implementation detail; the
+            # operator-visible fact is identical, so it must alarm identically.
+            return SetpointDecision(None, f"{why} (already at the limit)",
+                                    BLOCKED if wants_capacity else HOLD)
         self._last_change = now
         return SetpointDecision(target, why, TRIM)
 
@@ -247,7 +257,25 @@ class SetpointController:
                 # Heuristic only - P04 targets RETURN water, so this cannot
                 # guarantee the water reaching the slab is safe. The measured
                 # -leaving-water branch above is the real mechanism.
+                #
+                # COARSE BACKSTOP ONLY. Do not tighten this into a real
+                # condensation guard by deriving it from the setpoint-to-supply
+                # gap: that gap is the leaving/return spread, which is DYNAMIC
+                # in flow, load and modulation, so no constant can represent
+                # it. See config.yaml for the withdrawn attempt and why its
+                # evidence was selection-biased.
                 lo = max(lo, dew_point + self.dew_floor_offset_c)
         else:
             lo, hi = self.heating_min_c, self.heating_max_c
-        return round(max(lo, min(hi, value)))
+        # Round the VALUE, but round the BOUNDS outward. A lower bound that
+        # rounds DOWN is not a lower bound: `round(max(18.2, ...))` returns 18
+        # and hands back up to 0.5 K of the margin the bound exists to hold.
+        # Small here, because this floor is only a coarse backstop - but it is
+        # wrong regardless of how much it happens to matter today.
+        lo_i, hi_i = math.ceil(lo), math.floor(hi)
+        if lo_i > hi_i:
+            # Dew point demands a setpoint above our chosen operating band. In
+            # cooling, warmer is the safe direction, so the safety floor wins
+            # over the efficiency preference - deliberately, not accidentally.
+            return float(lo_i)
+        return float(max(lo_i, min(hi_i, round(value))))

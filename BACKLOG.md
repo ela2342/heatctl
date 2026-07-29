@@ -347,6 +347,38 @@ inlet/outlet straight lengths exist between pump outlet and manifold input.
    the USB 300 on the Linux host where the decode and the timeout logic live
    next to the rest of heatctl.
 
+- [ ] **The setpoint→supply gap is DYNAMIC and nothing in layer 1 measures it.**
+      Recorded 2026-07-29 after an attempt to exploit it was withdrawn the same
+      day.
+
+      P04 targets **return** water; condensation is about the water reaching
+      the slab. The gap between them is the leaving/return spread, which varies
+      with **flow, load and compressor modulation** — it is not a constant, and
+      `dew_floor_offset_c` must never be tuned as though it were.
+
+      **How the withdrawn attempt went wrong, because the failure mode is
+      subtle and will recur.** 14 samples from the day's breaches gave a mean
+      offset of −3.21 K with sd 0.25 — convincingly tight. It was an artefact
+      of **selection**: every sample was taken *at a breach*, and a breach
+      occurs precisely when the leaving water is low relative to the setpoint.
+      That is the large-spread tail, sampled at one operating point (pump
+      100 %, all valves open, peak load) — not the distribution. A tight sd on
+      a conditioned sample says the *condition* was consistent, not that the
+      quantity is.
+
+      Tightening the floor on that estimate would have made the plant less
+      capable at low load, where the spread is genuinely small and colder water
+      is safe, while adding no safety: the measured-leaving-water branch
+      already covers the real limit, on the right quantity.
+
+      **The proper fix** is to measure the spread live — heatctl already reads
+      both P04 and the leaving water (0x8012) every cycle — and let the floor
+      track it. That would make the clamp bind honestly instead of being
+      decorative. It is safe to attempt because the clamp is a backstop: a bad
+      estimate degrades to today's behaviour, not to condensation.
+      **Sample it across the whole operating envelope, not at breaches**, or it
+      will reproduce exactly the bias above.
+
 ### DEFECT 2026-07-29 — the water-setpoint trim limit-cycles against the condensation limit
 
 **14 complete oscillations between 12:24 and 20:19**, in a perfectly regular

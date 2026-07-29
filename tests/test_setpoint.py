@@ -335,3 +335,27 @@ def test_the_full_afternoon_settles_instead_of_oscillating(sp):
                     current = b.target
     assert writes <= 6, f"still oscillating: {writes} setpoint writes"
     assert blocked_cycles > 0, "the saturation condition was never reported"
+
+
+def test_the_dew_floor_binding_also_reports_demand_unmet(sp):
+    """Whichever mechanism stops the trim - the dew-point floor or a
+    remembered breach - the operator-visible fact is the same: the house wants
+    more and the plant cannot legally supply it. Reporting one as an alarm and
+    the other as a quiet hold would make the alarm depend on an implementation
+    detail."""
+    c = sp()
+    # dew 14.1 -> floor 18.1 -> ceil 19, so 19 cannot be trimmed below.
+    d = call(c, current=19.0, dev=-1.0, open_pct=100.0, dew=14.1, limit=16.1,
+             leaving=19.0, now=5_000.0)
+    assert d.target is None
+    assert d.kind == BLOCKED and d.demand_unmet
+
+
+def test_a_satisfied_house_at_the_limit_is_not_an_alarm(sp):
+    """The mirror case. Backing off and finding the bound already reached is
+    ordinary, not a shortfall - alarming on it would train the operator to
+    ignore the alarm."""
+    c = sp()
+    d = call(c, mode="cooling", dev=0.0, open_pct=10.0, current=25.0,
+             dew=12.0, limit=14.0, leaving=25.0, now=5_000.0)
+    assert d.target is None and not d.demand_unmet

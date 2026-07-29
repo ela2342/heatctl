@@ -328,6 +328,25 @@ control:
     # breach. P04 targets RETURN water, so no clamp can guarantee the water
     # reaching the slab is safe - the measured-leaving-water branch is the real
     # mechanism, and it bypasses the 30 min cadence.
+    # This floors the SETPOINT, which is register P04 and targets RETURN
+    # water, while condensation is about the water reaching the slab. It is
+    # therefore a COARSE SANITY BACKSTOP and nothing more - the measured
+    # -leaving-water branch is the actual condensation protection.
+    #
+    # Do NOT try to tighten this into a real guard by deriving it from the
+    # setpoint-to-supply gap. Attempted 2026-07-29 and withdrawn the same day:
+    # the spread between leaving and return water is DYNAMIC - it varies with
+    # flow, load and compressor modulation - so no constant offset can
+    # represent it. The 14 samples that made it look constant (mean -3.21,
+    # sd 0.25) were all taken AT BREACH MOMENTS, and a breach happens exactly
+    # when the leaving water is low relative to the setpoint. That is the
+    # large-spread tail, sampled under one operating point (pump 100 %, all
+    # valves open, peak load) - not the distribution.
+    #
+    # Tightening it on that estimate would make the plant less capable at low
+    # load, where the spread is genuinely small and colder water is safe,
+    # while adding no safety at all: the breach branch already covers the real
+    # limit, on the right quantity, measured.
     dew_floor_offset_c: 4.0
     breach_jump_c: 6.0
     # CONSTRAINT MEMORY (2026-07-29). How far the cooling supply limit must
