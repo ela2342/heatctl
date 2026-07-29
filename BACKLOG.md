@@ -404,6 +404,48 @@ control fault. Today's afternoon behaviour is a different problem: not too
 little load, but the unit rushing to 85 Hz and then holding a wide spread.
 Do not conflate the two.
 
+#### F10 test — baseline and method (write applied 2026-07-29 21:01)
+
+`heat pump 0x010B: 5 -> 2 (mqtt)` at 21:01:12, read back from the device as
+2.0 at 21:01:17. One flash write.
+
+**Baseline, F10 = 5** (two independent cycles, both before the change):
+
+| | cycle A 19:43–19:52 | cycle B 20:18–20:27 |
+|---|---|---|
+| pump speed | 90→80→70→60→**50 %** | 90→80→70→60→**50 %** |
+| compressor | 85 → 39 Hz | ramp-down |
+| peak spread | **5.7–5.8 K** | — |
+| cycle period | ~34 min, ~21 min off | ~34 min |
+
+Whole-day baseline, F10 = 5: **14 condensation breaches**, house deviation
+degraded −0.32 → −1.25 K, valves at 100 % throughout, dew point 12.1 → 14.1.
+
+**What to compare on the next hot day**, in order of what actually matters:
+
+1. **Peak spread.** Should fall from ~5.8 K toward ~2 K. This is the direct
+   effect and the one that must be seen before believing any of the rest.
+2. **Leaving water against the condensation limit.** The point of the exercise:
+   a smaller spread should lift leaving water for the same setpoint, so
+   breaches should become rare. Near-zero breaches is success.
+3. **Pump throttling.** Should stop stepping down to 50 % as the compressor
+   winds down; the unit should hold flow instead of trading it for spread.
+4. **Compressor cycle count and minimum sustained frequency.** The hope is
+   longer, gentler runs. ⚠️ But see the min-modulation caveat — below the
+   1.0–1.1 kW floor the unit must cycle whatever F10 says, so judge this
+   metric ONLY on a day with real load, never overnight.
+5. **House deviation.** The outcome that matters, but the slowest and noisiest
+   — do not read it before the four above.
+
+⚠️ **Do not change `powerful_mode` until this test has had a full hot day.**
+Changing both makes neither attributable, and the unit ramping to 85 Hz on
+every cycle is a separate hypothesis with its own separate test.
+
+⚠️ **Evening and overnight data will NOT settle this.** The load after ~20:00
+is at or below minimum modulation, which is exactly the regime where the unit
+cycles regardless. A quiet night proves nothing either way.
+
+
 - [ ] **Set F10 = 2 and observe for a day**, comparing: peak spread, leaving
       water against the condensation limit, number of setpoint breaches, and
       compressor cycle count. If breaches fall to near zero the constraint
