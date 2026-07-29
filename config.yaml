@@ -537,3 +537,20 @@ logging:
   # GB a year on an appliance nobody watches. Events are kept 10x longer than
   # samples: they are tiny, and they answer "why did it do that".
   retention_days: 14
+
+# --- Layer 2 (optimizer) -------------------------------------------------
+# Read by optimizer/main.py, ignored entirely by the control core. Layer 2 is
+# a separate process and allowed to fail; nothing here can affect layer 1.
+optimizer:
+  interval_s: 60
+  # House air target the load forecast is computed against. The answer scales
+  # with it - a 1 K higher target removes roughly H x 1 K = 0.27 kW from every
+  # hour of the day.
+  target_air_c: 24.0
+  # What the plant can actually deliver, and this is the SOURCE limit, not the
+  # emitter limit. Slab 3.4-4.8 kW plus fan coil 4.2 kW is 7.6-9.0 kW of
+  # emitter against a heat pump good for ~5.7 kW at 11 degC supply, so the
+  # machine binds first (docs/HARDWARE.md). Using the slab figure alone
+  # overstates the storage deficit by about half - measured 2026-07-29: 31.4
+  # kWh against the slab versus 22.3 kWh against the source, for the same day.
+  delivery_ceiling_w: 5700.0

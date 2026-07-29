@@ -13,7 +13,7 @@ from optimizer.kalman import (KalmanFilter, expm, eye, inverse, matmul,
                               transpose)
 from optimizer.model import (N_INPUTS, U_HEAT, U_OUTDOOR, BuildingParams,
                              continuous, discretise, heat_demand_w,
-                             steady_state_air)
+                             net_load_w, steady_state_air)
 
 PARAMS = BuildingParams(ua_ao=267.2, ua_sa=1000.0, ua_sg=29.0,
                         c_air_wh=6600.0, c_slab_wh=8691.0, f_sol=0.30)
@@ -216,3 +216,47 @@ def test_innovation_statistics_detect_a_biased_model():
     # and the correlation dilutes as the run lengthens.
     assert abs(biased["mean"]) > 10.0 * abs(ok["mean"])
     assert biased["lag1"] > ok["lag1"]
+
+
+# ---------- signed net load (the forward load forecast) ----------
+
+def test_net_load_is_signed_and_positive_means_cooling():
+    """The heating-only `heat_demand_w` clamps at zero, which is right for
+    sizing a boiler and useless for asking whether a day needs heating or
+    cooling. This is the signed balance."""
+    hot = net_load_w(PARAMS, 24.0, 37.0, 10.0, q_sol=5000.0, q_int=350.0)
+    cold = net_load_w(PARAMS, 21.0, -5.0, 10.0, q_sol=0.0, q_int=350.0)
+    assert hot > 0.0, "37 degC outside with sun must read as cooling demand"
+    assert cold < 0.0, "-5 degC outside must read as heating demand"
+
+
+def test_net_load_reproduces_the_measured_loss_coefficient():
+    q = net_load_w(PARAMS, 24.0, 4.0, 24.0, q_sol=0.0, q_int=0.0)
+    assert q == pytest.approx(-267.2 * 20.0, rel=0.02)
+
+
+def test_solar_and_internal_gains_push_the_load_toward_cooling():
+    base = net_load_w(PARAMS, 24.0, 24.0, 10.0)
+    with_sun = net_load_w(PARAMS, 24.0, 24.0, 10.0, q_sol=4000.0)
+    assert with_sun - base == pytest.approx(4000.0)
+
+
+def test_the_full_solar_term_is_used_with_no_f_sol_split():
+    """At steady state every watt through the glazing leaves through the
+    envelope regardless of whether it landed on air or floor. Applying f_sol
+    here would silently discard 70 % of the solar load - the split governs the
+    DYNAMICS only."""
+    a = net_load_w(PARAMS, 24.0, 24.0, 10.0, q_sol=1000.0)
+    b = net_load_w(PARAMS, 24.0, 24.0, 10.0, q_sol=0.0)
+    assert a - b == pytest.approx(1000.0)      # not 300.0
+
+
+def test_net_load_and_heat_demand_agree_where_both_are_valid():
+    """Where heating genuinely is needed, the signed form must be the negative
+    of the heating demand - otherwise one of them has the sign or the ground
+    term wrong."""
+    for outdoor in (-10.0, 0.0, 8.0):
+        h = heat_demand_w(PARAMS, 21.0, outdoor, 10.0)
+        n = net_load_w(PARAMS, 21.0, outdoor, 10.0)
+        assert h > 0.0
+        assert -n == pytest.approx(h, rel=0.05)

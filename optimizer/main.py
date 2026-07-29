@@ -30,9 +30,19 @@ def load(config_path: str, params_path: str) -> tuple[dict, dict]:
         params = yaml.safe_load(f)
     # Credentials come from the environment, never the file - same rule as
     # layer 1, and the same reason: config.yaml is in the repository.
+    # Same environment overrides layer 1 honours, and for the same reason:
+    # config.yaml ships placeholder addresses, and credentials must not be
+    # committed. Missing HOST/PORT here was a real bug - the optimizer sat in a
+    # reconnect loop against the placeholder while layer 1 talked to the
+    # Supervisor's broker perfectly happily two processes away.
     m = cfg.setdefault("mqtt", {})
-    m["username"] = os.environ.get("HEATCTL_MQTT_USERNAME", m.get("username"))
-    m["password"] = os.environ.get("HEATCTL_MQTT_PASSWORD", m.get("password"))
+    for key, env in (("host", "HEATCTL_MQTT_HOST"),
+                     ("port", "HEATCTL_MQTT_PORT"),
+                     ("username", "HEATCTL_MQTT_USERNAME"),
+                     ("password", "HEATCTL_MQTT_PASSWORD")):
+        if os.environ.get(env):
+            m[key] = os.environ[env]
+    m["port"] = int(m.get("port") or 1883)
     # Coordinates are site-identifying and stay out of both files.
     w = params.setdefault("weather", {})
     for key, env in (("latitude", "HEATCTL_LATITUDE"),

@@ -32,7 +32,8 @@ import aiomqtt
 
 from .kalman import KalmanFilter, eye
 from .model import (N_INPUTS, U_GROUND, U_HEAT, U_INTERNAL, U_OUTDOOR,
-                    U_SOLAR, BuildingParams, discretise, heat_demand_w)
+                    U_SOLAR, BuildingParams, discretise, heat_demand_w,
+                    net_load_w)
 from .solar import SolarModel
 from .weather import WeatherSource
 
@@ -95,6 +96,7 @@ class Estimator:
         self.max_age_s = float(cfg.get("safety", {})
                                .get("stale_data_timeout_s", 300))
         self._client: aiomqtt.Client | None = None
+        self._last_load_summary: str | None = None
 
     # ---------- inputs ----------
 
@@ -242,6 +244,54 @@ class Estimator:
             "bias_applied_k": round(min(corr), 2),
         }
 
+    def load_forecast(self, target_air: float, ceiling_w: float,
+                      hours: int = 48) -> list[dict]:
+        """Hourly signed load, split by day, against a delivery ceiling.
+
+        This is the calculation that answers "what does tomorrow need", and it
+        deliberately does NOT go through the Kalman filter. It uses only the
+        heat loss coefficient, the solar geometry and the forecast - all
+        measured or surveyed - so it is usable now, whereas the filter's slab
+        estimate is still waiting on a heat meter and per-room sensors. The two
+        were conflated for most of a day; they are separate.
+
+        `ceiling_w` is what the plant can actually deliver. For this house that
+        is the SOURCE limit, not the emitter limit: slab 4.8 kW plus fan coil
+        4.2 kW is 9.0 kW of emitter against a heat pump good for 5.7 kW, so the
+        machine binds first (docs/HARDWARE.md). Passing the slab figure alone
+        overstates the deficit by about half.
+
+        The `store_kwh` figure is the day's energy that arrives faster than the
+        ceiling can remove it, and therefore has to come out of building mass.
+        Divided by the thermal capacity it gives the pre-charge in kelvin -
+        which, with an 8 h slab time constant, has to be in place the night
+        before or not at all.
+        """
+        if not self.weather or not self.weather.points:
+            return []
+        by_day: dict[str, list[float]] = {}
+        for pt in self.weather.points[:hours]:
+            net = net_load_w(self.bp, target_air, pt.temperature,
+                             self.t_ground, q_sol=self.solar_w(pt),
+                             q_int=self.q_int)
+            by_day.setdefault(pt.time[:10], []).append(net)
+        cap_kwh = (self.bp.c_slab_wh + self.bp.c_air_wh) / 1000.0
+        out = []
+        for day, loads in by_day.items():
+            if len(loads) < 20:            # partial day - do not report it
+                continue
+            store = sum(max(0.0, x - ceiling_w) for x in loads) / 1000.0
+            out.append({
+                "day": day,
+                "peak_kw": round(max(loads) / 1000.0, 2),
+                "cooling_kwh": round(sum(max(0.0, x) for x in loads) / 1000, 1),
+                "free_kwh": round(sum(max(0.0, -x) for x in loads) / 1000, 1),
+                "hours_over": sum(1 for x in loads if x > ceiling_w),
+                "store_kwh": round(store, 1),
+                "precharge_k": round(store / cap_kwh, 2),
+            })
+        return out
+
     # ---------- MQTT, status only ----------
 
     async def _publish(self, subtopic: str, payload: str) -> None:
@@ -306,16 +356,60 @@ class Estimator:
             try:
                 if self.weather:
                     await self.weather.refresh()
+
+                # The FORWARD LOAD FORECAST FIRST, and deliberately not gated
+                # on the filter having inputs. It uses only the heat loss
+                # coefficient, the solar geometry and the forecast - all
+                # measured or surveyed - so it works with no room sensor, no
+                # heat meter and no converged slab estimate. Publishing it
+                # inside the filter's success path made "what does tomorrow
+                # need" depend on machinery it has no relationship with, which
+                # is the same conflation that kept this offline for a day.
+                opt = self.cfg.get("optimizer", {})
+                target = opt.get("target_air_c", 21.0)
+                days = self.load_forecast(target,
+                                          opt.get("delivery_ceiling_w", 5700.0))
+                if days:
+                    # Log on CHANGE only. The forecast refreshes twice an hour
+                    # and these numbers move slowly, so logging every 60 s cycle
+                    # would bury everything else - but never logging them would
+                    # leave the day's plan visible only to whoever is holding an
+                    # MQTT client.
+                    summary = "; ".join(
+                        f"{d['day']} peak {d['peak_kw']:.1f} kW, "
+                        f"{d['cooling_kwh']:.0f} kWh, {d['hours_over']} h over "
+                        f"ceiling, pre-charge {d['precharge_k']:.2f} K"
+                        for d in days)
+                    if summary != self._last_load_summary:
+                        log.info("load forecast: %s", summary)
+                        self._last_load_summary = summary
+                    await self._publish("load_forecast", json.dumps(days))
+                    t = days[0]
+                    await self._publish("today/peak_kw", str(t["peak_kw"]))
+                    await self._publish("today/cooling_kwh",
+                                        str(t["cooling_kwh"]))
+                    await self._publish("today/precharge_k",
+                                        str(t["precharge_k"]))
+                    if len(days) > 1:
+                        n = days[1]
+                        await self._publish("tomorrow/peak_kw",
+                                            str(n["peak_kw"]))
+                        await self._publish("tomorrow/cooling_kwh",
+                                            str(n["cooling_kwh"]))
+                        await self._publish("tomorrow/precharge_k",
+                                            str(n["precharge_k"]))
+                        await self._publish("tomorrow/hours_over",
+                                            str(n["hours_over"]))
+
                 state = self.step(dt)
                 if state is None:
-                    await self._publish("status", "waiting_for_inputs")
+                    await self._publish("status", "forecast_only")
                     continue
                 await self._publish("status", "ok")
                 await self._publish("state", json.dumps(state))
                 for k, v in state.items():
                     if v is not None:
                         await self._publish(k, str(v))
-                target = self.cfg.get("optimizer", {}).get("target_air_c", 21.0)
                 d = self.demand_forecast(target)
                 if d:
                     await self._publish("demand", json.dumps(d))

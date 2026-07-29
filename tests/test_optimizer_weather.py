@@ -177,3 +177,26 @@ def test_stale_readings_are_not_used():
 def test_the_estimator_waits_rather_than_guessing_with_no_inputs():
     est = _estimator()
     assert est.step(60.0) is None
+
+
+def test_the_optimizer_honours_the_same_mqtt_env_overrides_as_layer_1(tmp_path):
+    """Regression: the optimizer read mqtt.host straight from config.yaml, which
+    ships a PLACEHOLDER address, so it sat in a reconnect loop while layer 1
+    talked to the Supervisor's broker two processes away. Both layers must
+    resolve the broker the same way."""
+    import os
+    from optimizer.main import load
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text("mqtt:\n  host: 192.0.2.1\n  port: 1883\n  base_topic: heatctl\n"
+                   "rooms: []\n")
+    params = tmp_path / "p.yaml"
+    params.write_text("weather: {}\n")
+    old = dict(os.environ)
+    os.environ.update({"HEATCTL_MQTT_HOST": "core-mosquitto",
+                       "HEATCTL_MQTT_PORT": "1884"})
+    try:
+        c, _ = load(str(cfg), str(params))
+    finally:
+        os.environ.clear(); os.environ.update(old)
+    assert c["mqtt"]["host"] == "core-mosquitto"
+    assert c["mqtt"]["port"] == 1884        # and coerced to int, not "1884"

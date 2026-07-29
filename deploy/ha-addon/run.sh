@@ -74,6 +74,31 @@ else
     bashio::log.warning "which ships a PLACEHOLDER address, so this will not reach hardware."
 fi
 
+# --- layer 2, optional and allowed to fail ---------------------------------
+# Started as a SEPARATE process, backgrounded, and never with `exec`. That is
+# the architecture, not convenience: layer 2 may crash, hang or be killed
+# without the control core noticing, which is only true if they are not the
+# same process. It is also why nothing below waits on it or checks its exit.
+#
+# It needs coordinates for solar position and the forecast; without them it
+# logs a warning and runs without either, so an unset option is not an error.
+if bashio::config.has_value 'latitude'; then
+    export HEATCTL_LATITUDE="$(bashio::config 'latitude')"
+fi
+if bashio::config.has_value 'longitude'; then
+    export HEATCTL_LONGITUDE="$(bashio::config 'longitude')"
+fi
+if bashio::config.true 'optimizer_enabled'; then
+    if bashio::config.has_value 'latitude'; then
+        bashio::log.info "Starting the optimizer (layer 2, observe-only)"
+        cd /app
+        python3 -m optimizer.main "${TARGET}" /app/optimizer/params.yaml &
+    else
+        bashio::log.warning "optimizer_enabled but no latitude/longitude set -"
+        bashio::log.warning "it cannot compute solar position or fetch a forecast."
+    fi
+fi
+
 bashio::log.info "Starting heatctl with ${TARGET}"
 cd /app
 exec python3 -m heatctl.main "${TARGET}"

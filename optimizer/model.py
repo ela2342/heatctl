@@ -135,6 +135,29 @@ def steady_state_air(p: BuildingParams, outdoor: float, ground: float,
     return (rhs[0] * a[1][1] - a[0][1] * rhs[1]) / det
 
 
+def net_load_w(p: BuildingParams, target_air: float, outdoor: float,
+               ground: float, q_sol: float = 0.0, q_int: float = 0.0) -> float:
+    """Signed steady-state load to hold `target_air`. POSITIVE = needs cooling.
+
+    The whole-house energy balance, and deliberately the SIGNED one - the
+    heating-only `heat_demand_w` below clamps at zero, which is right for
+    sizing a boiler and useless for asking "will this day need heating or
+    cooling, and by how much".
+
+    Note the full solar term appears here with no `f_sol` split. At steady
+    state every watt entering through the glazing has to leave through the
+    envelope regardless of whether it landed on the air or the floor first;
+    the split only matters for the DYNAMICS, which is why the state-space
+    model above needs it and this does not.
+
+    Uses `ua_ao` (fabric + ventilation) plus the ground path, so it is the
+    same physics the 2-state model integrates - just evaluated at equilibrium
+    instead of stepped.
+    """
+    return (p.ua_ao * (outdoor - target_air) + q_sol + q_int
+            - p.ua_sg * (target_air - ground))
+
+
 def heat_demand_w(p: BuildingParams, target_air: float, outdoor: float,
                   ground: float, q_sol: float = 0.0,
                   q_int: float = 0.0) -> float:

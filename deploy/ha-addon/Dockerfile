@@ -16,6 +16,9 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt \
 
 WORKDIR /app
 COPY heatctl/ /app/heatctl/
+# Layer 2. Travels with the App but runs as its own process (run.sh), so
+# that its failure cannot take the control core with it.
+COPY optimizer/ /app/optimizer/
 
 # Template only. The LIVE config lives in the App's config directory at
 # /config/config.yaml so it survives image rebuilds and stays operator-editable.

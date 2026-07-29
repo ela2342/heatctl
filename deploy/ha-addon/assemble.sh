@@ -29,6 +29,8 @@ cp -r "${root}/heatctl" "${out}/heatctl"
 # heatctl's own config ships as a TEMPLATE. run.sh copies it into the App's
 # config directory on first start; it is never the live file.
 cp "${root}/config.yaml" "${out}/config.dist.yaml"
+# Layer 2 travels with the App but runs as its own process (see run.sh).
+cp -r "${root}/optimizer" "${out}/optimizer"
 
 find "${out}" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
 find "${out}" -name '*.pyc' -delete 2>/dev/null || true
