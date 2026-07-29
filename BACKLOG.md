@@ -508,6 +508,41 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
       Note the owner reports it **provides hydraulic isolation**, which bears
       directly on the mode-selection valve question below.
 
+- [!] **VERIFY THE PUMP MODEL YEAR BEFORE BUYING ANYTHING.** Wilo Connect
+      modules require **"Modell ab 2022"**; the Kurzanleitung shipped with our
+      pumps is Ed.01/**2021-01**, and article 4244375 spans both generations so
+      the number does not settle it. **This gates the entire telemetry route.**
+      Check: with a module fitted, a `SW Version` entry appears under
+      `Externes Modul`. Otherwise read the Typenschild date code or ask Wilo
+      with the serial numbers. Details in docs/HARDWARE.md.
+
+- [ ] **Decide the pump integration route** once the model year is known.
+      * **Modbus RTU Connect module** (~EUR 234-251 each) - gives `flow`,
+        `powerInput`, `energyConsumption`, `speed`, and setpoint write. Both
+        pumps share one RS-485 segment; a new Modbus client alongside the
+        coupler, no new transport class. **Preferred if the pumps qualify.**
+      * **BMS module** (EUR 265) - 0-10 V in, digital in, relay out, using the
+        WAGO spares we already have. Control and fault status, **zero
+        telemetry**.
+      * **Relay on mains** - free, but see the inrush note below, and it gives
+        nothing back.
+      **Do not treat the pump's `flow` as a measurement.** Wilo explicitly
+      disclaims it for closed-loop use and publishes no tolerance at all - it
+      is a sensorless estimate from the motor operating point. It does NOT
+      substitute for the heat meter; it is a soft signal for trend and
+      sanity-bounding. `powerInput`/`energyConsumption` are real electrical
+      measurements and are trustworthy (1 kWh resolution, rolls at 65535).
+
+- [ ] **CORRECTION: the 750-517 cannot switch the pumps.** Wilo requires the
+      switching relay to make **>=5 A inrush**; the 750-517 is a 2 A part. It
+      remains fine for the Afriso ARM 343 (tens of mA) - the earlier note in
+      HARDWARE.md said 750-517 was adequate without distinguishing the loads.
+      If pumps are to be switched at all, use a contactor or an interposing
+      relay rated for the inrush. Wilo's other limits: <=100 switchings/24 h,
+      <=20/h, >=1 min between transitions, max 10 A slow pre-fuse, and **never
+      phase-angle control**. Settings survive a mains interruption, so relay
+      on/off is safe configuration-wise.
+
 - [!] **The 8 kW tank element is FITTED with no control path at all.** Owner,
       2026-07-29. Needs a contactor or SSR rated for 8 kW, one of the WAGO's
       spare relay outputs, and an interlock.

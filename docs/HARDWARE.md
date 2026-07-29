@@ -701,3 +701,91 @@ documents is the **Buderus** value from the EnEV papers. The SLS-1000's real
 figure needs pulling from Solarbayer's datasheet, along with its actual volume,
 heat-exchanger surfaces and pocket heights.
 
+## Wilo Stratos PICO plus 25/0.5-6 (art. 4244375) — control and telemetry
+
+Researched 2026-07-29 from Wilo's own EBA, Kurzanleitung and Modbus datapoint
+list. Two identical pumps: distribution and heat exchanger.
+
+**The bare pump has no machine interface at all** — only the mains plug. No
+0–10 V, no PWM, no SSM contact, no bus. Everything needs a plug-in module in
+the Wilo-Connectivity Interface slot.
+
+### Flow IS readable — and is NOT a heat-meter substitute
+
+Wilo's Modbus datapoint list exposes, as input registers (FC 04), for this pump
+family: `flow` (m³/h), `powerInput` (W), `energyConsumption` (kWh), `pressure`,
+`speed`, `operationTime`. So the temptation is obvious. Resist it for flow:
+
+> *"Bei berechneten Werten sollte der aktuelle Wert **nicht für geschlossene
+> externe Regelkreise verwendet werden, da die Genauigkeit und Verfügbarkeit
+> nicht in allen Betriebspunkten gewährleistet werden kann.**"*
+
+It is a sensorless estimate from the motor's electrical operating point against
+a stored curve, and Wilo publishes **no tolerance band at all** — only that
+disclaimer, plus the pump's own display prefixing `<` or `>` at operating points
+where it knows the value is unreliable. **This does not replace the heat meter.**
+It is useful as a soft signal: trend, "is there flow at all", cross-checking a
+real sensor, bounding a Kalman estimate.
+
+`powerInput` and `energyConsumption` are the pump's own *electrical*
+measurements and carry no such disclaimer — considerably more trustworthy. Note
+`energyConsumption` has **1 kWh resolution and rolls over at 65535**.
+
+### ⚠️ Model-year gate — verify before spending anything
+
+Both Connect-module manuals require **"Modell ab 2022"**. The Kurzanleitung
+shipped with these pumps is **Ed.01/2021-01**. Article 4244375 spans both
+generations, so the article number does not settle it.
+
+**Check on the pumps:** with a module fitted, a `SW Version` entry should appear
+under `Externes Modul` in the menu. Otherwise read the Typenschild date code or
+ask Wilo with the serial numbers. **Do not order two modules before confirming.**
+
+### Module options (Wilo list prices, excl. VAT)
+
+| Module | Art. | Price | Gives |
+|---|---|---|---|
+| Connect **Modbus RTU** | 4263625 / 4268524 *(see note)* | €234–251 | full telemetry + setpoint write (HR 1 `dutyPointRel`) |
+| Connect **BMS** | 4257834 | €265 | 0–10 V in, digital in, changeover relay out — **no telemetry** |
+| Smart Connect **BT** | 4239241 | €103 | Bluetooth app only |
+
+*Note: Wilo's DE and AT catalogues present 4263625 and 4268524 inconsistently —
+possibly the same product, possibly Modbus-only vs dual-protocol. Confirm.*
+
+Modbus limitations for this pump: only **HR 1** is writable (setpoint). The
+control mode (Δp-v/Δp-c/n-const) **cannot** be switched over the bus. Remote
+on/off via HR 40 is **unconfirmed** — the pump is absent from that register's
+support column.
+
+**IF-Modules do not fit.** Those are for Stratos/MAXO/GIGA and use a different
+slot. Common confusion, worth stating.
+
+### Mains switching limits — and a correction about the 750-517
+
+Wilo permits relay switching, within limits: **≤100 per 24 h, ≤20 per hour,
+≥1 minute between transitions**, and:
+
+> *"Der **Einschaltstrom der Pumpe ist < 5 A**. Wird die Pumpe über ein Relais
+> geschaltet, ist sicherzustellen, dass das Relais in der Lage ist einen
+> Einschaltstrom von mindestens 5 A zu schalten."*
+
+**This corrects an earlier note in this file.** The 750-517 is fine for the
+ARM 343 mixing valve (tens of mA) but is **NOT adequate for switching these
+pumps** — it would need to make 5 A of inrush. Use a contactor or an
+appropriately rated interposing relay, not the 750-517 directly.
+
+Also mandated: max 10 A slow pre-fuse, and **never phase-angle control**.
+
+Settings **survive a mains interruption**, which makes relay on/off safe from a
+configuration standpoint.
+
+### Bluetooth: reverse-engineered, but do not build on it
+
+Third parties have mapped the BLE GATT protocol thoroughly. It is nonetheless
+the wrong choice here: undocumented proprietary protocol, no open-source
+implementation to inherit, firmware updates can break it silently, and **the
+pump displays a fresh 4-digit PIN on its LCD for each connection** — fatal for
+unattended operation unless a static-PIN mode works, which is unverified. The
+raw card-edge serial tap carries **mains potential**. Both are the opposite of
+this project's premise.
+
