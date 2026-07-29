@@ -744,6 +744,20 @@ Kind 1 16.33, Kind 2 15.61, Schlafen 11.08, Bad 8.94, Diele 9.33, HWR 8.98,
 WC/Du 3.43 m² (EG, on the slab); Arbeit/Gäste 31.20 m² (OG, no slab).
 
 ### 6.2 Buffer: 5-node stratified tank
+
+**The stratified model is only valid while the tank is externally charged.**
+The SLS-1000 layers properly when charged through its external circuit, but the
+**8 kW immersion element creates convective turbulence that destroys the
+layers** (owner, 2026-07-29). So element operation is a **switched input** that
+invalidates the stratification assumption — the same class of discrete
+regime change as an open door or window (§6.1), and it must be handled the same
+way: switch the tank to a **lumped/mixed** representation while the element runs
+and for a settling period afterwards, rather than letting the 5-node model fit
+a profile that is not there.
+
+Energy is still conserved through mixing, so total tank energy content remains
+meaningful once settled; what is lost is the *distribution* of that energy
+between nodes, which is precisely what the 5-node model exists to track.
 One state per sensor zone `T_i` (i=1 top … 5 bottom), volumes `V_i` from
 tank geometry:
 

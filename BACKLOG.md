@@ -38,20 +38,47 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
 **continuous modulating control, not on/off** — which changes item 6 from a
 contactor into a different class of device entirely.
 
-### Why modulating control matters more than it looks
+### Why modulating control matters — and the limit on it
 
 On/off would make the element a crude heat source. Continuous control makes it
-**the plant's system-identification instrument**. Resistive heating is 100 %
-efficient by construction, so a *precisely known and continuously variable*
-heat input into a known 1000 L of water is the cleanest excitation signal
-available to us — step tests, staircases, even PRBS if we wanted. That is
-exactly what breaks the C/H degeneracy the summer-night fit could not: a single
-free decay gives only the ratio τ = C/H, whereas a known input gives H
-directly, and then C follows.
+a **system-identification instrument**: resistive heating is 100 % efficient by
+construction, so a precisely known, continuously variable input is the cleanest
+excitation signal available — step tests, staircases, even PRBS. That is what
+breaks the C/H degeneracy a free decay cannot: a decay gives only τ = C/H,
+whereas a known input gives H directly and C follows. It is also the honest
+answer to "n = 0.7 h⁻¹ is 44 % of our loss coefficient and rests on nothing".
 
-It is also the honest answer to "n = 0.7 h⁻¹ is 44 % of our loss coefficient
-and rests on nothing" — with a known input you can measure H rather than
-assume its largest component.
+**CORRECTION 2026-07-29 (owner).** An earlier version of this said "a known
+8 kW into a known 1000 L is the cleanest experiment available", which
+overstates it. **The SLS-1000 stratifies when charged externally, but the
+immersion element creates convective turbulence and destroys those layers.**
+
+The distinction that matters:
+
+* **Energy is conserved regardless of mixing.** The electrical input is still
+  exactly known, and total energy delivered is still exactly known. So the
+  element remains a valid *excitation source*.
+* **Stratification is not.** The 5-point temperature profile stops representing
+  a settled column the moment the element runs, so **integrating those sensors
+  over assumed layer volumes gives the wrong tank energy content** during and
+  shortly after operation.
+
+Two consequences:
+
+1. **Do not measure the experiment at the tank.** Measure the heat *delivered
+   to the house* on the hydronic side. The tank is an intermediary whose
+   internal state is exactly what element operation makes unobservable.
+2. **The 5-node tank model (docs/DESIGN.md §6.2) needs a mixed mode**, and
+   element operation becomes another **switched input** — the same pattern as
+   doors, windows and the stove. Running the stratified model through an
+   element period will produce confident nonsense.
+
+This also reopens **heat-meter placement**. The recommendation was the heat
+pump's own circuit, for COP. But building identification wants heat *into the
+house*, which is the distribution circuit and captures all three sources.
+Those are different measurements answering different questions; if the element
+is to serve as the identification source, the distribution side is the one that
+sees it.
 
 ### What to buy instead of a contactor
 
