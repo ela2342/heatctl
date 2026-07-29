@@ -253,6 +253,27 @@ class ControlPlane:
             "state_topic": f"{self.base}/water_sp/reason",
             "entity_category": "diagnostic",
         })
+        # The setpoint-saturation alarm. NOT diagnostic-only and NOT a plain
+        # sensor: "the house wants more and the plant cannot legally supply it"
+        # is the condition that hid a whole afternoon's limit cycle (D-029), so
+        # it gets a problem device class and shows up as a real alarm.
+        await disc("binary_sensor", "water_sp_blocked", {
+            "name": "Water setpoint saturated",
+            "state_topic": f"{self.base}/water_sp/blocked",
+            "payload_on": "1", "payload_off": "0",
+            "device_class": "problem",
+        })
+        # The measured leaving/return spread that sets the dynamic condensation
+        # floor. Worth surfacing because it is the quantity that turned out to
+        # govern how much cooling the plant can actually deliver.
+        await sensor("water_sp_spread_est", "Spread estimate (floor input)",
+                     "water_sp/spread_est", "K")
+        # The condensation limit actually in force. Published since the start
+        # but never DISCOVERED, so it has been invisible in Home Assistant -
+        # and it is the number that answers "why did that valve shut". Plotted
+        # against leaving water it is the whole cooling story on one axis.
+        await sensor("cooling_supply_limit", "Cooling supply limit",
+                     "cooling_supply_limit", "°C", "temperature")
 
         # --- house demand / source engagement (diagnostic) ---
         # What heatctl is holding the heat pump's power at. It is a
