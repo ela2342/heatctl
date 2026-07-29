@@ -48,7 +48,7 @@ from dataclasses import dataclass
 
 log = logging.getLogger("heatctl.setpoint")
 
-HOLD, TRIM, BREACH = "hold", "trim", "breach"
+HOLD, TRIM, BREACH, BLOCKED = "hold", "trim", "breach", "blocked"
 
 
 @dataclass
@@ -56,6 +56,16 @@ class SetpointDecision:
     target: float | None      # None = leave the setpoint alone
     reason: str
     kind: str = HOLD
+
+    @property
+    def demand_unmet(self) -> bool:
+        """The house wants more and the plant cannot legally give it.
+
+        Distinct from merely holding: this says the constraint is binding and
+        the shortfall will not resolve itself, which is the condition worth
+        alarming on rather than the oscillation that used to hide it.
+        """
+        return self.kind == BLOCKED
 
 
 class SetpointController:
@@ -92,6 +102,64 @@ class SetpointController:
         # first trim waits a full interval after start-up.
         self._last_change: float | None = None
 
+        # --- constraint memory (2026-07-29) ---
+        # How far the supply limit must FALL before a setpoint the condensation
+        # guard has already rejected is worth attempting again. See
+        # `_blocked_setpoint` below for why this exists at all.
+        self.retry_margin_c = float(s.get("constraint_retry_margin_c", 0.5))
+        # The most aggressive cooling setpoint known to breach, and the supply
+        # limit that was in force when we learned it. Lower setpoints are
+        # strictly harder, so a single pair covers every setpoint below it.
+        self._blocked_setpoint: float | None = None
+        self._blocked_limit: float | None = None
+
+    def _remember_breach(self, setpoint: float, limit: float) -> None:
+        """Record that `setpoint` breached while the limit was `limit`.
+
+        Keeps the LEAST aggressive failure. If 19 degC breaches, 18 certainly
+        would too, so remembering 19 blocks both; remembering 18 instead would
+        leave 19 to be rediscovered the hard way.
+        """
+        if self._blocked_setpoint is None or setpoint > self._blocked_setpoint:
+            self._blocked_setpoint = setpoint
+            self._blocked_limit = limit
+
+    def _is_known_infeasible(self, target: float,
+                             limit: float | None) -> bool:
+        """Would this cooling setpoint just re-run a failure we already had?
+
+        THE FIX FOR THE 2026-07-29 LIMIT CYCLE. That day the trim stepped the
+        setpoint down, the condensation guard shoved it back up six minutes
+        later, and thirty minutes after that the rate limiter expired and it
+        attempted the identical step again - fourteen times, while the house
+        drifted from 0.32 K to 1.25 K off target. The trim was integrating
+        against a saturated actuator and forgetting the saturation between
+        attempts.
+
+        The insight is that a setpoint rejected at a given supply limit is
+        infeasible FOR THAT LIMIT, so a clock cannot make it succeed. Only the
+        constraint moving can. Retry is therefore gated on the limit falling by
+        `retry_margin_c`, not on time passing.
+
+        Fails toward TRYING when the limit is unknown: the measured-breach
+        branch is the real protection, so an extra attempt costs one wasted
+        step, while wrongly blocking would strand the plant at a setpoint it
+        could have improved on.
+        """
+        if self._blocked_setpoint is None or limit is None:
+            return False
+        if self._blocked_limit is not None \
+                and limit <= self._blocked_limit - self.retry_margin_c:
+            # The constraint genuinely relaxed - forget and let it try again.
+            self._blocked_setpoint = None
+            self._blocked_limit = None
+            return False
+        return target <= self._blocked_setpoint
+
+    def _forget_constraint(self) -> None:
+        self._blocked_setpoint = None
+        self._blocked_limit = None
+
     def step(self, mode: str, deviation: float | None, max_open: float | None,
              current: float | None, dew_point: float | None,
              leaving_water: float | None, supply_limit: float | None,
@@ -101,10 +169,20 @@ class SetpointController:
         if current is None:
             return SetpointDecision(None, "setpoint unknown")
 
+        # Leaving cooling invalidates everything the memory knows: it is all
+        # about the condensation limit, which does not apply in heating.
+        if mode != "cooling":
+            self._forget_constraint()
+
         # --- safety first, and it ignores the cadence ---
         if (mode == "cooling" and leaving_water is not None
                 and supply_limit is not None and leaving_water < supply_limit
                 and dew_point is not None):
+            # Record BEFORE deciding whether to jump. The breach is real
+            # information about this setpoint whether or not the jump is
+            # actionable, and dropping it when `target <= current` would leave
+            # the trim to rediscover the same failure later.
+            self._remember_breach(current, supply_limit)
             target = self._clamp(mode, dew_point + self.breach_jump_c, dew_point)
             if target > current:
                 self._last_change = now
@@ -135,6 +213,18 @@ class SetpointController:
             delta = self.step_c if mode == "heating" else -self.step_c
             why = (f"house {deviation:+.2f} K and valves at {max_open:.0f}% - "
                    "not enough capacity")
+            if mode == "cooling":
+                proposed = self._clamp(mode, current + delta, dew_point)
+                if self._is_known_infeasible(proposed, supply_limit):
+                    # Do not burn a 30-minute cycle re-proving this. Report it
+                    # instead: the house wants more, the plant cannot legally
+                    # supply it, and that is an alarm rather than a wait.
+                    return SetpointDecision(
+                        None,
+                        f"{why}, but {proposed:.0f} degC breached at limit "
+                        f"{self._blocked_limit:.1f} and the limit is now "
+                        f"{supply_limit:.1f} - condensation-limited",
+                        BLOCKED)
         elif satisfied and idle:
             # Back off. This is the efficiency half.
             delta = -self.step_c if mode == "heating" else self.step_c

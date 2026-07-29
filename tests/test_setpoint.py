@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import pytest
 
-from heatctl.setpoint import BREACH, TRIM, SetpointController
+from heatctl.setpoint import (BLOCKED, BREACH, TRIM,
+                              SetpointController)
 
 
 @pytest.fixture
@@ -198,3 +199,139 @@ def test_the_breach_branch_still_acts_during_start_up_settling(sp):
                dew_point=14.0, leaving_water=15.0, supply_limit=16.0,
                now=50_000.0)
     assert d.kind == BREACH
+
+
+# ---------- constraint memory (the 2026-07-29 limit cycle) ----------
+
+def test_a_setpoint_the_condensation_guard_rejected_is_not_retried(sp):
+    """THE REGRESSION TEST FOR THE 2026-07-29 LIMIT CYCLE.
+
+    That afternoon the trim stepped the setpoint down, the condensation guard
+    shoved it back up ~6 min later, and 30 min after that the rate limiter
+    expired and it attempted the identical step again - fourteen times between
+    12:24 and 20:19, while the house drifted from 0.32 K to 1.25 K off target.
+    Roughly 30 of every 36 minutes were spent a full kelvin warmer than the
+    plant could sustain.
+
+    A setpoint rejected at a given supply limit is infeasible FOR THAT LIMIT.
+    No amount of waiting changes that; only the constraint moving does.
+    """
+    c = sp()
+    # 12:24 - trim down to 18.
+    d = call(c, current=19.0, dev=-1.0, open_pct=100.0, limit=14.7, now=0.0)
+    assert d.target == 18 and d.kind == TRIM
+    # 12:31 - leaving water breaches at 18; the guard jumps it back to 19.
+    d = call(c, current=18.0, leaving=14.5, limit=14.7, dew=12.7, now=420.0)
+    assert d.kind == BREACH and d.target > 18
+    # 13:01 - the interval has elapsed and the house is still warm. Before the
+    # fix this trimmed straight back to 18 and the cycle began again.
+    d = call(c, current=19.0, dev=-1.0, open_pct=100.0, leaving=20.0,
+             limit=14.8, dew=12.8, now=2_300.0)
+    assert d.target is None
+    assert d.kind == BLOCKED
+    assert d.demand_unmet
+
+
+def test_the_block_lifts_when_the_supply_limit_actually_falls(sp):
+    """The constraint moving is the ONLY thing that may re-open the attempt.
+    Air drying out is real new information; the clock is not."""
+    c = sp()
+    call(c, current=18.0, leaving=14.5, limit=14.7, dew=12.7, now=0.0)
+    blocked = call(c, current=19.0, dev=-1.0, open_pct=100.0, limit=14.7,
+                   now=2_000.0)
+    assert blocked.kind == BLOCKED
+    # Dew point falls by more than the retry margin: try again.
+    freed = call(c, current=19.0, dev=-1.0, open_pct=100.0, limit=14.0,
+                 dew=12.0, now=4_000.0)
+    assert freed.target == 18 and freed.kind == TRIM
+
+
+def test_a_rising_limit_does_not_lift_the_block(sp):
+    """The failure mode of a naive 'has anything changed' test. On 2026-07-29
+    the limit rose all afternoon, 14.1 to 16.1 degC - which makes the rejected
+    setpoint MORE infeasible, not less."""
+    c = sp()
+    call(c, current=18.0, leaving=14.5, limit=14.7, dew=12.7, now=0.0)
+    d = call(c, current=19.0, dev=-1.0, open_pct=100.0, limit=16.1, dew=14.1,
+             now=9_000.0)
+    assert d.kind == BLOCKED
+
+
+def test_a_less_aggressive_setpoint_is_still_allowed(sp):
+    """Blocking 18 must not block 20. Only setpoints at or below the rejected
+    one are known-infeasible; blocking everything would strand the plant."""
+    c = sp()
+    call(c, current=18.0, leaving=14.5, limit=14.7, dew=12.7, now=0.0)
+    d = call(c, current=21.0, dev=-1.0, open_pct=100.0, limit=14.7, now=2_000.0)
+    assert d.target == 20 and d.kind == TRIM
+
+
+def test_the_memory_keeps_the_least_aggressive_failure(sp):
+    """If 19 breaches, 18 certainly would too. Remembering 18 instead would
+    leave 19 to be rediscovered the hard way, one wasted cycle at a time."""
+    c = sp()
+    call(c, current=18.0, leaving=14.0, limit=14.7, dew=12.7, now=0.0)
+    call(c, current=19.0, leaving=14.5, limit=14.7, dew=12.7, now=60.0)
+    d = call(c, current=20.0, dev=-1.0, open_pct=100.0, limit=14.7, now=2_000.0)
+    assert d.kind == BLOCKED          # 19 is blocked, so 19 must not be tried
+
+
+def test_heating_is_unaffected_by_the_cooling_constraint_memory(sp):
+    """The memory is about condensation, which does not exist in heating.
+    Carrying it across would silently cap the heating setpoint."""
+    c = sp()
+    call(c, current=18.0, leaving=14.5, limit=14.7, dew=12.7, now=0.0)
+    d = call(c, mode="heating", dev=+1.0, open_pct=95.0, current=30.0,
+             limit=None, now=2_000.0)
+    assert d.target == 31 and d.kind == TRIM
+
+
+def test_an_unknown_limit_fails_toward_trying(sp):
+    """The measured-breach branch is the real protection, so an extra attempt
+    costs one wasted step - while wrongly blocking would strand the plant at a
+    setpoint it could have improved on."""
+    c = sp()
+    call(c, current=18.0, leaving=14.5, limit=14.7, dew=12.7, now=0.0)
+    d = call(c, current=19.0, dev=-1.0, open_pct=100.0, limit=None, now=2_000.0)
+    assert d.target == 18 and d.kind == TRIM
+
+
+def test_backing_off_is_never_blocked(sp):
+    """The efficiency branch raises the cooling setpoint, which can only make
+    condensation less likely. Blocking it would trap the plant cold."""
+    c = sp()
+    call(c, current=18.0, leaving=14.5, limit=14.7, dew=12.7, now=0.0)
+    d = call(c, current=18.0, dev=0.0, open_pct=10.0, limit=14.7, now=2_000.0)
+    assert d.target == 19 and d.kind == TRIM
+
+
+def test_the_full_afternoon_settles_instead_of_oscillating(sp):
+    """Replay of the measured day: a warm house, saturated valves, and a
+    supply limit rising from 14.1 to 16.1 degC over eight hours.
+
+    Before the fix this produced 14 setpoint changes. It must now converge and
+    then stop writing - every write wears the heat pump's flash, and the
+    oscillation bought nothing."""
+    c = sp()
+    limits = [14.1 + 0.25 * i for i in range(9)]      # 14.1 .. 16.1
+    writes, blocked_cycles = 0, 0
+    current, t = 19.0, 0.0
+    for limit in limits:
+        for _ in range(4):                            # four 30-min slots/hour
+            t += 1800.0
+            d = call(c, current=current, dev=-1.0, open_pct=100.0,
+                     leaving=limit + 0.4, limit=limit, dew=limit - 2.0, now=t)
+            if d.kind == BLOCKED:
+                blocked_cycles += 1
+            if d.target is not None:
+                writes += 1
+                current = d.target
+                # The guard reacts to the colder water within the next cycle.
+                t += 360.0
+                b = call(c, current=current, leaving=limit - 0.2, limit=limit,
+                         dew=limit - 2.0, now=t)
+                if b.target is not None:
+                    writes += 1
+                    current = b.target
+    assert writes <= 6, f"still oscillating: {writes} setpoint writes"
+    assert blocked_cycles > 0, "the saturation condition was never reported"

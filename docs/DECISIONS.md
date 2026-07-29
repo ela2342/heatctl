@@ -404,3 +404,57 @@ window). The *ratios* above are robust to it; the absolute kWh are not. Settle
 this before quoting any absolute energy figure.
 
 
+
+## D-029
+
+**The water-setpoint trim remembers which setpoints the condensation guard
+rejected, and retries on the constraint moving rather than on a timer.**
+
+*2026-07-29.* Measured that afternoon: **14 setpoint oscillations between
+12:24 and 20:19**, perfectly regular, while the house deviation degraded
+monotonically from −0.32 K to −1.25 K.
+
+The mechanism was two controllers with no knowledge of each other. The
+capacity branch saw "house warm, valves at 100 %" and stepped the setpoint
+down 1 K; roughly six minutes later the leaving water crossed the condensation
+limit and the breach branch stepped it straight back up; thirty minutes after
+that the D-018 rate limiter expired and the identical step was attempted
+again. The plant therefore sat **~30 of every 36 minutes a full kelvin warmer
+than it could actually sustain**, on the hottest day of the year.
+
+This is textbook integrator windup against a saturated actuator, with the
+saturation forgotten between attempts. The fix is to remember it: a setpoint
+rejected at a given supply limit is infeasible *for that limit*, so no amount
+of waiting can make it succeed — only the constraint moving can. Retry is
+gated on the limit falling by `constraint_retry_margin_c` (0.5 K, half a trim
+step), never on elapsed time.
+
+Three details that are load-bearing:
+
+- **Remember the LEAST aggressive failure.** If 19 °C breaches, 18 certainly
+  would too, so remembering 19 blocks both; remembering 18 would leave 19 to
+  be rediscovered one wasted cycle at a time.
+- **Block only setpoints at or below the rejected one.** Blocking everything
+  would strand the plant at whatever setpoint it happened to hold.
+- **Fail toward trying when the limit is unknown.** The measured-breach branch
+  is the real protection, so a wasted attempt costs one step, whereas wrongly
+  blocking strands the plant somewhere it could have improved on.
+
+**Rejected: widening the trim's guard band, or slowing the retry.** Both hide
+the oscillation while leaving the plant further from the achievable setpoint —
+the loss already lives in the thirty-minute wait, so lengthening it makes the
+loss larger, not smaller.
+
+The blocked state is now reported rather than silent (`water_sp/blocked`, plus
+an edge-triggered warning). "The plant cannot meet demand and knows why" was
+previously the quietest state in the system, which is how this ran unnoticed
+for a full afternoon. Supersedes nothing; refines D-018.
+
+Note the deeper finding this exposed, which is a plant property and not a
+control bug: the day was **condensation-limited, not capacity-limited**.
+Indoor dew point rose 2.0 K through the day and the supply limit tracked it
+exactly, so the floor's usable supply temperature rose while the load peaked.
+Radiant floor cooling cannot dehumidify — it must stay above the dew point —
+so latent load accumulates and tightens the very constraint limiting sensible
+cooling. Constraint memory stops the plant wasting capacity it has; it cannot
+create capacity the dew point forbids.

@@ -103,6 +103,7 @@ class Controller:
         # Load compensation: house demand -> water temperature setpoint. The
         # third level of the cascade; see setpoint.py.
         self.water_sp = SetpointController(cfg)
+        self._sp_blocked = False        # edge detector for the saturation alarm
 
         # Valve distribution. Scales demands so the most-demanding circuit is
         # fully open: maximum flow, minimum spread, best COP - throttling is a
@@ -436,6 +437,22 @@ class Controller:
                           if self.mode == "cooling" else None),
             now=now)
         await self.plane.publish("water_sp/reason", decision.reason)
+        # Setpoint-saturation alarm. Logged on the EDGE only: the blocked state
+        # is re-evaluated every cycle and persists for hours, so logging it
+        # each time would bury everything else - but never logging it at all
+        # would make "the plant cannot meet demand" the quietest state in the
+        # system, which is how the 2026-07-29 limit cycle went unnoticed for a
+        # full afternoon.
+        if decision.demand_unmet != self._sp_blocked:
+            self._sp_blocked = decision.demand_unmet
+            if decision.demand_unmet:
+                log.warning("water setpoint SATURATED: %s", decision.reason)
+                self.log_event("water_setpoint_blocked", decision.reason)
+            else:
+                log.info("water setpoint no longer saturated")
+                self.log_event("water_setpoint_unblocked", decision.reason)
+        await self.plane.publish("water_sp/blocked",
+                                 "1" if decision.demand_unmet else "0")
         if decision.target is None:
             return
         log.info("water setpoint %s: %s -> %.0f degC (%s)",

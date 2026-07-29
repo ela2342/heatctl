@@ -330,6 +330,23 @@ control:
     # mechanism, and it bypasses the 30 min cadence.
     dew_floor_offset_c: 4.0
     breach_jump_c: 6.0
+    # CONSTRAINT MEMORY (2026-07-29). How far the cooling supply limit must
+    # FALL before a setpoint the condensation guard already rejected is worth
+    # attempting again.
+    #
+    # Without this the trim re-attempted the same rejected step every 30 min:
+    # measured that day, 14 oscillations between 12:24 and 20:19 while the
+    # house drifted from 0.32 K to 1.25 K off target, with the plant sitting
+    # ~30 of every 36 minutes a full kelvin warmer than it could sustain. A
+    # setpoint rejected at a given limit is infeasible FOR THAT LIMIT, so only
+    # the constraint moving can make it succeed - never the clock.
+    #
+    # 0.5 K is half a trim step: small enough to explore promptly when the air
+    # genuinely dries out, large enough that sensor noise on the dew point
+    # cannot re-open the cycle by itself. Raising it makes the plant slower to
+    # exploit a real improvement; lowering it toward the dew point's own noise
+    # floor reintroduces the oscillation this exists to kill.
+    constraint_retry_margin_c: 0.5
 
   # Source demand and minimum flow - ONE decision, see docs/DESIGN.md 4.3.
   # Aggregate per-ROOM deviation into a signed house demand (too cold ->
