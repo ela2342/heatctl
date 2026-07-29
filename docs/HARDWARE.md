@@ -791,3 +791,27 @@ unattended operation unless a static-PIN mode works, which is unverified. The
 raw card-edge serial tap carries **mains potential**. Both are the opposite of
 this project's premise.
 
+## PT1000 channel budget — 2× 750-463 needed
+
+Counted 2026-07-29 with the owner. Currently 16 channels, 12 enabled, **4
+spare**. Planned consumers:
+
+| Purpose | Channels |
+|---|---|
+| Buffer stratification (5-node model, DESIGN §6.2) | 5 |
+| Stove VL/RL | 2 |
+| Mixed flow after the ARM 343 — needed to regulate mixer temperature at all | 1 |
+| DHW station flow + return — for pump-speed regulation | 2 |
+| **Total** | **10** |
+
+Shortfall 6, so **two more 750-463** (4 channels each), leaving 2 channels of
+headroom. **Append them at the END of the rail** — WAGO maps process data by
+module order within each data type, so inserting analog inputs before the
+existing four would shift all sixteen PT1000 registers and silently remap every
+temperature sensor. `config.yaml` hardcodes `base_register: 12`.
+
+Note the mixer and DHW sensors are not optional extras: **you cannot regulate a
+mixing valve without measuring what comes out of it**, and the ARM 343 has no
+position feedback, so the mixed-flow temperature is the *only* signal closing
+that loop.
+

@@ -15,11 +15,25 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
 
 - [~] Hardware: the **2x 750-559 arrived and are fitted** (2026-07-27,
       positions 9 and 10), so there are now 16 analog outputs - enough for all
-      12 circuits plus spares. Still open: the 750-1606 (enough 0V terminals
-      for all 12 valves) status is unconfirmed, and **only 2 actuators are
-      physically on the manifold** - Gästebad (circuit 1) and Wohnzimmer
-      (circuit 2). A module arriving is not an actuator being fitted; keep
-      `fitted:` in config.yaml honest about the difference.
+      12 circuits plus spares.
+      **UPDATE 2026-07-29: the actuators are NOT the blocker - they exist.**
+      All the Möhlenhoff Alpha 5 survived the surge event and are on hand;
+      only 2 are physically on the manifold (Gästebad circuit 1, Wohnzimmer
+      circuit 2). **The blocker is 0 V terminals**: the 750-559 does not
+      provide enough, so fitting all 12 needs the **750-1606** potential
+      distribution module - or a jury-rigged common 0 V rail.
+      That makes this a **cheap blocker in front of a large win**: one module,
+      or an afternoon with a terminal block, converts 2 controllable circuits
+      into 12 and takes the house from 2 rooms under real control to 7. It is
+      probably the highest ratio of outcome to cost anywhere on this list.
+      If jury-rigging: the 0 V rail must be a *proper* common reference, not a
+      daisy chain through actuator terminals - voltage drop along a shared
+      return shifts every actuator's effective command, and the error grows
+      with the number of units and their position in the chain. That failure
+      would look exactly like a mis-calibrated actuator, which is a debugging
+      hole we do not need.
+      A module arriving is not an actuator being fitted; keep `fitted:` in
+      config.yaml honest about the difference.
       WHEN THEY ARE FITTED, two decisions expire together and must be
       revisited in the same breath - both are safe today only because most
       circuits are unthrottleable open pipe:
