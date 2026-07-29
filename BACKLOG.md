@@ -362,10 +362,12 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
       means "unchanged", not "unknown".** This is the only sensor class in the
       system with that semantics, so it must be explicit in code and comment or
       someone will apply the standard staleness rule and get nonsense.
-      **Mitigation when selecting parts: prefer SOLAR-powered variants**
-      (STM 330 class, e.g. Eltako FTKB-hg) which *do* send periodic telegrams.
-      Then a heartbeat exists, failure is detectable, and the latched-input
-      special case can carry a real timeout after all. Worth paying for.
+      **DECIDED 2026-07-29: solar variants** (STM 330 class, e.g. Eltako
+      FTKB-hg), which *do* send periodic telegrams. So a heartbeat exists,
+      a dead sensor is detectable, and the latched-input special case can
+      carry a real timeout after all - which keeps door/window state inside
+      the same staleness discipline as everything else rather than as an
+      exception to it.
 
       **(2) Route it via MQTT, NOT via Home Assistant.**
       `EnOcean USB 300 -> enocean-mqtt -> mosquitto -> heatctl`. heatctl already
@@ -376,8 +378,26 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
       HA dead. HA's built-in `enocean` integration is also YAML-only with
       limited EEP coverage.
 
-      **(3) Hardware notes.** No EnOcean receiver on site yet; a USB 300/500 is
-      needed. `/dev/ttyUSB0` is already taken by the ConBee III, so **address
+      **(3) Hardware.** The owner HAS a receiver, and is considering a **WAGO
+      750 EnOcean module** (~EUR 99, second-hand) instead. That is
+      architecturally attractive: door/window state would arrive over the
+      **same Modbus TCP path heatctl already polls** - no USB stick, no bridge
+      daemon, no extra failure mode, and it inherits the coupler's watchdog and
+      staleness handling. Decoding the EEP in heatctl is no harder than the
+      PT1000 raw decode we already do.
+      **But check two things before buying:**
+      * **PROCESS IMAGE SHIFT - the dangerous one.** WAGO maps process data by
+        module order within each data type. An EnOcean module presenting input
+        registers, placed *before* the four 750-463s, would **shift all 16
+        PT1000 registers** and silently remap every temperature sensor. This
+        is precisely the failure that mis-mapped the valves in July.
+        **Rule: append new modules at the END of the rail, and re-verify the
+        register map against the coupler after ANY module change.**
+        config.yaml hardcodes `base_register: 12` for both sensors and valves.
+      * **Device capacity** - how many EnOcean sensors one module can learn.
+        Unverified; check before assuming it covers every window.
+      If the USB route is used instead, note `/dev/ttyUSB0` is the ConBee III,
+      so address by `/dev/serial/by-id/` and never by `ttyUSBn`. `/dev/ttyUSB0` is already taken by the ConBee III, so **address
       it by `/dev/serial/by-id/` and never by ttyUSBn** - enumeration order is
       not stable across reboots and a swap would silently point the bridge at
       the Zigbee stick. 868 MHz through a slab-heavy house may want a repeater.

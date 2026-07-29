@@ -295,3 +295,23 @@ no flow is wanted and the source is not running. **Note the floor itself is
 still an estimate**; 40 % coincides with the datasheet's 0.16/0.40 ratio, but
 only under assumptions nobody has measured. See BACKLOG.
 
+## D-026 · Transport policy: Zigbee is observation-only, never control or safety
+**Owner's call, 2026-07-29: "no Zigbee on the critical path, that turned out to
+be toy technology."** Recorded as a standing constraint, not a preference.
+**The rule:** anything heatctl *acts on* — sensor inputs to control or safety,
+and every actuator — must arrive over **wired I/O (WAGO/Modbus)** or **IP+MQTT**.
+Zigbee may carry observation only: convenience metering, indication, things
+whose loss degrades nothing. **Why it matters beyond taste:** heatctl's failure
+model assumes it can tell *lost knowledge* from *bad news* (D-003), and a mesh
+that silently drops or delays messages corrupts exactly that distinction — a
+stale reading and a slow one look identical.
+**Consequences already in force:** door/window contacts go **EnOcean**
+(energy-harvesting, no batteries — fits the 30-year premise), and **solar**
+variants specifically, so a periodic heartbeat exists and a dead sensor is
+detectable. The grid meters are **Shelly Pro 3EM** (`SPEM-003CEBEU` at
+192.168.178.16, `SPEM-003CEBEU63` at 192.168.178.31) — **IP, not Zigbee**, so
+they are admissible, and they speak MQTT natively, meaning heatctl can read
+them without HA in the path. The existing Zigbee smart plugs stay where they
+are: observation. **Related:** [[D-003]] fail-open on lost knowledge, [[D-013]]
+single-writer on shared buses.
+
