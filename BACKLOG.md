@@ -346,6 +346,44 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
           happens to close the overnight mass balance (15,300 predicted vs
           15,700-18,300 measured) but is not good enough for per-pair coupling.
 
+- [!] **BUY: combined heating/cooling heat meter (Waerme-/Kaeltezaehler).**
+      Decided 2026-07-29. Supersedes the "measure the flow rate" item below by
+      choosing the instrument; that item's reasoning still applies.
+      **Placement: primary circuit at the heat pump, flow sensor in the RETURN
+      leg**, temperature pair straddling leaving/return. Return leg is standard
+      (cooler water, longer sensor life). Primary rather than manifold feed
+      because today they are the same thing under `H_DIRECT`, but the target
+      design puts a buffer and mixing valve between them - and then primary
+      measures what the HEAT PUMP produced (what COP needs, and it stays clean
+      when the stove joins the circuit) while the manifold feed measures what
+      reached the slab.
+      **A plain heat meter will NOT do.** It integrates only when flow is
+      warmer than return, so in cooling it registers nothing. Needs separate
+      heating and cooling registers. Note MID (MI-004) covers heating only -
+      cooling registers are never legal-for-trade, which is irrelevant here.
+      SPECIFICATION, in order of how easily it goes wrong:
+      * **`DTmin` <= 1 K.** THE TRAP. Most meters specify accuracy only above
+        1-3 K. Our observed cooling spread was **0.10-1.01 K** overnight, so a
+        3 K device would be blind precisely when we need it.
+      * **Ultrasonic**, not vane-wheel: turndown, and no moving parts on a
+        30-year horizon.
+      * `qp` ~1.5 m3/h for our 0.58-1.44 range - and check **`qi`**, the low
+        end, not just nominal.
+      * Temperature range covering ~5-90 degC (supply reaches 11 on a design
+        cooling day).
+      * **Condensation-rated, IP54+.** We run AT the dew point by design.
+      * M-Bus or Modbus RTU on **its own bus** - must not share the heat
+        pump's line, which is under a 200 ms inter-transaction constraint and
+        a single-master rule (D-013).
+      Families to look at: Kamstrup MULTICAL, Diehl SHARKY, Engelmann
+      SensoStar, Sontex Supercal - all have heating/cooling variants. Verify
+      the specs above per model rather than trusting the family.
+      **Worst case is still a win:** even if the energy register is poor at low
+      spread, the ultrasonic FLOW output is unaffected by dT - and flow is what
+      collapses the `m_dot` / `UA_ws` / `NTU` identifiability tangle that
+      currently lets the filter fit the same RL data with high-flow/low-UA or
+      low-flow/high-UA. Good DTmin additionally buys trustworthy COP.
+
 - [!] **Measure the hydronic flow rate - it now gates every energy balance.**
       Highest-value missing instrument, promoted 2026-07-28 after the first
       model validation. The overnight mass estimate came out at 13,700-18,600
