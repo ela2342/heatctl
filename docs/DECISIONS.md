@@ -339,15 +339,34 @@ by 8 points of R².
 Same analysis. **Flow: 0.345 l/s = 1.24 m³/h** (±10 % systematic, from the COP
 map), consistent with the manufacturer's 0.16–0.40 l/s band at its 80th
 percentile — and with our datasheet-plus-pump-speed estimate of 1.2–1.44 m³/h.
-**H = 245 W/K** (plausible 215–275) against our calculated **267 W/K**:
-consistent, slightly lower. **C is scale-dependent, and that is the finding**,
+**H = 245 W/K** as fitted (plausible 215–275) against our calculated
+**267 W/K**. **With η resolved to ≈ 0.70 this becomes H = 216 ± 18 W/K**
+(198–234), the ± being η ±5, COP map ±13 and statistical ±12, combined in
+quadrature. Taking the calculated fabric term (148.83 W/K) as given, that
+implies a ventilation rate of **n ≈ 0.40 h⁻¹** rather than the assumed 0.70.
+**Do not revise `n` on this**: the fabric term itself carries an 18 % thermal-
+bridge *default*, so the discrepancy may sit in either term, and only a
+blower-door test separates them. What can be said is that **0.70 h⁻¹ now looks
+high**. **C is scale-dependent, and that is the finding**,
 not a defect — the 1R1C fit's capacity rises monotonically with averaging
 window, which is the signature of distributed storage:
-* **3–6 h (dark): 8,900–10,300 Wh/K** vs our calculated **slab alone 8,691**
-* **12 h: 18,256 ± 1,533 Wh/K** vs our summer-night **15,700–18,300**
-Two independent methods, two different seasons, two different timescales,
-agreeing with two independently calculated figures. **The as-built corrections
-(D-022 onward) are now confirmed twice over.** **The two-time-constant fit
+* **3–6 h (dark): 8,900–10,300 Wh/K** vs our calculated **slab alone 8,691** —
+  genuine, independent corroboration of the as-built slab correction (D-022).
+* **12 h: 18,256 ± 1,533 Wh/K**; **24 h: 24,593 ± 2,575**.
+
+**CORRECTION, same day.** A first version of this entry said the 12 h figure
+matched the summer-night estimate of 15,700–18,300 "essentially exactly" and
+called it two independent methods agreeing. **That overstated it, twice:**
+(a) **the summer-night estimate was never independent of `H`** — it assumed the
+*calculated* 267 W/K. Redone with the measured flow (1.24 m³/h) and the
+η-corrected H = 216, the same 6 h balance yields **≈ 14,200 Wh/K**; and
+(b) **the timescales do not correspond** — a 6 h balance should be compared
+against the winter **6 h** fit of 8,900–9,644 Wh/K, which it does not match.
+The estimators also differ in kind (single energy balance vs 1R1C regression).
+**What stands:** C rises monotonically with averaging window — the signature of
+distributed storage — and the 3–6 h figures bracket the calculated slab.
+**What does not:** any claim of exact agreement between the two seasons.
+Reconciling them properly is open work. **The two-time-constant fit
 remains unidentifiable** — the longest dark free decay is 11.1 h over 1.2 K, and
 every two-exponential attempt ran to a search boundary with absurd parameters.
 **New dominant uncertainty in H: `η`**, the fraction of household electricity
