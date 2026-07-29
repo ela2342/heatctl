@@ -347,6 +347,95 @@ inlet/outlet straight lengths exist between pump outlet and manifold input.
    the USB 300 on the Linux host where the decode and the timeout logic live
    next to the rest of heatctl.
 
+### DEFECT 2026-07-29 — the water-setpoint trim limit-cycles against the condensation limit
+
+**14 complete oscillations between 12:24 and 20:19**, in a perfectly regular
+pattern, while the house lost ground all afternoon.
+
+```
+12:24  19 -> 18   house -0.32 K, valves 100%  "not enough capacity"
+12:31  18 -> 19   leaving water 14.5 below limit 14.7  "jumping"
+13:01  19 -> 18   house -0.36 K
+13:07  18 -> 19   leaving water 14.5 below limit 14.8
+...
+20:14  20 -> 19   house -1.25 K
+20:19  19 -> 20   leaving water 16.0 below limit 16.4
+```
+
+House deviation degraded **monotonically through every one of them**:
+−0.32 → −0.36 → −0.43 → −0.50 → −0.58 → −0.62 → −0.76 → −0.87 → −0.98 →
+−1.11 → −1.17 → −1.22 → −1.25 K.
+
+**Mechanism.** Two controllers with no knowledge of each other:
+- the capacity trim sees "house warm + valves at 100 %" and steps the water
+  setpoint **down** 1 K (D-018 rate limit: one step per 30 min);
+- ~6 minutes later the leaving water crosses the condensation limit and the
+  trim's own guard steps it straight back **up**;
+- 30 minutes later, the timer expires and it tries the identical step again.
+
+Period ≈ 36 min, of which **~30 min is spent 1 K warmer than the plant could
+actually sustain**. The trim re-attempts a step it has just been told is
+infeasible, on a timer, without recording *why* it failed.
+
+**Fix: constraint memory, not a slower timer.** When the condensation limit
+rejects setpoint S at dew point D, S is infeasible *for that dew point* — and
+retrying it 30 minutes later with D unchanged (or risen, as it did all day)
+cannot succeed. Retry must be triggered by **the constraint moving**, not by
+the clock: re-attempt when the dew point falls, or when the measured leaving
+water shows headroom against the current limit. This is ordinary anti-windup;
+the trim is integrating against a saturated actuator and forgetting the
+saturation between attempts.
+
+⚠️ Do **not** "fix" this by widening the trim's own guard band or slowing the
+retry. Both would hide the oscillation while leaving the plant sitting even
+further from the achievable setpoint — the loss is already in the 30-minute
+wait, and lengthening it makes the loss larger, not smaller.
+
+### The day was CONDENSATION-limited, not capacity-limited
+
+The more important finding, and it is a plant property rather than a bug.
+
+**Indoor dew point rose +2.0 K through the day**: 12.1 (09:01) → 12.6 (11:15)
+→ 13.1 (13:28) → 13.6 (15:49) → 14.1 (17:52). The cooling supply limit tracked
+it exactly: 14.1 → 16.1 °C.
+
+So the floor's usable supply temperature **rose by 2 K over the course of the
+day, while the cooling load was peaking**. The heat pump was never the
+constraint — valves sat at 100 %, the compressor had headroom, and every
+setpoint reduction was rejected by the dew point rather than by the machine.
+
+This is structural: **radiant floor cooling cannot dehumidify.** It is required
+to stay above the dew point, so latent load accumulates all day and tightens
+the very constraint that limits sensible cooling. The consequence is that the
+plant is weakest exactly when it is needed most, and no control change fixes
+it. The levers are dehumidification, ventilation with drier air (unavailable at
+31 °C outdoor), or accepting the shortfall.
+
+### What worked
+
+- **Zero valve overrides all day** — no `vl_undertemp`, no failsafe, no sensor
+  faults. The D-023 release hysteresis has now run a full hot day with no
+  chatter, and the soft setpoint trim absorbed the constraint before the hard
+  valve guard ever had to fire. That is the intended layering.
+- **Distribution and the flow floor** held every owned circuit at 100 % under
+  peak demand without hunting.
+- Overnight the trim correctly *relaxed* 22 → 25 °C with valves at 0 %, rather
+  than over-chilling into an empty demand.
+
+### This is the case for the layer-2 planner
+
+The plant entered the hot day with an uncharged slab and spent the whole day
+behind. The dew point was **12.1 °C at 09:00 and 14.1 °C by 18:00** — meaning
+the cheapest, coldest, least condensation-constrained hours were **overnight
+and early morning, before anyone needed cooling**.
+
+A planner that pre-cooled the slab overnight against the forecast would convert
+the morning's 2 K of extra dew-point headroom into stored cooling capacity for
+the afternoon, when that headroom no longer exists. That is precisely the
+storage-and-retrieval problem in DESIGN.md §8, and today is the measurement
+that justifies it: **the constraint is not the machine, it is when the
+constraint binds.**
+
 ### Layer 2 — first cut shipped 2026-07-29 (WP-F scaffold, observe-only)
 
 - [x] **`optimizer/` exists and runs.** Own process, MQTT only, allowed to
