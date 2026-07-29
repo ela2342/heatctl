@@ -423,6 +423,36 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
           returns half the data. Same trap for room temps: winter has eight
           rooms, today three.
 
+- [!] **heatctl will CANCEL domestic hot water once the tank is connected.**
+      Found 2026-07-29 when the owner said DHW must run even in cooling mode.
+      The heat pump already supports it: mode **4 = `dhw+cooling`** (and
+      3 = `dhw+heating`) are in `heatpump_map.py`. But heatctl only ever
+      selects 1 or 2, has no DHW concept at all, and `_sync_pump_mode` treats
+      anything else as a disagreement to correct - so it will write 2 over the
+      unit's 4 every cycle and kill the DHW call. It will present as "the heat
+      pump won't make hot water".
+      **Blocks tank commissioning.** Not a one-liner:
+      (a) plant mode becomes a PAIR (space mode x DHW demand), not a scalar;
+      (b) `Safety.apply` must know a DHW call legitimately puts water far above
+          any cooling supply limit - today `vl_undertemp`/`vl_overtemp` reason
+          about one water temperature serving the floor;
+      (c) the water-setpoint loop (D-018) must not fight the DHW setpoint;
+      (d) `_sync_pump_mode`'s "disagreement" test needs to accept the DHW
+          variants as agreement rather than drift.
+      Design it before coding it.
+
+- [ ] **Get the Solarbayer SLS-1000 datasheet.** The buffer is an SLS-1000,
+      not the Buderus Logalux P990.6 M-C the EnEV papers name (that is now the
+      **fifth** as-built deviation, after floor, walls, insulation and stove -
+      treat every component in those 2020/21 papers as provisional). Needed:
+      actual volume, standby loss (the 3.14 kWh/d quoted throughout our docs is
+      the BUDERUS figure and is probably wrong), heat-exchanger surfaces,
+      stratification pocket heights, and connection positions. The pocket
+      heights in particular are needed before the 5-node tank model in
+      docs/DESIGN.md 6.2 means anything.
+      Note the owner reports it **provides hydraulic isolation**, which bears
+      directly on the mode-selection valve question below.
+
 - [!] **The 8 kW tank element is FITTED with no control path at all.** Owner,
       2026-07-29. Needs a contactor or SSR rated for 8 kW, one of the WAGO's
       spare relay outputs, and an interlock.

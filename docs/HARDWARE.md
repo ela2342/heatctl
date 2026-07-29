@@ -603,7 +603,7 @@ Recorded here because none of it is discoverable from the running system.
 |---|---|---|
 | **Mixing valve** | **Afriso ARM 343**, 3-point, 230 V per direction, **120 s** full travel, **no end switches** | fitted — see the section above |
 | **Circulation pumps ×2** | **Wilo Stratos PICO plus 25/0.5-6 (DACH)**, art. **4244375**, unit marking `24w11/074 0969 / I`. One on distribution, one on the heat exchanger — **identical parts** | fitted, **no control interface yet** |
-| **Buffer tank** | 1000 L (Buderus Logalux P990.6 M-C per the EnEV papers), 5 stratification pockets. **INSIDE the thermal envelope** — the EnEV papers say "außerhalb der therm. Hülle, Keller" and are **wrong** (owner, 2026-07-29) | **in place, not yet filled or connected** |
+| **Buffer tank** | **Solarbayer SLS-1000** (owner, 2026-07-29 — *not* the Buderus Logalux P990.6 M-C in the EnEV papers). Stratified, 5 pockets, and **provides hydraulic isolation**. **INSIDE the thermal envelope** — the EnEV papers say "außerhalb der therm. Hülle, Keller" and are **wrong** (owner, 2026-07-29) | **in place, not yet filled or connected** |
 | **Electric element** | **8 kW in the tank** | **fitted, NO control path** — needs contactor/SSR + a DO channel + interlock |
 | **Sensor pockets** | stove VL/RL and buffer stratification | **fitted** |
 | **Mode-selection valve** | a motorised 3-way is on hand; final topology undecided | **open question — see below** |
@@ -646,4 +646,31 @@ pressure relationships holding in every operating state.
 
 Not decided here — it depends on pipe geometry and relative heights that are
 not documented. Flagged so the reasoning is on record when it is decided.
+
+## DHW is required *during cooling* — and heatctl would currently cancel it
+
+Owner, 2026-07-29: the buffer will serve domestic hot water **even while the
+plant is cooling**.
+
+The heat pump supports this natively — `MODES` in `heatpump_map.py` already
+lists **4 = `dhw+cooling`** (and 3 = `dhw+heating`). The hardware is not the
+problem.
+
+**heatctl is.** It only ever selects `heating` (1) or `cooling` (2), has no DHW
+concept anywhere, and `_sync_pump_mode` in `main.py` treats any other value as
+a disagreement to be corrected. So the moment the tank is connected and the
+unit enters mode 4 to make hot water, heatctl will write 2 over it and **cancel
+the DHW call**, every cycle. This is not a latent inefficiency; it is an active
+fight between the controller and the appliance, and it will look like "the heat
+pump won't heat water".
+
+Fixing it is not a one-line change: the plant mode becomes a *pair* (space
+mode × DHW demand) rather than a scalar, `Safety.apply` needs to know that a
+DHW call legitimately raises water temperature far above any cooling limit, and
+the water-setpoint loop must not fight the DHW setpoint. Design before coding.
+
+**Standby loss caveat:** the 3.14 kWh/d figure quoted elsewhere in these
+documents is the **Buderus** value from the EnEV papers. The SLS-1000's real
+figure needs pulling from Solarbayer's datasheet, along with its actual volume,
+heat-exchanger surfaces and pocket heights.
 
