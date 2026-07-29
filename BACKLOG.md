@@ -753,48 +753,118 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
       (e) A free-decay window may exist after 2026-02-21 with control stopped.
           Check what the plant actually did between then and heatctl.
 
-- [!] **CONFIRMED: the site runs 2–4 K colder than the forecast on clear calm
-      nights — river-valley cold pooling.** Owner's anecdote, validated
-      2026-07-29 against 949 paired hours (local Fine Offset WH65B vs
-      Open-Meteo `icon_seamless`, 2025-10-05..11-20).
+- [!] **CONFIRMED AND QUANTIFIED: the site runs 3 K colder than the forecast
+      on clear calm nights — river-valley cold pooling.** Owner's anecdote,
+      validated 2026-07-29 against **3,388 paired winter hours**
+      (2025-11-01..2026-03-31), local station vs Open-Meteo `icon_seamless`.
 
-      **Overall the model is fine** — mean bias −0.30 K, median −0.15 K. The
-      bias is **conditional**, and the conditioning variables are exactly the
-      textbook cold-pooling ones:
+      **Overall the model looks fine** — median bias −0.20 K. The bias is
+      **conditional**, and the conditioning variables are exactly the textbook
+      cold-pooling ones. Conditioned on MODEL variables only (what a planner
+      actually has at prediction time), not measured ones:
 
-      | condition | n | median (station − model) |
-      |---|---|---|
-      | cloud <25 % | 95 | **−1.42 K** |
-      | cloud >90 % | 660 | −0.10 K |
-      | wind <4 km/h | 100 | −0.69 K |
-      | wind >8 km/h | 428 | +0.00 K |
-      | **night + clear + calm** | 6 | **−2.90 K** (min −4.01) |
+      | condition | n | median | sd |
+      |---|---|---|---|
+      | all hours | 3388 | −0.20 | 1.50 |
+      | cloud <25 % | 683 | −1.20 | 2.16 |
+      | cloud >90 % | 2091 | −0.10 | 0.99 |
+      | wind <4 km/h | 375 | −0.60 | 1.81 |
+      | wind 8–15 km/h | 1609 | +0.00 | 1.04 |
+      | **night + clear + calm(<4)** | **50** | **−3.00** | 1.02 |
+      | night + clear + calm(<8) | 263 | −2.90 | 1.15 |
+      | night + overcast + windy | 629 | −0.10 | 0.67 |
 
-      Whole-distribution p05 is **−3.00 K**, matching the owner's "up to 3 K"
-      exactly. Mechanism: clear sky drives radiative surface cooling, calm air
-      lets the inversion stand, and cold dense air drains into the valley. ICON
-      at ~2 km cannot resolve a small river valley, so it returns the regional
+      **−3.00 K median, to the decimal, exactly the owner's anecdote.** The
+      contrast against the null case (night + overcast + windy, −0.10 K,
+      n=629) is a factor of 30, with both cells well sampled.
+
+      Mechanism: clear sky drives radiative surface cooling, calm air lets the
+      inversion stand, cold dense air drains into the valley and pools. ICON at
+      ~2 km cannot resolve a small river valley, so it returns the regional
       value.
 
-      **Why this matters more than a 1.4 K average suggests:**
-      (a) **The bias is worst precisely on the nights that size the plant** —
-          cold, clear, calm. A planner using raw forecast will under-predict
-          overnight loss exactly when the margin is thinnest.
-      (b) **It plausibly explains the 2026-07-29 05:56 incident.** After a
-          clear calm night the house drifted 1.1 K below target and `auto_mode`
-          switched to heating half an hour before sunrise. A planner that knew
-          the site runs colder than forecast under those conditions would have
-          pre-charged the slab instead of reacting.
-      (c) It is **learnable**: bias ≈ f(cloud cover, wind speed, hour). Even a
-          lookup table over those three would capture most of it. All three are
-          in the same Open-Meteo response as the temperature.
+      **Ruled out — this is not a static offset.** The model grid cell sits
+      10 m ABOVE the site, worth ~+0.07 K of lapse rate: negligible, and the
+      wrong sign. And a static offset would appear in every bin; this one
+      vanishes under overcast or wind.
 
-      **Caveats.** n=6 for the strictest bin — the *gradient* across the cloud
-      and wind bins (n=95–660 each) is what carries the finding, not that
-      cell. And **daytime comparisons are suspect on the STATION side**: a Fine
-      Offset radiation shield is imperfect, and the day+clear bin scatters from
-      −5.9 to +2.8 K. Night comparisons have no such error and are the clean
-      ones. Re-validate over a full winter once the station is back.
+      **Daytime bias is POSITIVE** (+0.20 median, +0.60 clear days), which is
+      the signature of station radiation error, not of the valley — a Fine
+      Offset shield heats in sun and reads high, worst on exactly the clear
+      days where the effect is largest. Daytime data is therefore contaminated
+      **on the station side**, and the correction below deliberately applies at
+      night only.
+
+- [ ] **PLAN: learn the forecast temperature bias (layer 2 / planner only).**
+      Candidate model, fitted and validated 2026-07-29. Every input comes from
+      the same forecast response as the temperature, so it is computable at
+      prediction time:
+
+      ```
+      dT = −a · (1 − cloud_cover/100) · exp(−wind_10m / w0)   [night only]
+      a ≈ 5.0–5.5 K        w0 ≈ 8 km/h        night := shortwave ≤ 0
+      ```
+
+      **Out-of-sample validation** (fit Nov+Dec+Jan n=1988, test Feb+Mar
+      n=1400): RMSE 1.835 → 1.457 K, **20.6 % better overall**; on clear calm
+      nights in the test set (n=133), 3.376 → 1.177 K, **65 % better**. Fitted
+      parameters barely moved between the two periods (a 5.0 vs 5.5, w0 8 in
+      both), so the functional form is not overfitted.
+
+      **Where it lives: layer 2 only, never layer 1.** The safety layer must
+      not depend on a forecast, let alone on a learned correction to one. This
+      is a planner input, and it must be clamped (reject |dT| > 5 K) so a
+      pathological refit cannot feed nonsense to the planner.
+
+      Refinements worth trying, in rough order of expected value:
+      - **time since sunset** in place of the night step function — the
+        inversion builds through the night, so the bias should grow, and a step
+        cannot represent that. Likely the biggest remaining gain.
+      - solar elevation for a continuous night factor rather than `shortwave≤0`
+      - snow cover as a separate term (strong radiative cooling, high albedo)
+      - seasonal variation in `a`
+      - refit periodically from the ongoing dual-path record; do NOT freeze
+        these constants into code as magic numbers
+
+      Why this matters more than a 1.5 K RMSE suggests: the bias is worst
+      **precisely on the nights that size the plant** — cold, clear, calm — so
+      a planner on raw forecast under-predicts overnight loss exactly when the
+      margin is thinnest. It plausibly explains the 2026-07-29 05:56 incident,
+      where after a clear calm night the house drifted 1.1 K below target and
+      `auto_mode` flipped to heating half an hour before sunrise. A planner
+      aware of the local bias would have pre-charged the slab instead of
+      reacting at dawn.
+
+- [!] **Outdoor forecast DEW POINT is biased the DANGEROUS way for cooling.**
+      Same 3,388 winter hours: the site is **+0.60 K moister than the model
+      overall, and +1.30 K in daytime** (n=1411, sd 1.10, max +5.80). Daytime
+      is when cooling runs, so a planner using forecast dew point to estimate
+      cooling headroom will systematically believe it has **more headroom than
+      it really has**.
+
+      Two consequences:
+      - **Never feed forecast dew point to the condensation guard.** It already
+        uses the measured indoor maximum, which is both the right quantity and
+        the safe one — keep it that way (`safety.cooling_supply_limit`).
+      - If the planner uses outdoor dew point for capacity planning, it needs a
+        margin of at least the +1.3 K bias plus scatter, not the raw value.
+
+      The night+clear+calm cell runs the other way (−1.30 K): the air cools
+      below the model and moisture deposits out as dew or frost. That is
+      physically coherent, and a mild independent confirmation that the
+      cold-pooling story above is real rather than an artefact.
+
+- [x] **Local station is BACK** (2026-07-29), under the same entity names
+      (`sensor.fineoffset_wh65b_210_*`), and there is now a **second,
+      independent ingest path**: the console uploads to Weather Underground,
+      whose hourly history API returned the entire winter the local path missed
+      (3,389 hours, zero failed days). Station ID, coordinates and API access
+      live in `docs/BUILDING.local.md` — site-identifying, never in this repo.
+
+      The two paths share one physical sensor, so this is redundancy against
+      **receiver/ingest failure** — exactly what happened on 2025-11-20 — not
+      against sensor failure. Worth wiring the WU pull in as routine backfill
+      so the next local outage costs no training data.
 
 - [x] **WEATHER DATA SOURCE FOUND AND TESTED 2026-07-29 — Open-Meteo, wrapping
       DWD ICON.** All three endpoints verified working for our exact

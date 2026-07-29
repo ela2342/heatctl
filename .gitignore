@@ -19,3 +19,7 @@ CLAUDE.md
 # Local, site-specific notes (real addresses, credentials) - never committed
 *.local.md
 dist/
+
+# scratch: weather API responses carry station id + coordinates
+wu*.json
+*.local.json
