@@ -18,8 +18,8 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
 
 | # | Item | Part / spec | Qty | € gross | Supplier |
 |---|---|---|---|---|---|
-| 1 | Heat meter | **MULTICAL 403, qp 3.5, DN25 (G1¼B/R1), supply `7`** | 1 | ~289 | energie-zaehler.com |
-| 1b | Comms module | **Kamstrup Modbus RTU `HC-003-67`** (replaces the M-Bus master) | 1 | ~200 | Kamstrup distributor |
+| 1 | Heat meter | **MULTICAL 403, qp 3.5, DN25 (G1¼B/R1), type `6`, supply `7`** | 1 | **~600-700 net, QUOTE** | energie-zaehler.com |
+| 1b | Comms module | **Kamstrup Modbus RTU `HC-003-67`** (in the quote above) | 1 | incl. | same |
 | 2 | ~~M-Bus master~~ | ~~solvimus MBUS-GE20M~~ **WITHDRAWN — see below** | — | ~~474~~ | — |
 | 3 | Pump modules | **Wilo Connect RS485 `4268524`** | 2 | 597 | SHK wholesaler (list) |
 | 4 | PT1000 probes | **2-wire**, Ø6 mm, 2 m silicone, class B | 10 | 130 | heizlando.de |
@@ -210,6 +210,50 @@ Confirm the straight run between pump outlet and manifold input takes it,
 **Revised meter spec:** MULTICAL 403, **qp 3.5, G1¼B (R1) / DN25**, meter type
 `6`, supply digit `7` (230 VAC), sensor pair Pt500 pockets, Modbus module
 `HC-003-67` separately.
+
+### ORDERING REALITY CHECK 2026-07-29 — our configuration is not a stocked item
+
+Searched the German vendors. **Nothing on a shelf matches the spec**, and the
+€289 figure quoted earlier was for a different meter:
+
+| What is actually stocked | Config | Price | Problem |
+|---|---|---|---|
+| energie-zaehler.com, €299 | qp 1.5 **DN15**, **wM-Bus**, heat/**cooling** ✓ | €299 | **this is where the €289 came from** — wrong size, wrong comms |
+| zaehleronlineshop.de | qp 3.5 **DN25** ✓, 260 mm ✓, **230 V** ✓, no module | €479.85 gross / €403 net | **heat ONLY** — no cooling |
+| zaehleronlineshop.de | qp 2.5 DN20, **230 V + Modbus RTU** ✓ | €498.99 gross | **heat ONLY**, and DN20 |
+
+The pattern is consistent: vendors stock either the **heat/cooling** variant in
+the small wireless configuration, or the **DN25 mains** variant as heat-only.
+Our combination — qp 3.5 DN25 + heat/cooling type `6` + 230 VAC + Modbus RTU —
+is **configure-to-order**, which also explains the 4–5 week lead times seen on
+the non-stocked items.
+
+**Budget correction: expect ≈ €600–700 net for the meter, not €289.** The
+DN25 mains heat-only body alone is €403 net; heat/cooling and the Modbus
+module are additions on top. The shopping-list total needs revising upward by
+roughly €350 once a real quote lands.
+
+**Preferred vendor: energie-zaehler.com.** They already stock combined
+heat/cooling 403s, so the configuration is familiar to them, and they
+advertise Fachberatung rather than being a pure catalogue shop.
+Tel **+49 9854 9799 820**, `info@energie-zaehler.com`.
+Second source: zaehleronlineshop.de (has the DN25 mains body and sells the
+Modbus + 230 V combination, so they clearly configure). Third:
+stark-elektronik.de.
+
+⚠️ **Resolve before ordering — the temperature sensors.** The stocked DN25
+listing ships **Ø5.0 mm direct-immersion** sensors on 1.5 m leads. This site
+already has **pockets fitted** (recorded under "not needed" in the shopping
+list), so the order must specify a **pocket sensor pair** instead, and the
+pocket bore and immersion depth must be measured first. Ordering direct
+sensors against fitted pockets means either they do not fit or they sit in
+an air gap and read the pocket rather than the water — a slow, plausible,
+hard-to-diagnose error of the exact kind that would corrupt the heat figure
+the layer-2 slab estimate depends on.
+
+⚠️ Also confirm **1.5 m vs 3.0 m sensor leads** reach from the pockets to the
+calculator position, and that 260 mm of straight run plus the sensor's own
+inlet/outlet straight lengths exist between pump outlet and manifold input.
 
 ### Corrections to my own specification
 
