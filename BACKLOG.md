@@ -388,6 +388,41 @@ Markers: `[ ]` not started · `[~]` partially done or blocked externally ·
       exists: compare Wohnzimmer cooling rate with the door open vs shut, at
       matched solar and supply conditions.
 
+- [ ] **Pipe run between the outdoor unit and the manifold: real, but not yet
+      cleanly measurable.** Owner flagged it 2026-07-29 - it is an outdoor
+      monobloc, so HP leaving water is NOT manifold supply. Measured over 24 h
+      (all times UTC in InfluxDB):
+      * **Return side is the consistent signal: HP return runs +0.4 to +1.0 K
+        warmer than manifold return, mean +0.68 K.**
+      * Flow side is inconsistent: +3.2 K during a warm idle period, but
+        -0.6 to +0.8 K while actually cooling, sometimes negative.
+      Do NOT read the flow-side mean as a loss figure. Two confounds:
+      (a) with the compressor off and low flow the two ends simply decouple,
+          so the 3.2 K is stagnation, not transport loss; and
+      (b) in cooling the true effect is only a few tenths, which is at or
+          below the offset between the heat pump's own sensor and our PT1000 -
+          the two have never been cross-calibrated.
+      To measure it properly: compare the two ends during steady flow at large
+      dT (heating season gives 20-30 K to surroundings), or cross-calibrate by
+      logging both at zero flow and full thermal equilibrium.
+      Consequence meanwhile: **use manifold VL/RL for anything about the
+      house, and HP leaving/return for anything about the machine.** Never mix
+      them in one energy balance.
+
+- [ ] **Two caveats for any winter-data analysis, both from the owner.**
+      (a) **The heat pump applies its own outdoor-dependent setpoint
+          correction.** So the setpoint register is NOT the effective target,
+          and a reconstruction that assumes it is will be wrong. Use measured
+          leaving/return water as ground truth. Check the RW register block
+          for the weather-compensation curve parameters.
+      (b) **Entity names change at the Controme/heatctl handover.** Winter
+          data uses the old HA modbus hub's names - `leaving_water_temperature`,
+          `return_water_temperature`, `outdoor_ambient_temperature`. From
+          2026-07 it is `heatctl_leaving_water`, `heatctl_return_water`,
+          `heatctl_outdoor_ambient`. A query spanning both periods silently
+          returns half the data. Same trap for room temps: winter has eight
+          rooms, today three.
+
 - [!] **WINTER DATA EXISTS: InfluxDB has 2025-10-03 to 2026-02-21 at full
       instrumentation, and it changes the priority order.** Found 2026-07-29.
       `http://<ha>:8086`, db `homeassistant`, HA's own influxdb credentials,
