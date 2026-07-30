@@ -336,6 +336,36 @@ control:
   setpoint_delta:
     max_age_s: 3600
 
+  # Compressor frequency ceiling (R32, 0x00F1). SPREAD IS CAPACITY - Q = m*c*dT
+  # with flow fixed by the pump - so this loop MAXIMISES spread subject to the
+  # manifold supply staying clear of the condensation limit, rather than
+  # minimising it.
+  #
+  # Measured 2026-07-30: uncapped at 79-80 Hz the spread was 4.5 K and the
+  # supply hit 15.3 against a 16.0 limit - a breach, valves shut, nothing
+  # delivered. Hand-capped to 45 Hz it ran 44-45 Hz, 1.4-2.5 K spread, 2.8 K of
+  # margin - safe but leaving capacity unused on a 38 degC day. Neither fixed
+  # value is right for long: the correct ceiling moves with the dew point.
+  #
+  # Asymmetric. Raising spends capacity that may not come back if it breaches;
+  # lowering protects the slab. So raises are rate-limited and lowers are
+  # immediate. Every write wears the unit's flash, hence minutes not seconds.
+  capacity:
+    enabled: true
+    target_margin_c: 1.0    # hold the supply this far above the limit
+    deadband_c: 0.4
+    step_hz: 5.0
+    raise_interval_s: 600   # lowering ignores this
+    min_hz: 35.0
+    max_hz: 90.0
+    # Raising the ceiling only helps if the ceiling is what limits the machine.
+    at_ceiling_hz: 3.0
+    # R32 only binds in silent mode, and silent mode's own fan cap (D09,
+    # 0x00F4) defaults to 60 against the ~800 RPM the condenser actually needs.
+    # Refuse to touch the ceiling unless that has been raised - a frequency cap
+    # with a throttled condenser fan is a high-pressure trip.
+    fan_cap_min: 400
+
   water_setpoint:
     enabled: true
     interval_s: 1800        # 30 min between trims

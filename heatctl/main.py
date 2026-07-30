@@ -27,6 +27,7 @@ from pathlib import Path
 import yaml
 
 from .backends.base import make_backend
+from .capacity import CapacityController
 from .demand import DemandController
 from .distribution import Distributor
 from . import heatpump_map as hpm
@@ -103,6 +104,13 @@ class Controller:
         # Load compensation: house demand -> water temperature setpoint. The
         # third level of the cascade; see setpoint.py.
         self.water_sp = SetpointController(cfg)
+        # Frequency ceiling: takes as much spread as the dew point allows.
+        # Spread is how the plant delivers capacity, so this MAXIMISES it under
+        # a constraint rather than minimising it - see capacity.py.
+        self.capacity = CapacityController(cfg)
+        # Below this the silent-mode fan cap is throttling the condenser.
+        self.capacity_fan_min = float(
+            (cfg['control'].get('capacity') or {}).get('fan_cap_min', 400))
         self._sp_blocked = False        # edge detector for the saturation alarm
         d = cfg["control"].get("setpoint_delta") or {}
         self.sp_delta_max_age_s = float(d.get("max_age_s", 3600.0))
@@ -240,6 +248,45 @@ class Controller:
                 self.water_sp.forget_constraint()
         except Exception:
             log.exception("heat pump command failed: %s = %r", key, payload)
+
+    async def _trim_capacity(self, state, now: float) -> None:
+        """Move the compressor frequency ceiling (R32) to spend spare margin.
+
+        Only acts when silent mode is on AND the silent-mode fan cap has been
+        raised, because R32 only binds in silent mode and silent mode with the
+        default 60 RPM fan cap throttles the condenser to 7.5 % of the ~800 RPM
+        it needs. Both conditions are CHECKED, not assumed - measured
+        2026-07-30, that fan cap was still at its default and enabling silent
+        mode without lifting it would have been a high-pressure trip.
+        """
+        if not self.capacity.enabled or not self.hp.allow_writes:
+            return
+        flags1 = self.hp.config.get(0x0001)
+        fan_cap = self.hp.config.get(hpm.by_name("silent_max_fan_cooling").addr)
+        silent_ok = (flags1 is not None and bool(flags1 >> 5 & 1)
+                     and fan_cap is not None and fan_cap >= self.capacity_fan_min)
+        ceiling_reg = hpm.by_name("silent_max_freq_cooling_hz")
+        ceiling = self.hp.config.get(ceiling_reg.addr)
+        freq = self.hp.status.get(hpm.by_name("compressor_freq").addr)
+        d = self.capacity.step(
+            mode=self.mode,
+            supply_temp=(None if "vl_total" in state.faults
+                         else state.temps.get("vl_total")),
+            supply_limit=(self.safety.cooling_supply_limit()
+                          if self.mode == "cooling" else None),
+            current_ceiling=None if ceiling is None else float(ceiling),
+            compressor_hz=None if freq is None else float(freq),
+            silent_ok=silent_ok, now=now)
+        await self.plane.publish("capacity/reason", d.reason)
+        if d.target_hz is None:
+            return
+        log.info("frequency ceiling %s -> %.0f Hz (%s)",
+                 ceiling, d.target_hz, d.reason)
+        self.log_event("capacity",
+                       f"R32 {ceiling} -> {d.target_hz:.0f}: {d.reason}")
+        if await self.hp.write_named(ceiling_reg.name, d.target_hz,
+                                     f"capacity: {d.reason}"):
+            self.capacity.note_write(now)
 
     # ---------- main loop ----------
     async def run(self) -> None:
@@ -388,6 +435,7 @@ class Controller:
 
         await self._hold_source_power()
         await self._trim_water_setpoint(state, now)
+        await self._trim_capacity(state, now)
 
         # Make the heat pump's own mode follow the plant's, and shout if it
         # does not. Cheap to call every cycle: the client drops a write that
@@ -633,7 +681,28 @@ class Controller:
             # zero would erase the floor exactly when the next start is about
             # to produce a real one.
             freq = self.hp.status.get(hpm.by_name("compressor_freq").addr)
-            self.water_sp.observe_spread(spread if freq else None)
+            # THE FLOOR NEEDS return -> MANIFOLD SUPPLY, not return -> leaving
+            # water. The setpoint targets RETURN water and the condensation
+            # guard measures the MANIFOLD supply, so the quantity that predicts
+            # "how far below the setpoint will the guarded temperature sit" is
+            # the drop between exactly those two points.
+            #
+            # Measured 2026-07-30: the manifold runs 0.8-1.1 K WARMER than the
+            # heat pump's leaving water (pickup or mixing in the run between
+            # them), while the two return sensors agree to 0.1 K. Feeding the
+            # machine-side spread therefore over-predicted the drop by ~0.9 K
+            # and cost a whole setpoint step of usable range.
+            #
+            # Measured end-to-end, so no model of pipe gain or mixing is needed
+            # - and it uses the manifold PT1000 at 0.1 K rather than the heat
+            # pump register at 0.5 K.
+            eff = None
+            vl_manifold = state.temps.get("vl_total")
+            if vl_manifold is not None and "vl_total" not in state.faults:
+                eff = hpm.decode(rw_reg, rw) - vl_manifold
+                await self.plane.publish("hp/spread_effective", f"{eff:.2f}")
+            self.water_sp.observe_spread(
+                (eff if eff is not None else spread) if freq else None)
             est = self.water_sp.spread_estimate
             if est is not None:
                 await self.plane.publish("water_sp/spread_est", f"{est:.2f}")
