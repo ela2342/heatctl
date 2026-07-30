@@ -422,6 +422,45 @@ inlet/outlet straight lengths exist between pump outlet and manifold input.
       wrong criterion the night before a 37 °C day.
 
 
+### Afternoon status 2026-07-30 ~14:20 — the plant is at its physical optimum
+
+| | |
+|---|---|
+| outdoor (HP sensor, reads high in sun) | 40.0 °C |
+| compressor / ceiling | **59 Hz at a 60 Hz ceiling** — the ceiling IS the constraint |
+| spread | 2.9 K |
+| manifold supply vs limit | 17.3 vs 16.4 — **+0.9 K, on the controller's 1.0 target** |
+| setpoint | 20, and the floor is 20 — saturated |
+| valves | 100 % |
+| house | **−3.54 K** and warming |
+
+**Delivered cooling: 0.344 kg/s × 4180 × 2.9 K = 4.2 kW.** Predicted load for this
+hour: **8.9 kW**. So the plant is moving less than half the load, which is why the
+house is losing ground — and it is doing so with the supply pinned at the
+condensation floor, the valves wide open and the frequency ceiling at the point
+where raising it further would eat the margin. **There is nothing left in the
+control system.**
+
+**THE LOAD MODEL IS TRACKING, which is the encouraging part.** Predicted deficit
+8.9 − 4.2 = 4.7 kW against 15.3 kWh/K of capacity gives **0.31 K/h** of expected
+drift. Observed: −3.30 K at 13:00 to −3.54 K at 14:20, i.e. **0.24 K/h**. Within
+the model's stated uncertainty, on a day it had never seen. That is the first
+independent check of the layer-2 load calculation against reality and it holds.
+
+**Expected trajectory:** the house keeps warming until the load falls below
+~4.2 kW, which the forecast puts around 20:00 (3.86 kW). Peak indoor deviation
+therefore lands early evening at roughly −4.5 to −5 K, then recovers overnight.
+
+**The capacity controller has converged**, which is the right behaviour: 59 Hz
+against a 60 Hz ceiling with 0.9 K of margin sits inside its 0.4 K deadband, so it
+holds rather than hunting. It found the maximum spread this dew point allows,
+which is what it was built to do.
+
+**The remaining lever today is not in the plant.** Solar is ~5 kW of the 8.9 kW
+load; external shading on the east and south glazing is worth more than the
+entire cooling system. Everything else waits on lowering the indoor dew point,
+which needs the hydraulic separation that is not built.
+
 ### SILENT COOLING MODE WORKS. The window is open. 2026-07-30 12:33.
 
 Owner's call, and the right one. Three writes, in this order:
