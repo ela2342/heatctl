@@ -422,6 +422,40 @@ inlet/outlet straight lengths exist between pump outlet and manifold input.
       wrong criterion the night before a 37 °C day.
 
 
+- [!] **WITHDRAWN: clearing `powerful_mode` was not shown to cap the compressor.**
+      Claimed 2026-07-29 evening on the strength of a coincidence, and the
+      evidence does not survive the next morning.
+
+      **The disproof:** `powerful_mode` is still off, and at 06:50 on 2026-07-30
+      the compressor ramped to 85 Hz anyway.
+
+      **How the wrong conclusion was reached, because the shape of the mistake
+      is worth keeping.** The flag was cleared at 21:39. Between 21:43 and 21:49
+      the compressor sat at a steady 39-40 Hz with a 2.0-2.5 K spread, and that
+      was read as the effect. But 20 minutes earlier, with the flag still ON, it
+      had run 16 → 49 → 89 Hz. The difference was not the flag: at 21:17 the
+      unit was in a **pull-down** after the setpoint dropped 20 → 19, and by
+      21:43 it had reached target and was **modulating at steady state**. Two
+      phases of the unit's own control cycle, mistaken for a before/after.
+
+      **Consequence for everything downstream:** frequency is driven by the
+      error, not by that flag, and the spread follows frequency. So the
+      2.0-2.5 K spread measured that evening was a steady-state figure and is
+      NOT what the plant sees during a pull-down - the measured value the next
+      morning was **3.2 K**. Every calculation that assumed 2.2 K understated
+      the setpoint-to-supply gap, which is part of why repeated pushes to 16,
+      17 and 18 all breached.
+
+      **What still stands:** the F10 = 2 change is separately demonstrated - the
+      pump held 100 % against the 90/80/70/60/50 throttling seen on two baseline
+      cycles, which is a direct before/after on a quantity the flag cannot
+      touch.
+
+      Re-test `powerful_mode` properly if it matters: hold the setpoint constant
+      and well below return water so the unit stays in pull-down, then toggle
+      the flag. Comparing across phases of its own control cycle proves nothing.
+
+
 ### THE OVERNIGHT PRE-CHARGE FAILED. Measured 2026-07-30 morning.
 
 Owner: "almost no cooling overnight". Correct. Compressor history:

@@ -242,8 +242,29 @@ class SetpointController:
             # actionable, and dropping it when `target <= current` would leave
             # the trim to rediscover the same failure later.
             self._remember_breach(current, supply_limit)
-            target = self._clamp(mode, dew_point + self.breach_jump_c,
+            # RECOVER TO THE FLOOR, NOT TO A FIXED JUMP.
+            #
+            # The floor is already the derived answer to "lowest setpoint whose
+            # supply stays above the limit" - limit + measured spread. Asking
+            # `_clamp` for something below it therefore returns exactly that,
+            # which is the minimum sufficient back-off.
+            #
+            # Measured 2026-07-30 09:14: supply 14.8 against a 14.9 limit - a
+            # breach of ONE TENTH of a kelvin - and the old `dew + 6.0` jump
+            # took the setpoint 18 -> 21. Return water then settles at 21, which
+            # is inside the unit's restart dead zone, so the compressor stopped
+            # entirely and the house climbed 3 K on a 38 degC day. Constraint
+            # memory then correctly refused to retry 20, leaving no way back.
+            # The floor at that moment was 15.4 + 3.2 = 19, two whole steps
+            # lower and still safe.
+            #
+            # `breach_jump_c` survives only as the fallback for when there is no
+            # spread estimate yet, i.e. the first breach after a restart.
+            target = self._clamp(mode, self.cooling_min_c,
                                  dew_point, supply_limit)
+            if self._spread_est is None:
+                target = self._clamp(mode, dew_point + self.breach_jump_c,
+                                     dew_point, supply_limit)
             if target > current:
                 self._last_change = now
                 return SetpointDecision(

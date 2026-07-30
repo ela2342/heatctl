@@ -531,3 +531,46 @@ def test_a_legitimate_clamped_step_is_still_taken(sp):
     d = call(c, current=20.0, dev=-1.01, open_pct=100.0, dew=13.3,
              supply=16.0, limit=14.3, now=1e7)
     assert d.target == 19 and d.kind == TRIM
+
+
+def test_a_tiny_breach_backs_off_to_the_floor_not_by_a_fixed_jump(sp):
+    """REGRESSION for 2026-07-30 09:14, mid-morning of a 38 degC day.
+
+    Supply was 14.8 against a 14.9 limit - a breach of ONE TENTH of a kelvin -
+    and the old `dew + 6.0` jump moved the setpoint 18 -> 21. Return water then
+    settles at the setpoint, 21 sits inside the unit's restart dead zone, the
+    compressor stopped entirely and the house climbed 3 K. Constraint memory
+    then correctly refused to retry 20, so there was no way back.
+
+    The floor - limit + measured spread - was 19: two steps lower and still
+    safe. Recovery must land there, because it is by construction the lowest
+    setpoint whose supply stays above the limit.
+    """
+    c = sp()
+    for _ in range(4):
+        c.observe_spread(3.2)
+    d = call(c, current=18.0, supply=14.8, limit=14.9, dew=13.9, now=5_000.0)
+    assert d.kind == BREACH
+    assert d.target == 19, f"expected the floor at 19, got {d.target}"
+
+
+def test_the_recovery_still_rises_far_enough_to_clear_the_limit(sp):
+    """Minimum sufficient, not merely minimal: supply at the new setpoint must
+    land at or above the limit, or the guard just fires again next cycle."""
+    c = sp()
+    spread = 3.2
+    for _ in range(4):
+        c.observe_spread(spread)
+    limit = 14.9
+    d = call(c, current=18.0, supply=14.8, limit=limit, dew=13.9, now=5_000.0)
+    assert d.target - spread >= limit - 0.5
+
+
+def test_the_fixed_jump_survives_only_as_a_first_breach_fallback(sp):
+    """With no spread measured yet - the first breach after a restart - there is
+    nothing to derive the floor from, so the inherited constant is still what
+    stands between the slab and condensation."""
+    c = sp()
+    assert c.spread_estimate is None
+    d = call(c, current=18.0, supply=14.8, limit=14.9, dew=13.9, now=5_000.0)
+    assert d.kind == BREACH and d.target >= 19
