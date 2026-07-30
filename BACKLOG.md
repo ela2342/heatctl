@@ -422,6 +422,55 @@ inlet/outlet straight lengths exist between pump outlet and manifold input.
       wrong criterion the night before a 37 °C day.
 
 
+### SILENT COOLING MODE WORKS. The window is open. 2026-07-30 12:33.
+
+Owner's call, and the right one. Three writes, in this order:
+
+| addr | register | 	from → to |
+|---|---|---|
+| `0x00F4` | D09 max fan speed, silent cooling | **60 → 1000** |
+| `0x00F1` | R32 max frequency, silent cooling | 70 → **45** |
+| `0x0001` bit 5 | silent mode | off → **on** (9 → 41, bits 0 and 3 preserved) |
+
+**ORDER MATTERS AND NEARLY WENT WRONG.** The owner asked to measure both the fan
+speed and the register value rather than trusting the default. Measured:
+normal-mode fan at 79–80 Hz runs **788–805 RPM**, and D09's silent cap was **60**
+— same 0–1000 scale, so **7.5 % of normal, effectively stopped**. Enabling silent
+mode without raising D09 first would have collapsed condenser heat rejection on a
+38 °C day, spiking condensing pressure and very likely tripping a high-pressure
+fault. The fan cap must be lifted BEFORE the mode bit, never after.
+
+**Result, measured:**
+
+| | uncapped | R32 = 45 |
+|---|---|---|
+| compressor | 79–80 Hz | **44–45 Hz** — capped exactly |
+| leaving/return spread | 4.5 K | **1.4–2.5 K** |
+| condenser fan | 788–805 RPM | **675–793 RPM** — unthrottled |
+| manifold supply vs limit | 15.3 vs 16.0 — **breach** | **18.8 vs 16.0 — 2.8 K margin** |
+| valves | forced shut | **hk01 modulating at 67 %** |
+
+**R32 binds where R13 did not.** Same nominal purpose, different register, and
+only the measurement distinguishes them — which is why the negative R13 result
+was worth having rather than assuming.
+
+**The window is open.** Floor = 16.0 + 2.3 = 19, setpoint 19, and the compressor
+runs because 19 is under the return−2 ceiling. That is the first feasible
+operating point of the day.
+
+**Worth following up, not urgent:** manifold supply reads 18.8 while the machine
+side shows a 2.3 K spread against a setpoint of 19 — so the manifold is much
+warmer than the heat pump's leaving water, meaning real mixing or pickup between
+the two. The condensation floor is computed from the MACHINE spread, so it is
+over-conservative for protecting the manifold, which is what actually feeds the
+slab. Quantifying that gap would buy back usable setpoint range.
+
+- [ ] Silent-mode settings are now load-bearing. If the unit is ever factory
+      reset or its panel used to toggle silent mode, D09 returns to 60 and the
+      next cooling run throttles the condenser fan to 7.5 %. Worth an alarm on
+      `hp/silent_max_fan_cooling` dropping below ~400.
+
+
 ### Options for reducing compressor output, ranked
 
 Read out of the full register map 2026-07-30, after R13 tested negative.
