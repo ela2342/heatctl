@@ -422,6 +422,49 @@ inlet/outlet straight lengths exist between pump outlet and manifold input.
       wrong criterion the night before a 37 °C day.
 
 
+### PEAK INDOOR PREDICTION 2026-07-30 15:45 — the peak is now, ~26.9 °C
+
+Closed-loop simulation, anchored on measured room air and slab, with the plant
+holding the supply at the condensation floor so delivered cooling grows as the
+slab warms.
+
+| room | now | target | over |
+|---|---|---|---|
+| Gästebad | 24.8 | 23.5 | +1.3 |
+| **Wohnzimmer** | **26.9** | 23.0 | **+3.9** |
+| Arbeitszimmer | 24.4 | 23.0 | +1.4 |
+| house mean | 25.4 | — | — |
+
+**Predicted: the peak is NOW.** The simulation never rises above the current
+temperature — it declines monotonically from here:
+
+| local | house mean | Wohnzimmer (est) | Q_cool |
+|---|---|---|---|
+| 16:00 | 25.25 | 26.79 | 3.51 kW |
+| 18:00 | 25.14 | 26.68 | 4.62 kW |
+| 20:00 | 24.83 | 26.37 | 4.86 kW |
+| 22:00 | 23.92 | 25.45 | 4.54 kW |
+| 00:00 | 23.20 | 24.73 | 4.11 kW |
+
+Two effects turn it over despite outdoor still at 37 °C: **solar is already
+falling** (5.25 → 3.10 kW between 16:00 and 18:00, since east peaked in the
+morning and south around noon), and **delivered cooling is rising** (3.5 →
+4.9 kW) because the plant holds supply at the floor, so a warmer slab means a
+bigger spread means more extraction. It is self-limiting.
+
+**THIS CORRECTS MY OWN ESTIMATE OF AN HOUR EARLIER.** At 14:20 I extrapolated the
+observed 0.24 K/h drift linearly to 20:00 and predicted a peak of −4.5 to −5 K.
+That was wrong in method: the drift is not linear, because both the load and the
+delivery move. A linear extrapolation of a self-limiting process overstates it.
+The closed-loop simulation is the right tool and it says +3.9 K, now.
+
+⚠️ **Wohnzimmer is estimated, not modelled.** Its +1.53 K offset from the house
+mean is MEASURED and held constant through the run. The 2-state model is
+whole-house by construction (DESIGN.md §6.1.1 — the per-room form needs the
+Shelly sensors), so it cannot resolve the room that carries 28 m² of the house's
+51 m² of glazing. The offset will in fact shrink as the sun moves west, since west
+glazing is only 5 m² — so 26.9 is more likely a slight over-estimate than under.
+
 ### Afternoon status 2026-07-30 ~14:20 — the plant is at its physical optimum
 
 | | |
