@@ -473,11 +473,30 @@ house by a factor of four and is already saturated:
 - [ ] **More coil, or coil in Wohnzimmer.** Wohnzimmer carries 28 m² of the
       house's 51 m² of glazing and is cooled by the weakest emitter available.
       That is backwards, and it is the room that failed today.
-- [ ] Check whether the coil's own fan is under heatctl control. The relay
-      modules are 2× 750-517 driving "coils 0-3" — if one of those is the coil
-      fan, airflow is a second actuator on the strongest emitter and nothing is
-      using it. HARDWARE.md notes the coil responds in seconds against the
-      actuators' 150 s, so any cascade must treat the two differently.
+**ANSWERED (owner, 2026-07-30): the coil fan is three 230 V speed taps,
+currently hardwired to HIGH.** So there is no unused airflow — the coil is
+genuinely maxed on both of its actuators, valve at 100 % and fan at top speed.
+Nothing more is available from it without colder water, which confirms the
+hydraulic separation as the only real lever and closes the question above.
+
+- [ ] **Relay control of the coil fan is a MODULATE-DOWN lever, not a capacity
+      one.** Hardwired to high means it runs at full speed whenever there is flow
+      — including overnight and when Arbeitszimmer needs nothing. Putting the
+      three taps on relays buys noise, fan energy, and a second finer actuator on
+      the strongest emitter for the times it is not needed. It buys no extra
+      capacity, because high is already high.
+
+      Three constraints if this is built:
+      * **The three taps must be mutually exclusive** — energising two speed
+        windings at once is a fault, not a compromise. The 750-517 gives two
+        changeover contacts per module, so the interlock belongs in the wiring
+        rather than only in software.
+      * **Relay wear is the budget** (HARDWARE.md: mechanical relays, ~10⁵
+        operations). Speed should follow a demand *level* and change rarely, not
+        track a continuous controller.
+      * **The coil responds in seconds against the actuators' 150 s**, so a
+        cascade must treat the two timescales separately — the fan is the fast
+        actuator in this plant and everything else is slow.
 
 
 ### PEAK INDOOR PREDICTION 2026-07-30 15:45 — the peak is now, ~26.9 °C
