@@ -492,3 +492,42 @@ def test_a_breach_is_not_declared_on_the_limit_itself(sp):
     c = sp()
     d = call(c, current=19.0, supply=15.0, limit=15.0, dew=14.0, now=5_000.0)
     assert d.kind != BREACH
+
+
+def test_a_branch_never_moves_the_setpoint_against_its_own_intent(sp):
+    """REGRESSION for 2026-07-30 08:20, the morning of a 38 degC day.
+
+    The capacity branch asked for 19 degC (colder). The dynamic floor, inflated
+    to 6.7 K by a transient spread spike, clamped that to 21 - WARMER than the
+    current 20 - and the code accepted it, logging "not enough capacity" while
+    making the water warmer.
+
+    Before the floor became dynamic, `lo` was static and almost never above
+    `current`, so the `target == current` test caught every case. It does not
+    once the floor can move.
+    """
+    c = sp()
+    c.observe_spread(6.7)
+    d = call(c, current=20.0, dev=-1.01, open_pct=100.0, dew=13.3,
+             supply=16.0, limit=14.3, now=1e7)
+    assert d.target is None, f"must not move, got {d.target}"
+    assert d.kind == BLOCKED and d.demand_unmet
+
+
+def test_the_same_guard_holds_in_the_heating_direction(sp):
+    """Symmetric: an upper bound must not be able to push heating water down
+    while the branch is asking for more heat."""
+    c = sp(heating_max_c=25.0)
+    d = call(c, mode="heating", dev=+1.0, open_pct=95.0, current=30.0,
+             limit=None, now=1e7)
+    assert d.target is None or d.target >= 30.0
+
+
+def test_a_legitimate_clamped_step_is_still_taken(sp):
+    """The guard must only block REVERSALS, not a step that simply lands short
+    of the full 1 K - otherwise the trim stops working near the floor."""
+    c = sp()
+    c.observe_spread(1.7)
+    d = call(c, current=20.0, dev=-1.01, open_pct=100.0, dew=13.3,
+             supply=16.0, limit=14.3, now=1e7)
+    assert d.target == 19 and d.kind == TRIM

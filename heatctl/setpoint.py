@@ -298,6 +298,24 @@ class SetpointController:
                                           f"{max_open if max_open is None else round(max_open)}%")
 
         target = self._clamp(mode, current + delta, dew_point, supply_limit)
+        # A BRANCH MUST NEVER MOVE THE SETPOINT AGAINST ITS OWN INTENT.
+        #
+        # Measured 2026-07-30 08:20: the capacity branch asked for 19 (colder),
+        # the dynamic floor - inflated to 6.7 K by a transient spread spike -
+        # returned 21, and the code accepted it and logged "not enough
+        # capacity" while making the water WARMER on the morning of a 38 degC
+        # day. Before the floor was dynamic `lo` was static and almost never
+        # above `current`, so this path was unreachable and the `target ==
+        # current` test below was sufficient. It is not any more.
+        #
+        # Reversal means the constraint is binding harder than one step, which
+        # is exactly the blocked condition - not a trim in the other direction.
+        if (delta < 0 and target > current) or (delta > 0 and target < current):
+            return SetpointDecision(
+                None,
+                f"{why} (clamped to {target:.0f} - constraint binds harder "
+                f"than one step)",
+                BLOCKED if wants_capacity else HOLD)
         if target == current:
             # Reached from the capacity branch this is NOT a quiet hold: the
             # house wants more and the plant cannot legally supply it, which is

@@ -422,6 +422,54 @@ inlet/outlet straight lengths exist between pump outlet and manifold input.
       wrong criterion the night before a 37 °C day.
 
 
+### THE OVERNIGHT PRE-CHARGE FAILED. Measured 2026-07-30 morning.
+
+Owner: "almost no cooling overnight". Correct. Compressor history:
+
+| local | compressor |
+|---|---|
+| 00:00–00:06 | 39 → 31 → **0 Hz** |
+| 00:06 – 06:50 | **off**, apart from one ~1 min blip at 03:44 (16 Hz) |
+| 06:50 | restarts, ramps to 85 Hz |
+
+**6 h 44 min idle on the night before a 38 °C day.** Slab evidence: return
+circuits read 19.6–21.8 now against 18.9–22.1 at 21:00 the previous evening —
+**essentially unchanged. Zero slab charge stored.**
+
+**Compound cause, and only part of it is a control defect.**
+
+1. **The condensation limit genuinely capped it.** At a ~13.8 °C dew point the
+   limit was 14.8–14.9, and the measured setpoint-to-supply gap was ~3.2 K, so
+   the coldest sustainable setpoint was ~18 — and 18 breached by 0.1 K at
+   23:55. Attempts at 16, 17 and 18 were all correctly bounced to 20 by the
+   guard. There was very little room, and pretending otherwise would be wrong.
+2. **Once at 20, the unit would not run at all.** Return water settles at the
+   setpoint, and a return at 20 against a setpoint of 20 is below the machine's
+   own restart differential — the same behaviour already recorded the previous
+   evening as "heat pump idle does not mean no demand". So the plant sat idle
+   rather than trickling.
+3. **The trim had no signal to lower it, and this is the real defect.** Free
+   drift cooled the AIR to target, so `wants_more` was false and the capacity
+   branch never fired. The trim watches air temperature; the thing that needed
+   charging was the slab. **A controller that cannot see the slab cannot
+   pre-charge it**, and no amount of tuning fixes that.
+4. Compounding it: every deploy re-seeds the 30 min settling timer, and there
+   were six deploys that evening. The trim had almost no authority anyway.
+
+**What this proves about the design, not just the night.** Reactive control on
+air temperature is structurally incapable of storing energy, because "the air is
+comfortable" and "the mass is charged" are different states and only one of them
+is measured. The layer-2 offset would have carried the intent; what it needs to
+act ON is a slab estimate, which is the filter's job and is still waiting on a
+heat meter.
+
+- [ ] **The trim needs a slab-referenced mode for pre-charging**, not just an
+      air-referenced one. Until then pre-charge is a manual act.
+- [ ] **Consider whether the setpoint should ever sit where the unit will not
+      run.** A setpoint equal to the return water is a no-op that looks like
+      control; something should notice and say so.
+
+
 ### The setpoint correction tomorrow's forecast implies (computed 2026-07-29 ~24:00)
 
 The optimizer produces the **energy** requirement (22.3 kWh, 1.46 K equivalent)
