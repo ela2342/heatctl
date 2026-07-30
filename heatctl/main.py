@@ -477,6 +477,16 @@ class Controller:
             raw = self.hp.status.get(lw.addr)
             supply = None if raw is None else hpm.decode(lw, raw)
         dp = self.plane.dew_point(self.safety.dew_max_age)
+        # Above `return water - restart differential` the unit will not start,
+        # because P01 (0x008D) is pinned at its 2 K minimum. Passed in so the
+        # predictive condensation floor can never push the setpoint into the
+        # range where the machine simply idles - see _clamp for the measured
+        # loop this broke three times on 2026-07-30.
+        rw = hpm.by_name("return_water")
+        rw_raw = self.hp.status.get(rw.addr)
+        rd = self.hp.config.get(hpm.by_name("restart_diff_c").addr)
+        ceiling = (None if rw_raw is None or rd is None
+                   else hpm.decode(rw, rw_raw) - float(rd))
 
         decision = self.water_sp.step(
             mode=self.mode,
@@ -485,6 +495,7 @@ class Controller:
             current=None if current is None else float(current),
             dew_point=dp,
             supply_temp=supply,
+            running_ceiling=ceiling,
             supply_limit=(self.safety.cooling_supply_limit()
                           if self.mode == "cooling" else None),
             now=now)
@@ -759,6 +770,16 @@ class Controller:
         rows.append((ts, "mode", {"heating": 1, "cooling": 2}.get(self.mode, 0)))
         rows.append((ts, "return_sp", self._last_return_sp))
         dp = self.plane.dew_point(self.safety.dew_max_age)
+        # Above `return water - restart differential` the unit will not start,
+        # because P01 (0x008D) is pinned at its 2 K minimum. Passed in so the
+        # predictive condensation floor can never push the setpoint into the
+        # range where the machine simply idles - see _clamp for the measured
+        # loop this broke three times on 2026-07-30.
+        rw = hpm.by_name("return_water")
+        rw_raw = self.hp.status.get(rw.addr)
+        rd = self.hp.config.get(hpm.by_name("restart_diff_c").addr)
+        ceiling = (None if rw_raw is None or rd is None
+                   else hpm.decode(rw, rw_raw) - float(rd))
         if dp is not None:
             rows.append((ts, "dew_point", dp))
         if self.mode == "cooling":

@@ -574,3 +574,48 @@ def test_the_fixed_jump_survives_only_as_a_first_breach_fallback(sp):
     assert c.spread_estimate is None
     d = call(c, current=18.0, supply=14.8, limit=14.9, dew=13.9, now=5_000.0)
     assert d.kind == BREACH and d.target >= 19
+
+
+def test_the_predictive_floor_cannot_push_the_setpoint_above_the_running_ceiling(sp):
+    """REGRESSION for a closed loop measured three times on 2026-07-30.
+
+    Run hard -> spread 4.5 K -> predictive floor 21 -> breach recovery lands on
+    21 -> 21 exceeds the 19.6 running ceiling -> compressor off -> house warms ->
+    larger error -> runs hard again. It cost the overnight pre-charge and most of
+    a 38 degC morning.
+
+    The floor is a HEURISTIC built on a decaying MAXIMUM spread, so after a hard
+    run it predicts a floor for a frequency the plant will not be at once the
+    error is small. Safety is unaffected by capping it: the real protection is
+    Safety.apply closing valves on measured supply, on a different sensor and in
+    a different module.
+    """
+    c = sp()
+    for _ in range(4):
+        c.observe_spread(4.5)
+    floor = c._clamp("cooling", 5.0, dew_point=15.0, supply_limit=16.0,
+                     running_ceiling=19.6)
+    assert floor <= 20, f"floor {floor} would idle the compressor"
+
+
+def test_the_cap_never_goes_below_the_absolute_cooling_minimum(sp):
+    """A very low return water must not drag the floor below the operating
+    bound - that would be trading one runaway for another."""
+    c = sp()
+    c.observe_spread(2.0)
+    floor = c._clamp("cooling", 5.0, dew_point=10.0, supply_limit=11.0,
+                     running_ceiling=-5.0)
+    assert floor >= c.cooling_min_c
+
+
+def test_without_a_ceiling_the_floor_is_unchanged(sp):
+    """No return-water reading means no cap: the predictive floor stands, which
+    is the conservative direction when we cannot tell whether the unit would
+    run."""
+    c = sp()
+    for _ in range(4):
+        c.observe_spread(4.5)
+    a = c._clamp("cooling", 5.0, dew_point=15.0, supply_limit=16.0)
+    b = c._clamp("cooling", 5.0, dew_point=15.0, supply_limit=16.0,
+                 running_ceiling=None)
+    assert a == b >= 20

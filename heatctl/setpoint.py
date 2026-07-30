@@ -222,7 +222,8 @@ class SetpointController:
     def step(self, mode: str, deviation: float | None, max_open: float | None,
              current: float | None, dew_point: float | None,
              supply_temp: float | None, supply_limit: float | None,
-             now: float) -> SetpointDecision:
+             now: float,
+             running_ceiling: float | None = None) -> SetpointDecision:
         if not self.enabled or mode not in ("heating", "cooling"):
             return SetpointDecision(None, "disabled")
         if current is None:
@@ -261,10 +262,10 @@ class SetpointController:
             # `breach_jump_c` survives only as the fallback for when there is no
             # spread estimate yet, i.e. the first breach after a restart.
             target = self._clamp(mode, self.cooling_min_c,
-                                 dew_point, supply_limit)
+                                 dew_point, supply_limit, running_ceiling)
             if self._spread_est is None:
                 target = self._clamp(mode, dew_point + self.breach_jump_c,
-                                     dew_point, supply_limit)
+                                     dew_point, supply_limit, running_ceiling)
             if target > current:
                 self._last_change = now
                 return SetpointDecision(
@@ -298,7 +299,7 @@ class SetpointController:
                    "not enough capacity")
             if mode == "cooling":
                 proposed = self._clamp(mode, current + delta, dew_point,
-                                       supply_limit)
+                                       supply_limit, running_ceiling)
                 if self._is_known_infeasible(proposed, supply_limit):
                     # Do not burn a 30-minute cycle re-proving this. Report it
                     # instead: the house wants more, the plant cannot legally
@@ -318,7 +319,8 @@ class SetpointController:
             return SetpointDecision(None, f"house {deviation:+.2f} K, valves "
                                           f"{max_open if max_open is None else round(max_open)}%")
 
-        target = self._clamp(mode, current + delta, dew_point, supply_limit)
+        target = self._clamp(mode, current + delta, dew_point, supply_limit,
+                             running_ceiling)
         # A BRANCH MUST NEVER MOVE THE SETPOINT AGAINST ITS OWN INTENT.
         #
         # Measured 2026-07-30 08:20: the capacity branch asked for 19 (colder),
@@ -350,7 +352,8 @@ class SetpointController:
         return SetpointDecision(target, why, TRIM)
 
     def _clamp(self, mode: str, value: float, dew_point: float | None,
-               supply_limit: float | None = None) -> float:
+               supply_limit: float | None = None,
+               running_ceiling: float | None = None) -> float:
         if mode == "cooling":
             lo, hi = self.cooling_min_c, self.cooling_max_c
             # DYNAMIC FLOOR, and the honest one. The setpoint targets RETURN
@@ -366,6 +369,28 @@ class SetpointController:
             # that, which is why the earlier attempt to tune one was withdrawn.
             if supply_limit is not None and self._spread_est is not None:
                 lo = max(lo, supply_limit + self._spread_est)
+            # THE PREDICTIVE FLOOR MUST NOT BE ALLOWED TO STOP THE PLANT.
+            #
+            # `running_ceiling` is `return water - restart differential`. Above
+            # it the unit will not start at all, because P01 (0x008D) is pinned
+            # at its 2 K minimum. The floor above is a HEURISTIC over a decaying
+            # MAXIMUM spread, so after a hard run it predicts a floor for a
+            # frequency the plant will not be at once the error is small - and
+            # that self-defeating estimate then pushes the setpoint past the
+            # ceiling and the machine idles.
+            #
+            # Measured three times on 2026-07-30: run hard -> spread 4.5 K ->
+            # floor 21 -> recovery lands on 21 -> 21 exceeds a 19.6 ceiling ->
+            # compressor off -> house warms -> larger error -> runs hard again.
+            # A closed loop, and it cost the overnight pre-charge and most of a
+            # 38 degC morning.
+            #
+            # Capping it does NOT weaken safety. The real protection is
+            # Safety.apply closing valves on MEASURED supply below the limit, on
+            # the manifold PT1000, in a different module. That still fires. What
+            # is given up is a prediction that erred toward doing nothing.
+            if running_ceiling is not None:
+                lo = min(lo, max(self.cooling_min_c, running_ceiling))
             if dew_point is not None:
                 # Heuristic only - P04 targets RETURN water, so this cannot
                 # guarantee the water reaching the slab is safe. The measured
