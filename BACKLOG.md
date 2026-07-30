@@ -422,6 +422,64 @@ inlet/outlet straight lengths exist between pump outlet and manifold input.
       wrong criterion the night before a 37 °C day.
 
 
+### MEASURED: the fan coil is worth ~2.5 K over slab, on identical water
+
+Prompted by the owner noticing Arbeitszimmer was comfortable, 2026-07-30 ~15:45,
+at the day's peak with outdoor around 37–40 °C.
+
+| room | emitter | now | target | over |
+|---|---|---|---|---|
+| Arbeitszimmer | **fan coil only, no slab** | 24.4 | 23.0 | **+1.4** |
+| Wohnzimmer | slab | 26.9 | 23.0 | **+3.9** |
+| Gästebad | slab | 24.8 | 23.5 | +1.3 |
+
+**And Arbeitszimmer has the WORSE solar exposure** — upstairs, 31.2 m², east and
+south glazing — so on fabric grounds it should be the hottest room in the house.
+It is the coolest of the three relative to a comparable target.
+
+**Circuit evidence, same supply water to both:**
+
+| | valve | return | circuit ΔT |
+|---|---|---|---|
+| hk11 (coil) | **100 %** | **22.8** | **5.5 K** |
+| hk01–hk10 (slab) | 100 % | 19.2–20.3 | ~2 K |
+
+The coil is already flat out and extracting nearly three times the temperature
+drop per unit flow that a slab circuit manages, on the same 17.3 °C supply.
+
+**Why, and it is the design's own argument confirmed by measurement:** the coil
+is 4.2 kW over 31.2 m² = **135 W/m² against the slab's 25–35**. DESIGN.md §6.1
+already states the mechanism — cooling from above works *with* buoyancy while
+floor cooling works against it, "which is exactly why the slab is limited to
+25–35 W/m²". This is the first quantified check of that claim on this plant, and
+it holds with room to spare.
+
+⚠️ **A lever I expected to find is not there.** Arbeitszimmer being comfortable
+suggested its room PID was throttling hk11, leaving spare coil capacity that the
+Luftraum thermosiphon could push at Wohnzimmer. It is not: **hk11 is already at
+100 %.** The coil is delivering everything slab-safe water allows, and lowering
+Arbeitszimmer's setpoint would do nothing.
+
+**What this actually argues for**, given the coil is the strongest emitter in the
+house by a factor of four and is already saturated:
+
+- [ ] **The hydraulic separation is worth more than it looked.** It is currently
+      justified by the latent lever (dehumidify to raise the slab's limit). This
+      measurement adds a second, larger justification: the coil could take water
+      several K colder than the slab tolerates, and at 135 W/m² that capacity is
+      immediately useful rather than a by-product. Feeding the coil cold and
+      mixing up for the slab is the single largest capacity change available to
+      this plant.
+- [ ] **More coil, or coil in Wohnzimmer.** Wohnzimmer carries 28 m² of the
+      house's 51 m² of glazing and is cooled by the weakest emitter available.
+      That is backwards, and it is the room that failed today.
+- [ ] Check whether the coil's own fan is under heatctl control. The relay
+      modules are 2× 750-517 driving "coils 0-3" — if one of those is the coil
+      fan, airflow is a second actuator on the strongest emitter and nothing is
+      using it. HARDWARE.md notes the coil responds in seconds against the
+      actuators' 150 s, so any cascade must treat the two differently.
+
+
 ### PEAK INDOOR PREDICTION 2026-07-30 15:45 — the peak is now, ~26.9 °C
 
 Closed-loop simulation, anchored on measured room air and slab, with the plant
