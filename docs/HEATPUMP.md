@@ -150,6 +150,19 @@ What follows from that:
 
 ## Writable registers (RW)
 
+⚠️ **THIS TABLE IS A SUBSET — 17 rows of 244.** The complete capture is in
+`docs/PW58321_MODBUS.local.md` (git-excluded). This table lists only what has
+mattered so far, and it reads as though it were the map, which is how
+`0x008D` P01 — the compressor restart dead zone, and the constraint that
+explains most of this plant's behaviour — stayed invisible for a day.
+**Search the full capture before concluding a register does not exist.**
+
+Registers found there and not yet used, with their addresses:
+`0x008D` P01 restart temperature difference heating/cooling (2–18 °C),
+`0x008E` P02 the same for hot water, `0x0092` P08 water temperature
+compensation (−5…15 °C).
+
+
 | Addr | Name | Values / range | Relevance |
 |---|---|---|---|
 | `0x0000` | Control Flags 0 | bit0 **Power ON/OFF** (0 off / 1 on); bit1 A41 main expansion valve mode; bit2 manual frequency switch; bit4 **C01 constant-temperature pump selection** (1 non-stop / 0 stop); bit5 B01 aux expansion valve mode; bit6 A45 expansion-valve initial-opening mode; bits 3,7 reserved | bit0 is what HA writes today. bit4 is the actual pump knob. |

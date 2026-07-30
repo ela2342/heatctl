@@ -422,6 +422,62 @@ inlet/outlet straight lengths exist between pump outlet and manifold input.
       wrong criterion the night before a 37 °C day.
 
 
+### THE OPERATING WINDOW IS ~0.5 K WIDE. This explains everything.
+
+Found 2026-07-30 in `docs/PW58321_MODBUS.local.md`, which holds the **complete**
+244-address RW capture. `docs/HEATPUMP.md` documents 17 rows and reads as though
+that were the whole map — that presentation is the documentation defect, not the
+capture.
+
+```
+0x008D  P01 Re-start Temperature difference of Heating/Cooling Mode  2 °C~18 °C  RW
+0x008E  P02 Re-start Temperature difference of Hot water Mode        2 °C~18 °C  RW
+0x0092  P08 Water Temperature Compensation                         -5 °C~15 °C  RW
+```
+
+**The dead zone is `0x008D`, and its documented minimum is 2 °C — it is already
+at the floor.** Dropping it to 1 K is not available. That lever does not exist.
+
+**What that means, and it is the structural diagnosis of this plant.** Two
+constraints squeeze the cooling setpoint from opposite sides:
+
+| | bound | now |
+|---|---|---|
+| condensation | setpoint ≥ limit + spread | 15.4 + 3.2 = **18.6** |
+| restart dead zone | setpoint ≤ return − 2 | 21.5 − 2 = **19.5** |
+
+**A window about 0.5 K wide.** Above it the compressor will not start; below it
+the supply condenses. Every failure of the last twenty-four hours is this window
+closing:
+
+- **overnight idle (00:06–06:50):** setpoint bounced to 20 by a breach, return
+  water settled at 20, and 20 is not ≤ 20 − 2. The unit could not start at all.
+- **09:14 → 3 K overshoot:** a 0.1 K breach jumped the setpoint to 21, putting it
+  above the window again. Same trap.
+- **the "restart differential" observed at 21:00 the previous evening** — return
+  21.6 against setpoint 20, idle — was exactly this, 1.6 K short of the 2 K
+  the register requires.
+
+**The unit therefore cannot hold a setpoint; it can only chase one, and it
+always lets the house drift ~2 K warm before it will start.** That is not a
+control defect and no tuning fixes it.
+
+**The only lever that widens the window is SPREAD**, because spread is what eats
+it from below. Every kelvin of spread removed is a kelvin of window. F10 = 2
+holds the pump at full flow, which is the part already won; the rest of the
+spread is compressor frequency, and frequency is driven by the error, so a
+larger error means a wider spread means a narrower window. That is a positive
+feedback into the failure.
+
+- [ ] **P08 water temperature compensation (`0x0092`, −5…15 °C) is unexplored**
+      and is the outdoor-dependent setpoint correction the owner mentioned. On a
+      day like this it could shift the setpoint with outdoor temperature without
+      heatctl writing anything, which is worth understanding before adding more
+      control on top of it.
+- [ ] **Re-audit `docs/HEATPUMP.md` against the full capture.** 17 rows of 244
+      presented as a map is how the dead zone stayed invisible for a day.
+
+
 - [!] **WITHDRAWN: clearing `powerful_mode` was not shown to cap the compressor.**
       Claimed 2026-07-29 evening on the strength of a coincidence, and the
       evidence does not survive the next morning.
