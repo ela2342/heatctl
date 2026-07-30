@@ -148,7 +148,293 @@ What follows from that:
 - The pump has its own controls (below), so heatctl does not have to power the
   unit off to influence circulation.
 
-## Writable registers (RW)
+
+## Complete register map
+
+**256 addresses over `0x0000`–`0x010C`.** Superseding the short table below,
+which listed 17 rows and read as though it were the whole map - which is how
+`0x008D` (the compressor restart dead zone, and the constraint that explains
+most of this plant's behaviour) stayed invisible for a day.
+
+⚠️ **Machine-extracted from a paginated source, so ~9 % of rows carry layout
+artefacts.** Validated against 13 registers whose meaning is independently
+known from working code: 12 matched, and the one that did not (`0x00C5`) is
+corrected here by hand. Rows marked **?** are truncated or carry text belonging
+to their neighbour, because the source splits a row across a page boundary and
+the address then lands on the far side of the break. **Verify a `?` row before
+writing to it.** Unmarked rows matched the anchor pattern.
+
+| Addr | Description | |
+|---|---|---|
+| `0x0000` | Control Flags 1 Bit0:Power ON/OFF， 0 -OFF/ 1-ON Bit1： A41 Main Expansion Valve Model Selection ， 0-Auto/1- Manual Bit2:Manual frequency switches Bit3: Reserved Bit4: C01Constant Temperature pump selection ， 1-Non-stop/0- Stop Bit5: B01Auxiliary Expansion Valve Model Selection, 0- Auto /1- Manual Bit6: A45 Expansion Valve Initial Opening Adjustment mode ， 0-Fixed / 1-Adjustable Bit7: Reserved RW |  |
+| `0x0001` | Control Flags 1 Bit0: With or Without Constant Temperature Bit1： C02 Pressure Sensor Enable/disable,1-enable,/0-disable Bit2: B62 Cooling Auxiliary Circuit enable/disable,0-enable/ 1-disable. Bit3: B76Auxiliary Expansion Valve control mode,0-EVI Superheat/1- discharge gas superheat Bit 4:Powerful mode Selection Bit5:Silent Mode Selection Bit6:P22 Heating Target Temperature Auto-Adjustment 0~1（ 0-Disable/1- enable ） Bit7:Reserved RW |  |
+| `0x0002` | Control Flags 2 Reserved Bit0: Reserved Bit1:Vacation mode Bit2: Reserved Bit3: Reserved Bit4: Reserved Bit5: Reserved Bit6: Reserved Bit7: Reserved RW |  |
+| `0x0003` | Number of System(Compressor) 1 RW |  |
+| `0x0004` | Mode 0:DHW 1:HEATING Default: 1 Heating 2:COOLING 3:DHW+HEATING 4:DHW+ COOLING RW |  |
+| `0x0005` | P09 Defrost frequency 30-120HZ RW |  |
+| `0x0006` | P10 Defrost cycle 20MIN~90MIN RW |  |
+| `0x0007` | P12 Defrost time 5MIN~20MIN RW |  |
+| `0x0008` | A01 Main Expansion Valve Adjustment Cycle 20S~90S RW |  |
+| `0x0009` | A14 Initial Opening of The Main Expansion valve in Heating Mode 00 0~240 Multiply by 2 for actual use RW |  |
+| `0x000A` | A15 Initial Opening of The Main Expansion valve in Heating Mode 01 0~240 RW |  |
+| `0x000B` | A16 Initial Opening of The Main Expansion valve in Heating Mode 02 0~240 RW |  |
+| `0x000C` | A17 Initial Opening of The Main Expansion valve in Heating Mode 03 0~240 RW |  |
+| `0x000D` | A18 Initial Opening of The Main Expansion valve in Heating Mode 04 0~240 RW |  |
+| `0x000E` | A19 Initial Opening of The Main Expansion valve in Heating Mode 05 0~240 RW |  |
+| `0x000F` | A20 Initial Opening of The Main Expansion valve in Heating Mode 06 0~240 RW |  |
+| `0x0010` | A21 Initial Opening of The Main Expansion valve in Heating Mode 07 0~240 RW |  |
+| `0x0011` | A22 Initial Opening of The Main Expansion valve in Cooling Mode 00 0~240 Multiply by 2 for actual use RW A23 Initial Opening of The Main 0~240 | **?** |
+| `0x0012` | Expansion valve in Cooling Mode 01 RW |  |
+| `0x0013` | A24 Initial Opening of The Main Expansion valve in Cooling Mode 02 0~240 RW |  |
+| `0x0014` | A25 Initial Opening of The Main Expansion valve in Cooling Mode 03 0~240 RW |  |
+| `0x0015` | A26 Initial Opening of The Main Expansion valve in Hot Water Mode 00 0~240 Multiply by 2 for actual use RW |  |
+| `0x0016` | A27 Initial Opening of The Main Expansion valve in Hot Water Mode 01 0~240 RW |  |
+| `0x0017` | A28 Initial Opening of The Main Expansion valve in Hot Water Mode 02 0~240 RW |  |
+| `0x0018` | A29 Initial Opening of The Main Expansion valve in Hot Water Mode 03 0~240 RW |  |
+| `0x0019` | A30 Main expansion valve Automatic Adjustment Lower Limit in Heating mode 00 0~240 Multiply by 2 for actual use RW |  |
+| `0x001A` | A31 Main expansion valve Automatic Adjustment Lower Limit in Heating mode 01 0~240 RW |  |
+| `0x001B` | A32 Main expansion valve Automatic Adjustment Lower Limit in Heating mode 02 0~240 RW |  |
+| `0x001C` | A33 Main expansion valve Automatic Adjustment Lower Limit in Heating mode 03 0~240 RW |  |
+| `0x001D` | A34 Main expansion valve Automatic Adjustment Lower Limit in Heating mode 04 0~240 RW |  |
+| `0x001E` | A35 Main expansion valve Automatic Adjustment Lower Limit in Heating 0~240 mode 05 RW |  |
+| `0x001F` | A36 Main expansion valve Automatic Adjustment Lower Limit in Heating mode 06 0~240 RW |  |
+| `0x0020` | A37 Main expansion valve Automatic Adjustment Lower Limit in Heating mode 07 0~240 RW |  |
+| `0x0021` | A39 Main Expansion valve defrosting opening 10~225 Multiply by 2 for actual use RW |  |
+| `0x0022` | A40 Minimum opening of Main Expansion valve in Hot water Mode 25~75 Multiply by 2 for actual use RW |  |
+| `0x0023` | A42 Manual step of Main Expansion valve 10~225 Multiply by 2 for actual use RW |  |
+| `0x0024` | A43 Superheat Scale Factor of Main Expansion valve 1~20 RW |  |
+| `0x0025` | A44 Superheat Differential coefficient of Main Expansion valve 1~180 RW |  |
+| `0x0026` | B02 Manual Steps of Auxiliary Expansion valve 10~225 Multiply by 2 for actual use RW |  |
+| `0x0027` | B04 Exhaust Scale Factor of Auxiliary Expansion valve 1~20 RW |  |
+| `0x0028` | B05 Exhaust Differential coefficient of Auxiliary expansion valve 0~180 RW |  |
+| `0x0029` | B06 Superheat scale factor of Auxiliary Expansion valve 1~20 RW |  |
+| `0x002A` | B07 Superheat Differential coefficient of Auxiliary expansion valve 0~180 RW |  |
+| `0x002B` | B08 Adjustment cycle of Auxiliary expansion valve 10~20 RW B19 Initial opening of Auxiliary 0~240 Multiply by 2 for actual use | **?** |
+| `0x002C` | expansion valve in Heating mode 00 RW B20 Initial opening of Auxiliary expansion valve in Heating mode 01 0~240 RW B21 Initial opening of Auxiliary expansion valve in Heating mode 02 0~240 RW B22 Initial opening of Auxiliary expansion valve in Heating mode 03 0~240 RW B23 Initial opening of Auxiliary expansion valve in Heating mode 04 0~240 RW B24 Initial opening of Auxiliary expansion valve in Heating mode 05 0~240 RW B25 Initial opening of Auxiliary expansion valve in Heating mode 06 0~240 RW B26 Initial opening of Auxiliary expansion valve in Heating mode 07 0~240 RW B27 Initial opening of Auxiliary expansion valve in Hot water Mode 00 0~240 Multiply by 2 for actual use RW B28 Initial opening of Auxiliary expansion valve in Hot water Mode 01 0~240 RW B29 Initial opening of Auxiliary expansion valve in Hot water Mode 02 0~240 RW B30 Initial opening of Auxiliary expansion valve in Hot water Mode 03 0~240 RW B31 Auxiliary expansion valve Automatic Adjustment Lower Limit in Heating mode 00 0~240 Multiply by 2 for actual use RW | **?** |
+| `0x0039` | B32 Auxiliary expansion valve Automatic Adjustment Lower Limit in Heating mode 01 0~240 RW B33 Auxiliary expansion valve 0~240 | **?** |
+| `0x003A` | Automatic Adjustment Lower Limit in Heating mode 02 RW |  |
+| `0x003B` | B34 Auxiliary expansion valve Automatic Adjustment Lower Limit in Heating mode 03 0~240 RW |  |
+| `0x003C` | B35 Auxiliary expansion valve Automatic Adjustment Lower Limit in Heating mode 04 0~240 RW |  |
+| `0x003D` | B36 Auxiliary expansion valve Automatic Adjustment Lower Limit in Heating mode 05 0~240 RW |  |
+| `0x003E` | B37 Auxiliary expansion valve Automatic Adjustment Lower Limit in Heating mode 06 0~240 RW |  |
+| `0x003F` | B38 Auxiliary expansion valve Automatic Adjustment Lower Limit in Heating mode 07 0~240 RW |  |
+| `0x0040` | B39 Auxiliary Expansion Valve Defrosting Opening 0~240 Multiply by 2 for actual use RW |  |
+| `0x0041` | B40 Auxiliary Expansion Valve Cooling Opening 0~240 Multiply by 2 for actual use RW |  |
+| `0x0042` | C03 High-pressure protection value(Reserved) 25.0-50.0bar RW |  |
+| `0x0043` | C04 High pressure recovery value(Reserved) 25.0-50.0bar RW |  |
+| `0x0044` | C05 Low pressure protection value 0-20.0bar RW |  |
+| `0x0045` | C06 Low pressure recovery value 0-20.0bar RW D03 Heating Mode Wind Speed 1 0~100 | **?** |
+| `0x0046` | RW | **?** |
+| `0x0047` | D04 Heating Mode Wind Speed 2 0~100 RW |  |
+| `0x0048` | D05 Heating Mode Wind Speed 3 0~100 RW |  |
+| `0x0049` | D06 Heating Mode Wind Speed 4 0~100 RW |  |
+| `0x004A` | D07 Heating Mode Wind Speed 5 0~100 RW |  |
+| `0x004B` | D08 Heating Mode Wind Speed 6 0~100 RW |  |
+| `0x004C` | Reserved RW |  |
+| `0x004D` | Reserved RW |  |
+| `0x004E` | D11 Heating mode Wind Speed 1 corresponding Coil Temperature -30~30 RW |  |
+| `0x004F` | D12 Heating mode Wind Speed 2 corresponding Coil Temperature -30~30 RW |  |
+| `0x0050` | D13 Heating mode Wind Speed 3 corresponding Coil Temperature -30~30 RW |  |
+| `0x0051` | D14 Heating mode Wind Speed 4 corresponding Coil Temperature -30~30 RW |  |
+| `0x0052` | D15 Heating mode Wind Speed 5 corresponding Coil Temperature -30~30 RW |  |
+| `0x0053` | D16 Heating mode Wind Speed 6 corresponding Coil Temperature -30~30 RW |  |
+| `0x0054` | D17 Reserved -30~30 RW D18Reserved -30~30 | **?** |
+| `0x0055` | RW | **?** |
+| `0x0056` | D19 DC FAN Speed regulation cycle 10~180 Second RW |  |
+| `0x0057` | D20 Fan Adjustment speed per cycle 0~100 转 RW |  |
+| `0x0058` | D21 Hot water Mode Wind Speed 1 0~1000 RW |  |
+| `0x0059` | D22 Hot water Mode Wind Speed 2 0~1000 RW |  |
+| `0x005A` | D23 Hot water Mode Wind Speed 3 0~1000 RW |  |
+| `0x005B` | D24 Hot water Mode Wind Speed 4 0~1000 RW |  |
+| `0x005C` | D25 Hot water Mode Wind speed 1 corresponding coil Temperature -30~30 RW |  |
+| `0x005D` | D26 Hot water Mode Wind speed 2 corresponding coil Temperature -30~30 RW |  |
+| `0x005E` | D27 Hot water Mode Wind speed 3 corresponding coil Temperature -30~30 RW |  |
+| `0x005F` | D28 Hot water Mode Wind speed 4 corresponding coil Temperature -30~30 RW |  |
+| `0x0060` | D29 Cooling Mode DC Fan Max Speed 1 0~1000 RW |  |
+| `0x0061` | D30 Cooling Mode DC Fan Max Speed 2 0~1000 RW |  |
+| `0x0062` | D31 Cooling Mode DC Fan Max Speed 3 0~1000 RW |  |
+| `0x0063` | D32 Cooling Mode DC Fan Max Speed 4 0~1000 RW B41 Auxiliary Expansion Valve 0~240 Multiply by 2 for actual use | **?** |
+| `0x0064` | Automatic Adjustment Lower Limit in Hot Water Mode 00 RW |  |
+| `0x0065` | B42 Auxiliary Expansion Valve Automatic Adjustment Lower Limit in Hot Water Mode 01 0~240 RW |  |
+| `0x0066` | B43 Auxiliary Expansion Valve Automatic Adjustment Lower Limit in Hot Water Mode 02 0~240 RW |  |
+| `0x0067` | B44 Auxiliary Expansion Valve Automatic Adjustment Lower Limit in Hot Water Mode 03 0~240 RW |  |
+| `0x0068` | B45 Exhaust Temperature of Enthalpy Valve Opening In Heating mode 00 50~125℃ RW |  |
+| `0x0069` | B46 Exhaust Temperature of Enthalpy Valve Opening In Heating mode 01 50~125℃ RW |  |
+| `0x006A` | B47 Exhaust Temperature of Enthalpy Valve Opening In Heating mode 02 50~125℃ RW |  |
+| `0x006B` | B48 Exhaust Temperature of Enthalpy Valve Opening In Heating mode 03 50~125℃ RW |  |
+| `0x006C` | B49 Exhaust Temperature of Enthalpy Valve Opening In Heating mode 04 50~125℃ RW |  |
+| `0x006D` | B50 Exhaust Temperature of Enthalpy Valve Opening In Heating mode 05 50~125℃ RW |  |
+| `0x006E` | B51 Exhaust Temperature of Enthalpy Valve Opening In Heating mode 06 50~125℃ RW |  |
+| `0x006F` | B52 Exhaust Temperature of Enthalpy Valve Opening In Heating mode 07 50~125℃ RW |  |
+| `0x0070` | B53 Exhaust Temperature of Enthalpy Valve Opening In Hot Water Mode 00 50~125℃ RW B54 Exhaust Temperature of Enthalpy 50~125℃ | **?** |
+| `0x0071` | Valve Opening In Hot Water Mode 01 RW |  |
+| `0x0072` | B55 Exhaust Temperature of Enthalpy Valve Opening In Hot Water Mode 02 50~125℃ RW |  |
+| `0x0073` | B56 Exhaust Temperature of Enthalpy Valve Opening In Hot Water Mode 03 50~125℃ RW |  |
+| `0x0074` | B57 Exhaust Temperature of Enthalpy Valve Opening In Cooling Mode 00 50~125℃ RW |  |
+| `0x0075` | B58 Exhaust Temperature of Enthalpy Valve Opening In Cooling Mode 01 50~125℃ RW |  |
+| `0x0076` | B59 Exhaust Temperature of Enthalpy Valve Opening In Cooling Mode 02 50~125℃ RW |  |
+| `0x0077` | B60 Exhaust Temperature of Enthalpy Valve Opening In Cooling Mode 03 50~125℃ RW |  |
+| `0x0078` | B61 Enthalpy valve Opening delay time 0~180S RW |  |
+| `0x0079` | B63 Return difference of Exhaust to Close Enthalpy Valve 0~30 RW |  |
+| `0x007A` | B64 Exhaust Temperature difference of Auxiliary Expansion valve in Heating Mode 00 0~125℃ RW |  |
+| `0x007B` | B65 Exhaust Temperature difference of Auxiliary Expansion valve in Heating Mode 01 0~125℃ RW |  |
+| `0x007C` | B66 Exhaust Temperature difference of Auxiliary Expansion valve in Heating Mode 02 0~125℃ RW |  |
+| `0x007D` | B67 Exhaust Temperature difference of Auxiliary Expansion valve in Heating Mode 03 0~125℃ RW B68 Exhaust Temperature difference of 0~125℃ | **?** |
+| `0x007E` | Auxiliary Expansion valve in Heating Mode 04 RW |  |
+| `0x007F` | B69 Exhaust Temperature difference of Auxiliary Expansion valve in Heating Mode 05 0~125℃ RW |  |
+| `0x0080` | B70 Exhaust Temperature difference of Auxiliary Expansion valve in Heating Mode 06 0~125℃ RW |  |
+| `0x0081` | B71 Exhaust Temperature difference of Auxiliary Expansion valve in Heating Mode 07 0~125℃ RW |  |
+| `0x0082` | B72 Exhaust Temperature difference of Auxiliary Expansion valve in Hot Water Mode 00 0~125℃ RW |  |
+| `0x0083` | B73 Exhaust Temperature difference of Auxiliary Expansion valve in Hot Water Mode 01 0~125℃ RW |  |
+| `0x0084` | B74 Exhaust Temperature difference of Auxiliary Expansion valve in Hot Water Mode 02 0~125℃ RW |  |
+| `0x0085` | B75 Exhaust Temperature difference of Auxiliary Expansion valve in Hot Water Mode 03 0~125℃ RW |  |
+| `0x0086` | B77 Target Superheat Correction value -30~30℃ RW |  |
+| `0x0087` | B78 Target Superheat Correction value -30~30℃ RW |  |
+| `0x0088` | B79Target Superheat Correction value 3 -30~30℃ RW B80 Target Superheat Correction value -30~30℃ | **?** |
+| `0x0089` | 4 RW | **?** |
+| `0x008A` | B81 Target Superheat Correction value -30~30℃ RW |  |
+| `0x008B` | B82 Target Superheat Correction value -30~30℃ RW |  |
+| `0x008C` | B83 Target Superheat Correction value -30~30℃ RW |  |
+| `0x008D` | P01 Re-start Temperature difference of Heating/Cooing Mode 2℃~18℃ RW |  |
+| `0x008E` | P02Re-start Temperature difference of Hot water Mode 2℃~18℃ RW |  |
+| `0x008F` | P03Set Temperature of Hot Water Mode 28℃~60℃ RW |  |
+| `0x0090` | P04 Set Temperature of Chilling Mode 7℃~30℃ RW |  |
+| `0x0091` | P05 Set Temperature of Heating Mode 15℃~50℃ RW |  |
+| `0x0092` | P08 Water Temperature Compensation -5℃~15℃ RW |  |
+| `0x0093` | P11 Defrost Enter Coil Temperature -15℃~-1℃ RW |  |
+| `0x0094` | P13 Defrost Exit Coil Temperature 1℃~40℃ RW |  |
+| `0x0095` | P14 Defrost Ambient and Coil Temperature Difference 1 0℃~15℃ RW |  |
+| `0x0096` | P15 Defrost Ambient and Coil Temperature Difference 2 0℃~15℃ RW |  |
+| `0x0097` | P16 Defrost Ambient Temperature 0℃~20℃ RW A02 Target Superheat of Main -5℃~10℃ | **?** |
+| `0x0098` | Expansion Valve in Heating Mode 1 RW |  |
+| `0x0099` | A03 Target Superheat of Main Expansion Valve in Heating Mode 2 -5℃~10℃ RW |  |
+| `0x009A` | A04 Target Superheat of Main Expansion Valve in Heating Mode 3 -5℃~10℃ RW |  |
+| `0x009B` | A05 Target Superheat of Main Expansion Valve in Heating Mode 4 -5℃~10℃ RW |  |
+| `0x009C` | A06 Target Superheat of Main Expansion Valve in Heating Mode 5 -5℃~10℃ RW |  |
+| `0x009D` | A07 Target Superheat of Main Expansion Valve in Heating Mode 6 -5℃~10℃ RW |  |
+| `0x009E` | A08 Target Superheat of Main Expansion Valve in Heating Mode 7 -5℃~10℃ RW |  |
+| `0x009F` | A09 Target Superheat of Main Expansion Valve in Heating Mode 8 -5℃~10℃ RW |  |
+| `0x00A0` | A10 Target Superheat of Main Expansion Valve in Cooling Mode 1 -5℃~10℃ RW |  |
+| `0x00A1` | A11 Target Superheat of Main Expansion Valve in Cooling Mode 2 -5℃~10℃ RW |  |
+| `0x00A2` | A12 Target Superheat of Main Expansion Valve in Cooling Mode 3 -5℃~10℃ RW |  |
+| `0x00A3` | A13 Target Superheat of Main Expansion Valve in Cooling Mode 4 -5℃~10℃ RW |  |
+| `0x00A4` | A38 Exhaust Temperature of Main Expansion Valve 70℃~125℃ RW |  |
+| `0x00A5` | B03 Enthalpy Solenoid Valve Opening Ambient Temperature 11℃~45℃ RW |  |
+| `0x00A6` | B09 Target Exhaust Temperature of Auxiliary Expansion Valve 70~120 RW B10 Exhaust Temperature of Close 40~70 | **?** |
+| `0x00A7` | Auxiliary Expansion Valve RW |  |
+| `0x00A8` | B11 Target Superheat of Auxiliary Expansion valve in Heating mode 1 -10~10 RW |  |
+| `0x00A9` | B12 Target Superheat of Auxiliary Expansion valve in Heating mode 2 -10~10 RW |  |
+| `0x00AA` | B13 Target Superheat of Auxiliary Expansion valve in Heating mode 3 -10~10 RW |  |
+| `0x00AB` | B14 Target Superheat of Auxiliary Expansion valve in Heating mode 4 -10~10 RW |  |
+| `0x00AC` | B15 Target Superheat of Auxiliary Expansion valve in Heating mode 5 -10~10 RW |  |
+| `0x00AD` | B16 Target Superheat of Auxiliary Expansion valve in Heating mode 6 -10~10 RW |  |
+| `0x00AE` | B17 Target Superheat of Auxiliary Expansion valve in Heating mode 7 -10~10 RW |  |
+| `0x00AF` | B18 Target Superheat of Auxiliary Expansion valve in Heating mode 8 -10~10 RW |  |
+| `0x00B0` | D01 AC Wind speed switching Environment -10~50℃ RW |  |
+| `0x00B1` | D02 AC Wind speed switching Environment -10~50℃ RW |  |
+| `0x00B2` | R16 Exhaust Setting TP0 50~125℃ RW |  |
+| `0x00B3` | R17 Exhaust Setting TP1 50~125℃ RW |  |
+| `0x00B4` | R18 Exhaust Setting TP2 50~125℃ RW |  |
+| `0x00B5` | R19 Exhaust Setting TP3 50~125℃ RW R20 Exhaust Setting TP4 50~125℃ | **?** |
+| `0x00B6` | RW | **?** |
+| `0x00B7` | Manual frequency 15~120 RW |  |
+| `0x00B8` | R00 Compressor Operating Frequency 30~120Hz 30 Hz RW |  |
+| `0x00B9` | R01 Compressor Operating Frequency 30~120Hz 35 Hz RW |  |
+| `0x00BA` | R02 Compressor Operating Frequency 30~120Hz 40 Hz RW |  |
+| `0x00BB` | R03 Compressor Operating Frequency 30~120Hz 45 Hz RW |  |
+| `0x00BC` | R04 Compressor Operating Frequency 30~120Hz 55 Hz RW |  |
+| `0x00BD` | R05 Compressor Operating Frequency 30~120Hz 60 Hz RW |  |
+| `0x00BE` | R06 Compressor Operating Frequency 30~120Hz 65 Hz RW |  |
+| `0x00BF` | R07 Compressor Operating Frequency 30~120Hz 70 Hz RW |  |
+| `0x00C0` | R08 Compressor Operating Frequency 30~120Hz 75 Hz RW |  |
+| `0x00C1` | R09 Compressor Operating Frequency 30~120Hz 80 Hz RW |  |
+| `0x00C2` | R10 Compressor Operating Frequency 30~120Hz 85 Hz RW |  |
+| `0x00C3` | R11 Compressor Operating Frequency 30~120Hz 90 Hz RW |  |
+| `0x00C4` | R12 Lower Limit of Constant Temperature operating frequency 30~120Hz 30 Hz RW R13 Upper Limit of Constant 30~120Hz 80 Hz | **?** |
+| `0x00C5` | R13 Upper Limit of Constant Temperature operating frequency 30~120Hz 80 Hz |  |
+| `0x00C6` | reserved RW |  |
+| `0x00C7` | reserved RW |  |
+| `0x00C8` | R21 Lower Limit of Frequency adjustment 01 0~125Hz 125 RW |  |
+| `0x00C9` | R22 Lower Limit of Frequency Adjustment 02 0~125Hz 125 RW |  |
+| `0x00CA` | R23 Lower Limit of Frequency Adjustment 03 0~125Hz 125 RW |  |
+| `0x00CB` | R24 Lower Limit of Frequency Adjustment 04 0~125Hz 125 RW |  |
+| `0x00CC` | R25 Upper Limit of Frequency Adjustment 01 0~125Hz 125 RW |  |
+| `0x00CD` | R26 Upper Limit of Frequency Adjustment 02 0~125Hz 125 RW |  |
+| `0x00CE` | R27 Upper Limit of Frequency Adjustment 03 0~125Hz 125 RW |  |
+| `0x00CF` | R28 Upper Limit of Frequency Adjustment 04 0~125Hz 125 RW |  |
+| `0x00D0` | Timer Allowable marker Bit Bit0： 1st Timer Allowed, 0-Not Allowed/1-Allowed Bit1： 2nd Timer Allowed Bit2： 3rd Timer Allowed Bit3： 4th Timer Allowed Bit4： 5th Timer Allowed RW |  |
+| `0x00D1` | 1St Timer ON(Hour) 00~23 RW 1st Timer ON(Minutes) 00~59 | **?** |
+| `0x00D2` | RW | **?** |
+| `0x00D3` | 1St Timer OFF(Hour) 00~23 RW |  |
+| `0x00D4` | 1St Timer OFF(Minutes) 00~59 RW |  |
+| `0x00D5` | 2nd Timer ON(Hour) 00~23 RW |  |
+| `0x00D6` | 2nd Timer ON(Minutes) 00~59 RW |  |
+| `0x00D7` | 2nd Timer OFF(Hour) 00~23 RW |  |
+| `0x00D8` | 2nd Timer OFF(Minutes) 00~59 RW |  |
+| `0x00D9` | 3rd Timer ON(Hour) 00~23 RW |  |
+| `0x00DA` | 3rd Timer ON(Minutes) 00~59 RW |  |
+| `0x00DB` | 3rd Timer OFF (HOUR) 00~23 RW |  |
+| `0x00DC` | 3rd Timer OFF(Minutes) 00~59 RW |  |
+| `0x00DD` | 4th Timer ON(Hour) 00~23 RW |  |
+| `0x00DE` | 4th Timer ON(Minute ） 00~59 RW |  |
+| `0x00DF` | 4th Timer OFF(Hour) 00~23 RW |  |
+| `0x00E0` | 4th Timer OFF(Minute) 00~59 RW 5th Timer ON(Hour) 00~23 | **?** |
+| `0x00E1` | RW | **?** |
+| `0x00E2` | 5th Timer ON(Minute) 00~59 RW |  |
+| `0x00E3` | 5th Timer OFF(Hour) 00~23 RW |  |
+| `0x00E4` | 5th Timer OFF(Minutes) 00~59 RW |  |
+| `0x00E5` | Reserved RW |  |
+| `0x00E6` | P17 High Temperature disinfection cycle days 0~30Days,No disinfection function when set to 0 RW |  |
+| `0x00E7` | P18 High Temperature Disinfection start time 0~23 RW |  |
+| `0x00E8` | P19 High Temperature Disinfection Sustaining Time 0~90min RW |  |
+| `0x00E9` | P20 Set Temperature of High Temperature Disinfection 0~90℃ RW |  |
+| `0x00EA` | P21 High Temperature disinfection Heat pump Set Temperature 40~60℃ RW |  |
+| `0x00EB` | P23 Compensation Temperature of Heating Mode (Ambient Temperature) 0-40 RW |  |
+| `0x00EC` | P24 Target Temperature Compensation factor 1~30（ 1 corresponds to the actual 0.1） RW |  |
+| `0x00ED` | P26 Ambient Temperature of Start Electric Heater -20-20℃ 0 RW |  |
+| `0x00EE` | R29 Frequency increase of Powerful Heating Mode -30~30Hz 5 RW |  |
+| `0x00EF` | R30 Max Frequency of Silent Heating Mode 30~120Hz 70 RW R31 Frequency increase of Powerful -30~30Hz 5 | **?** |
+| `0x00F0` | Cooling Mode RW |  |
+| `0x00F1` | R32 Max Frequency of Silent Cooling Mode 30~120Hz 70 RW |  |
+| `0x00F2` | Set Temperature of Vacation mode RW |  |
+| `0x00F3` | D08 Max Wind Speed of Silent Mode in Heating or Hot Water mode 0~1000 60 RW |  |
+| `0x00F4` | D09 Max Wind Speed of Silent Mode in Cooling Mode 0~1000 60 RW |  |
+| `0x00F5` | Mute Timer Enable Flag RW |  |
+| `0x00F6` | 1st Mute Timer ON(Hour) 00~23 RW |  |
+| `0x00F7` | 1st Mute Timer ON(Minutes) 00~59 RW |  |
+| `0x00F8` | 1st Mute Timer OFF (Hour) 00~23 RW |  |
+| `0x00F9` | 1st Mute Timer OFF(Minutes) 00~59 RW |  |
+| `0x00FA` | 2nd Mute Timer ON(Hour) 00~23 RW |  |
+| `0x00FB` | 2nd Mute Timer ON(Minutes) 00~59 RW |  |
+| `0x00FC` | 2nd Mute Timer OFF(Hour) 00~23 RW |  |
+| `0x00FD` | 2nd Mute Timer OFF(Minutes) 00~59 RW |  |
+| `0x00FE` | P27 Delay start time of Water Tank Electric Heater 0-60 RW 0x00FF R14 Frequency Compensation of Hot -50~20Hz Water Mode RW | **?** |
+| `0x0100` | F1 Model Selection 1:Heating only 2:Heating + Cooling 3:heating+ DHW 4:Heating /cooling+DHW RW |  |
+| `0x0101` | F2 Water pump constant Temp. Operation mode 0:Intermittent Opening 1:Always open 2:Constant Temp. Stop Working RW |  |
+| `0x0102` | F3 Water Pump Thermostat Start/stop Cycle 1-120min 60 RW |  |
+| `0x0103` | D1 DC FAN 1 Selection 0: Disable 1: enable RW |  |
+| `0x0104` | D2 DC Fan 2 Selection 0:Disable 1:Enable RW |  |
+| `0x0105` | F4 DC Pump mode 0:Disable 1:Auto 2:Manual RW |  |
+| `0x0106` | F5 DC Pump Regulation cycle 10-120S RW |  |
+| `0x0107` | F6 DC Pump Manual Speed 10-100% 50 RW |  |
+| `0x0108` | F7 DC Pump Max Speed 10-100% 100 RW |  |
+| `0x0109` | F8 DC Pump Min Speed 10-100% 40 RW |  |
+| `0x010A` | F9 DC Pump Regulation speed 0-50% 10 RW |  |
+| `0x010B` | F10 DC water pump inlet and outlet temperature difference setting 2-30℃ 5 RW |  |
+| `0x010C` | F11 DC pump model (minimum communication frequency) 0:1000HZ 1:100HZ 0 R 0x8000 Reserved R 0x8001 Reserved R 0x8002 Machine status check Bit0： Bit1： Reserved Bit2： Bit3： Bit4： Reserved Bit5： Reserved Bit6： Reserved Bit7： Reserved R 0x8003 Mode Selection Bit0:Hot water disable/enable,0-disable/1- enable Bit1: Reserved Bit2:Heating disable/enable;0-disable/1- enable Bit3:Cooling disable/enable;0-disable/1- enable Bit4:DC Fan 1 Enable/disable;0-disable/1- enable Bit5： DC Fan 2 Disable/enable;0-disable/1- enable Bit6:Reserved Bit7:Defrost R 0x8004 Output flags1 Bit0： compressor Bit1： reserved Bit2： reserved Bit3： reserved Bit4： reserved Bit5： FAN motor Bit6： 4 way valve Bit7： reserved R 0x8005 Output flags 2 Bit0： Chassis Electric Heater Bit1： reserved Bit2： Reserved Bit3： Reserved Bit4： Reserved Bit5： Auxillary E-heater Bit6： 3 way valve Bit7： Water Tank E-Heater R 0x8006 Output flags 3 Bit0： Water pump Bit1： Crankshaft electric heater Bit2： reserved Bit3： reserved Bit4： reserved Bit5： reserved Bit6： reserved Bit7： reserved R 0x8007 Fault flags 1 Bit0: Er 14 Water Tank Temp. Sensor Failure Bit1:Er 21 Ambient Temp. Sensor failure Bit2: Er 16 External Coil Temp. Sensor failure Bit3： Reserved Bit4: Er 27 Outlet Water Temp. Sensor failure Bit 5: Er 05 High pressure failure Bit 6:Er 06 Low pressure failure Bit7： Reserved R 0x8008 Fault flags 2 Bit0： Er 03 Water Flow Failure Bit1： Reserved Bit2： Er 32 Leaving Water Temperature Overheat Protection in Heating Mode Bit3： reserved Bit4： reserved Bit5： reserved Bit6： reserved Bit7： reserved R 0x8009 Fault flags 3 Bit0： reserved Bit1： reserved Bit2： reserved Bit3： reserved Bit4： reserved Bit5： reserved Bit6： Er 18 Exhaust Temperature Failure Bit7： Reserved R 0x800A Fault flags 4 Bit0： Er 15 Inlet Water Temperature Failure Bit1： Er 12 Exhaust Temperature Overload protection Bit2： Reserved Bit3： Reserved Bit4： Reserved Bit5： Er 23 Leaving Water Temperature Over-cold Protection in Cooling Mode Er 29 Suction Gas Temperature Failure Bit7： Reserved R 0x800B Fault flags 5 Bit0： Er 69 Low Pressure Protection Bit1： Reserved Bit2： Er 33 Exceed Temperature protection of Coil Temperature Bit3： Er 42 Cooling Coil Temperature Sensor Failure Bit4： Reserved Bit5： Reserved Bit6： Reserved Bit7： Er 67 Low Pressure Sensor Failure R 0x800C Fault flags 6 Bit0： Reserved Bit1： Reserved Bit2： Reserved Bit3： Reserved Bit4： Secondary Anti- freeze Bit5： Primary Anti-freeze Bit6： Reserved Bit7： Reserved R 0x800D Fault flags Bit0： Reserved Bit1： Reserved Bit2： Reserved Bit3： Reserved Bit4： Reserved Bit5： Reserved Bit6： Er 64 DC Fan 1 Failure Bit7： Er 65 Compressor Over-current Protection R 0x800E 01 Return Water Temperature Accuracy 0.1 R 0x800F 10 Water Tank Temp. Accuracy 0.5 R 0x8010 Reserved R 0x8011 03 Outdoor Ambient Temperature Accuracy 0.5 R 0x8012 02 Leaving Water Temperature Accuracy 0.5 R 0x8013 Economizer Inlet Temperature(Reserved) Accuracy 0.5 R 0x8014 Economizer Outlet Temperature(Reserved) Accuracy 0.5 R 0x8015 05 Suction Gas Temperature Accuracy 0.5 R 0x8016 06 External Coil Temperature Accuracy 0.5 R 0x8017 Reserved R 0x8018 Reserved R 0x8019 Reserved R 0x801A 09 Cooling Coil Temperature Accuracy 0.5 R 0x801B 04 Exhaust Gas Temperature Accuracy 0.5 R 0x801C 11 Main Expansion Valve Opening R 0x801D 12 Auxiliary Expansion Valve Opening R 0x801E 16 Actual Frequency of Compressor R 0x801F Inverter Fault Low 8 bits are 0xff when the corresponding fault is reportedR 0x8020 Inverter Fault High 8 Bits R 0x8021 15 DC Bus Voltage R 0x8022 Reserved R 0x8023 Reserved R 0x8024 Target frequency R 0x8025 13 Compressor Current R 0x8026 19 Wind Speed of DC Fan 1 R 0x8027 Reserved R 0x8028 21 Pressure Conversion temperature of Low-Pressure Switch R 0x8029 Reserved R 0x802A 23 Actual speed of DC Pump |  |
+
+### The registers that matter for the operating window
+
+| Addr | What | Range / default | Why it matters |
+|---|---|---|---|
+| `0x008D` | P01 restart temperature difference, heating/cooling | **2–18 °C**, at 2 | The dead zone. **Already at its minimum** - the unit will not start until return water is 2 K past setpoint, so it always lets the house drift before running. |
+| `0x00C5` | R13 upper limit of constant-temperature operating frequency | 30–120 Hz, **80** | **Caps the compressor while leaving the unit's own modulation and protections intact.** Frequency drives spread, and spread is what closes the operating window from below. |
+| `0x00C4` | R12 lower limit of the same | 30–120 Hz, 30 | The other end; raising it fights minimum modulation. |
+| `0x00B7` | Manual frequency | 15–120 | With `0x0000` bit 2. Fixes frequency outright and takes the unit's modulation logic out of the loop - more control, less protection. |
+| `0x0092` | P08 water temperature compensation | −5…15 °C | Outdoor-dependent setpoint correction. Believed disabled; confirm before adding control on top. |
+| `0x010B` | F10 DC pump inlet/outlet ΔT | 2–30, set to **2** | Holds the pump at full flow instead of throttling to build spread. |
+
+## Writable registers (RW) - the short list kept for context
 
 ⚠️ **THIS TABLE IS A SUBSET — 17 rows of 244.** The complete capture is in
 `docs/PW58321_MODBUS.local.md` (git-excluded). This table lists only what has
