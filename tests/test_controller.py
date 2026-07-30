@@ -513,3 +513,93 @@ async def test_the_flow_floor_does_not_fire_in_off_mode(controller):
     ctl.io.touch(time.monotonic())
     await ctl.step(1.0)
     assert ctl._flow_floor_pct is None
+
+
+# ---------- pre-conditioning delta (active = dial + delta) ----------
+
+# Live temperatures on every mapped sensor: without them step() takes the
+# stale-data failsafe and returns before any of this is reached.
+_TEMPS = {f"rl_hk{n:02d}": 21.0 for n in (1, 2, 3, 4, 6, 7, 8, 9, 10, 11)}
+_TEMPS.update({"vl_total": 18.0, "rl_total": 21.0})
+
+async def test_a_negative_delta_pre_cools_every_room(controller):
+    """`active = dial + delta`, so negative aims cooler - the summer pre-charge.
+
+    This is what reactive control structurally cannot do. The trim aims at
+    comfort and stops when the air is comfortable, so it can never store energy
+    in the slab: measured 2026-07-30, the plant idled 6 h 44 min before a 38 degC
+    day because the air was at target while the slab sat uncharged.
+    """
+    ctl = controller(temps=_TEMPS, room_temps={"gaestebad": 24.0},
+                     dew_point=12.0)
+    ctl.io.touch(time.monotonic())
+    dial = dict(ctl.room_setpoints)
+    ctl.plane.sp_delta = -1.5
+    await ctl.step(1.0)
+    assert ctl._sp_delta_active == -1.5
+    # The dial is untouched - the bridge still owns it.
+    assert ctl.room_setpoints == dial
+
+
+async def test_a_positive_delta_pre_heats(controller):
+    """Signed and mode-independent: positive aims warmer, which is the winter
+    case - pre-charging before a storm drops the outdoor temperature."""
+    ctl = controller(temps=_TEMPS, room_temps={"gaestebad": 20.0},
+                     dew_point=8.0)
+    ctl.io.touch(time.monotonic())
+    ctl.plane.sp_delta = +1.5
+    await ctl.step(1.0)
+    assert ctl._sp_delta_active == +1.5
+
+
+async def test_a_stale_delta_returns_the_plant_to_the_dial(controller):
+    """Expiry is why this needs no command-TTL machinery: zero means exactly
+    what the occupant set, so a hung layer 2 degrades to comfort control rather
+    than leaving the house steered by its last thought."""
+    ctl = controller(temps=_TEMPS, room_temps={"gaestebad": 24.0},
+                     dew_point=12.0)
+    ctl.io.touch(time.monotonic())
+    ctl.plane.sp_delta = 0.0          # what a stale value resolves to
+    await ctl.step(1.0)
+    assert ctl._sp_delta_active == 0.0
+
+
+async def test_the_absolute_clamp_bounds_the_result_not_the_delta(controller):
+    """There is deliberately no separate bound on the delta - the absolute
+    setpoint clamp is the real protection, and a second arbitrary limit would
+    just be a number nobody derived sitting in front of one that means
+    something. A wildly wrong delta must land on the clamp, not past it."""
+    ctl = controller(temps=_TEMPS, room_temps={"gaestebad": 24.0},
+                     dew_point=12.0)
+    ctl.io.touch(time.monotonic())
+    lo = ctl.safety.setpoint_min
+    ctl.plane.sp_delta = -50.0
+    await ctl.step(1.0)
+    published = {t: v for t, v, _ in ctl.plane.published}
+    assert float(published["setpoint_delta/active"]) == -50.0
+    # every effective target still inside the absolute bound
+    for n in ctl.room_setpoints:
+        assert ctl.safety.clamp_setpoint(ctl.room_setpoints[n] - 50.0) >= lo
+
+
+async def test_the_house_average_sees_the_shifted_target(controller):
+    """The delta has to reach the DEMAND calculation too, not just the room
+    PIDs. If the house average kept using the dial, the plant would report
+    itself satisfied while layer 2 was asking for more - which is precisely the
+    blindness that lost the overnight pre-charge."""
+    warm = controller(temps=_TEMPS, room_temps={"gaestebad": 23.0},
+                      dew_point=12.0)
+    warm.io.touch(time.monotonic())
+    warm.plane.sp_delta = 0.0
+    await warm.step(1.0)
+    base = warm._last_demand.mean_deviation_c
+
+    cool = controller(temps=_TEMPS, room_temps={"gaestebad": 23.0},
+                      dew_point=12.0)
+    cool.io.touch(time.monotonic())
+    cool.plane.sp_delta = -2.0
+    await cool.step(1.0)
+    shifted = cool._last_demand.mean_deviation_c
+
+    assert shifted is not None and base is not None
+    assert shifted < base, "a pre-cool delta must increase apparent cooling demand"

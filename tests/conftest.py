@@ -159,10 +159,14 @@ class FakePlane:
     """
 
     def __init__(self, room_temps: dict[str, float] | None = None,
-                 dew_point: float | None = None):
+                 dew_point: float | None = None, sp_delta: float = 0.0):
         self.room_temps = dict(room_temps or {})
         self.dew = dew_point
+        self.sp_delta = sp_delta
         self.published: list[tuple[str, str, bool]] = []
+
+    def setpoint_delta(self, max_age_s: float) -> float:
+        return self.sp_delta
 
     def room_temp(self, room: str, max_age_s: float = 300) -> float | None:
         return self.room_temps.get(room)

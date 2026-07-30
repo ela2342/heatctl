@@ -56,6 +56,19 @@ class ControlPlane:
         self.dew_topic = m.get("dew_point_topic") or None
         self._dew: float | None = None
         self._dew_ts = 0.0
+        # Layer 2's pre-conditioning delta, in K, applied as
+        # `active = dial + delta`. SIGNED and mode-independent on purpose:
+        # negative asks for a cooler target (pre-cool before a hot afternoon),
+        # positive for a warmer one (pre-heat before a cold night). Deriving the
+        # direction from the plant mode instead would make "aim cooler while
+        # heating" unexpressible, and that is a real case - anticipating strong
+        # solar gain, or a setback.
+        #
+        # Safety comes from bounding the MAGNITUDE and clamping the result, not
+        # from restricting the sign. Ages out to 0.0, i.e. back to exactly what
+        # the dial says, which is why a dead layer 2 is harmless here.
+        self._sp_delta = 0.0
+        self._sp_delta_ts = 0.0
 
         self._client: aiomqtt.Client | None = None
 
@@ -92,6 +105,11 @@ class ControlPlane:
                         await self._publish_discovery()
                     await client.subscribe(f"{self.base}/set/#")
                     await client.subscribe(f"{self.base}/hp/set/#")
+                    # Layer 2's pre-conditioning delta. Under opt/, not set/:
+                    # the optimizer publishes status and layer 1 chooses to
+                    # consult it, with the same staleness contract as the dew
+                    # point above.
+                    await client.subscribe(f"{self.base}/opt/setpoint_delta")
                     for topic in self.room_topics:
                         await client.subscribe(topic)
                     if self.dew_topic:
@@ -123,6 +141,14 @@ class ControlPlane:
             except ValueError:
                 log.warning("bad room temp on %s: %r", topic, payload)
             return
+        if topic == f"{self.base}/opt/setpoint_delta":
+            try:
+                v = float(payload)
+            except ValueError:
+                return
+            self._sp_delta = v
+            self._sp_delta_ts = time.monotonic()
+            return
         if topic == f"{self.base}/set/mode":
             self.on_command("mode", "", payload)
         elif topic.startswith(f"{self.base}/set/setpoint/"):
@@ -132,6 +158,33 @@ class ControlPlane:
             # Heat pump register writes. Routed, not handled here: this file
             # owns MQTT, not the register map.
             self.on_command("hp", topic[len(f"{self.base}/hp/set/"):], payload)
+
+    def setpoint_delta(self, max_age_s: float) -> float:
+        """Layer 2's signed pre-conditioning delta in K, 0.0 if stale/absent.
+
+        Zero is the safe value and the reason this needs no command TTL
+        machinery: expiry returns the plant to exactly the dial setting, which
+        is what a human chose. A hung optimizer therefore degrades to normal
+        comfort control rather than leaving the house steered.
+
+        DELIBERATELY UNBOUNDED HERE. The caller applies
+        `safety.clamp_setpoint` to the RESULT, and that absolute bound is the
+        real protection - a second arbitrary limit on the delta would just be a
+        number nobody derived, sitting in front of one that is meant to mean
+        something.
+
+        And the magnitude is not where the risk lives. Even a winter storm
+        dropping the outdoor temperature 20 K over six hours is
+        20 K x 267 W/K x 6 h = 32 kWh, which against a building capacity of
+        15.3 kWh/K is only ~2.1 K of target shift. The outdoor swing does not
+        set this quantity's scale; the building's thermal mass does. What has to
+        be survivable is a WRONG value, and the absolute clamp is what makes it
+        survivable - so that clamp being sanely set matters more than it did
+        before (see BACKLOG on setpoint_min_c).
+        """
+        if time.monotonic() - self._sp_delta_ts > max_age_s:
+            return 0.0
+        return self._sp_delta
 
     async def stop(self) -> None:
         """Say goodbye explicitly, while still connected.

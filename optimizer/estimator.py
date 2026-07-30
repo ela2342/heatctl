@@ -292,6 +292,36 @@ class Estimator:
             })
         return out
 
+    def setpoint_delta(self, days: list[dict]) -> float:
+        """Signed pre-conditioning delta in K: `active = dial + delta`.
+
+        DERIVED, not chosen. `precharge_k` is the day's excess energy divided by
+        the building's thermal capacity - i.e. exactly how far below target the
+        mass has to start for the excess to land in it instead of in the room.
+        The sign follows from which way the excess runs: cooling load means aim
+        cooler, heating load means aim warmer.
+
+        Uses TODAY's figure while there are still hours over the ceiling left to
+        absorb, and TOMORROW's once today is decided. Charging the mass for a
+        day that is already over is wasted work, and with an 8 h slab constant
+        "already over" arrives in the early afternoon.
+
+        Returns 0.0 when nothing needs storing, which is the common case and
+        must stay cheap - a delta of zero means the plant does exactly what the
+        occupant's dial says.
+        """
+        if not days:
+            return 0.0
+        today = days[0]
+        # Still worth charging today only if excess remains ahead of us.
+        target = today if today["hours_over"] > 0 else (
+            days[1] if len(days) > 1 else today)
+        pre = target.get("precharge_k", 0.0)
+        if pre <= 0.0:
+            return 0.0
+        # Cooling-dominated day -> aim cooler; heating-dominated -> aim warmer.
+        return -pre if target["cooling_kwh"] >= target["free_kwh"] else +pre
+
     # ---------- MQTT, status only ----------
 
     async def _publish(self, subtopic: str, payload: str) -> None:
@@ -390,6 +420,8 @@ class Estimator:
                                         str(t["cooling_kwh"]))
                     await self._publish("today/precharge_k",
                                         str(t["precharge_k"]))
+                    delta = self.setpoint_delta(days)
+                    await self._publish("setpoint_delta", f"{delta:.2f}")
                     if len(days) > 1:
                         n = days[1]
                         await self._publish("tomorrow/peak_kw",

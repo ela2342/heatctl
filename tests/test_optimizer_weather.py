@@ -200,3 +200,46 @@ def test_the_optimizer_honours_the_same_mqtt_env_overrides_as_layer_1(tmp_path):
         os.environ.clear(); os.environ.update(old)
     assert c["mqtt"]["host"] == "core-mosquitto"
     assert c["mqtt"]["port"] == 1884        # and coerced to int, not "1884"
+
+
+# ---------- the pre-conditioning delta layer 1 consumes ----------
+
+def _days(**over):
+    d = {"day": "2026-07-30", "peak_kw": 8.9, "cooling_kwh": 94.0,
+         "free_kwh": 16.0, "hours_over": 9, "store_kwh": 22.3,
+         "precharge_k": 1.46}
+    d.update(over)
+    return d
+
+
+def test_a_cooling_day_gives_a_NEGATIVE_delta(sp_est=None):
+    """`active = dial + delta`, so pre-cooling must be negative. A sign error
+    here would pre-HEAT the house before a 38 degC afternoon, which is the
+    single most expensive mistake available."""
+    est = _estimator()
+    assert est.setpoint_delta([_days()]) == -1.46
+
+
+def test_a_heating_dominated_day_gives_a_POSITIVE_delta():
+    """The winter case: pre-charge before a storm drops the outdoor
+    temperature, which means aiming WARMER than the dial."""
+    est = _estimator()
+    d = _days(cooling_kwh=5.0, free_kwh=80.0, precharge_k=1.2)
+    assert est.setpoint_delta([d]) == +1.2
+
+
+def test_no_excess_left_today_looks_at_tomorrow():
+    """Charging the mass for a day already decided is wasted work, and with an
+    8 h slab constant 'already decided' arrives in the early afternoon."""
+    est = _estimator()
+    today = _days(hours_over=0, precharge_k=0.9)
+    tomorrow = _days(day="2026-07-31", precharge_k=2.0)
+    assert est.setpoint_delta([today, tomorrow]) == -2.0
+
+
+def test_nothing_to_store_means_exactly_the_dial():
+    """Zero is the common case and must stay cheap: it means the plant does
+    precisely what the occupant asked for."""
+    est = _estimator()
+    assert est.setpoint_delta([_days(precharge_k=0.0)]) == 0.0
+    assert est.setpoint_delta([]) == 0.0

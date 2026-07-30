@@ -104,6 +104,9 @@ class Controller:
         # third level of the cascade; see setpoint.py.
         self.water_sp = SetpointController(cfg)
         self._sp_blocked = False        # edge detector for the saturation alarm
+        d = cfg["control"].get("setpoint_delta") or {}
+        self.sp_delta_max_age_s = float(d.get("max_age_s", 3600.0))
+        self._sp_delta_active = 0.0
 
         # Valve distribution. Scales demands so the most-demanding circuit is
         # fully open: maximum flow, minimum spread, best COP - throttling is a
@@ -289,9 +292,30 @@ class Controller:
         # command it.
         room_temps = {r["name"]: t for r in self.rooms
                       if (t := self.plane.room_temp(r["name"])) is not None}
+
+        # PRE-CONDITIONING DELTA. `active = dial + delta`, computed ONCE here so
+        # the wall dial and layer 2 can never fight over one value - the bridge
+        # keeps owning what the occupant asked for, and layer 2 only ever shifts
+        # it. Signed: negative pre-cools before a hot afternoon, positive
+        # pre-heats before a cold night.
+        #
+        # This is what reactive control structurally cannot do. The trim aims at
+        # comfort and stops when the air is comfortable, so it can never store
+        # energy in the slab - measured 2026-07-30, when the plant idled for
+        # 6 h 44 min before a 38 degC day because the air was at target while
+        # the slab sat uncharged.
+        #
+        # Every consumer below reads `targets`, never `self.room_setpoints`, so
+        # the house average, the room PIDs and the telemetry all see the same
+        # number. Safety still clamps each one.
+        delta = self.plane.setpoint_delta(self.sp_delta_max_age_s)
+        targets = {n: self.safety.clamp_setpoint(sp + delta)
+                   for n, sp in self.room_setpoints.items()}
+        self._sp_delta_active = delta
+        await self.plane.publish("setpoint_delta/active", f"{delta:+.2f}")
+
         self._last_demand = self.demand.step(
-            self.mode, self.room_setpoints, room_temps,
-            state.valves_pct, now)
+            self.mode, targets, room_temps, state.valves_pct, now)
 
         # Apply the mode the house asked for. Gated on auto_mode alone, NOT on
         # source_demand.enabled: choosing the season and choosing whether to
@@ -312,8 +336,7 @@ class Controller:
             room_t = self.plane.room_temp(n)
             room_out: float | None = None
             if room_t is not None:
-                room_out = self.room_pids[n].step(
-                    self.room_setpoints[n], room_t, dt)
+                room_out = self.room_pids[n].step(targets[n], room_t, dt)
                 await self.plane.publish(f"room/{n}/temp", f"{room_t:.1f}")
 
             for circ in room["circuits"]:

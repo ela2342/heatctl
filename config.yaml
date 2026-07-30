@@ -313,6 +313,29 @@ control:
   # 1 K every 30 min (owner, 2026-07-27): slow and integer because every write
   # wears the pump's flash and the slab has hours of thermal mass.
   # See heatctl/setpoint.py.
+  # Layer 2's pre-conditioning delta: `active room target = dial + delta`.
+  # The wall dial keeps owning what the occupant asked for; layer 2 only ever
+  # shifts it, so the two never fight over one value.
+  #
+  # Signed and mode-independent. Negative aims cooler (pre-cool before a hot
+  # afternoon), positive warmer (pre-charge before a storm). Deriving the
+  # direction from plant mode instead would make "aim cooler while heating"
+  # unexpressible, and that is a real case.
+  #
+  # There is NO bound on the delta itself, deliberately. `safety.clamp_setpoint`
+  # bounds the RESULT, and that absolute limit is the real protection - a second
+  # arbitrary number in front of it would just be one nobody derived. The
+  # magnitude is not where the risk is either: a winter storm dropping the
+  # outdoor temperature 20 K over six hours is 20 x 267 W/K x 6 h = 32 kWh,
+  # which against 15.3 kWh/K of building capacity is only ~2.1 K of target
+  # shift. The building's mass sets this quantity's scale, not the weather.
+  #
+  # Expiry is the whole safety story: stale means 0.0, i.e. exactly the dial.
+  # That is why this needs no command-TTL machinery - a hung layer 2 degrades to
+  # ordinary comfort control instead of steering the house indefinitely.
+  setpoint_delta:
+    max_age_s: 3600
+
   water_setpoint:
     enabled: true
     interval_s: 1800        # 30 min between trims
