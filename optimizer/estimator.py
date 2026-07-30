@@ -314,9 +314,11 @@ class Estimator:
         does not care which calendar day it falls in; the mass has to absorb
         whatever is coming.
 
-        **And each future hour is discounted by what survives until then**, at
-        the fast coupled mode of the building. See the comment on the sum below;
-        that discount is what gives the delta a lead time at all.
+        **Excess beyond a lead horizon of two fast time constants is tapered
+        away**, which is what gives the delta a lead time at all. See the
+        comment on the sum below for why it is a horizon and not a decay - the
+        obvious exp(-dt/tau) form is wrong for an actuator that holds a
+        setpoint rather than injecting a lump of charge.
         """
         if not self.weather or not self.weather.points:
             return 0.0
@@ -327,28 +329,39 @@ class Estimator:
                      tzinfo=dt.timezone.utc) >= now][:hours]
         if not ahead:
             return 0.0
-        # DISCOUNT BY WHAT SURVIVES. Charge put into the mass now decays toward
-        # the room at the FAST coupled mode, so excess arriving in dt hours is
-        # only worth exp(-dt/tau) of pre-charge today. That is the lead time,
-        # and it falls out of the physics rather than being a scheduled
-        # "start N hours before the peak" - there is no schedule to tune.
+        # HORIZON, NOT DECAY - and the difference matters, because getting it
+        # backwards was the first attempt at this.
         #
-        # Before this, the delta was applied flat and continuously. It happened
-        # to work overnight only because the plant is saturated during the peak
-        # and so ignores it, and would have overshot on a mild night before a hot
-        # day. It also had no way to distinguish excess arriving in two hours
-        # from excess arriving in twenty.
+        # The tempting form is to weight each future hour by exp(-dt/tau): the
+        # fraction of a charge put in now that survives until then. That is the
+        # survival of an IMPULSE, and it is the wrong model for this actuator.
+        # The controller does not inject a lump of coolth and walk away - it
+        # holds the setpoint down, continuously replenishing against the decay.
+        # Held charge does not decay; only abandoned charge does.
         #
-        # tau comes from the identified `ua_sa`, not a guess: at 490 W/K the
-        # fast mode is ~6.3 h, so excess a day out is discounted to ~2 % and
-        # excess this evening counts almost fully.
+        # Weighting by impulse survival therefore under-charges exactly when
+        # charging is possible. Measured against a 15:00 peak it gives weights
+        # of 0.07-0.24 through the night, i.e. ~0.05 K of pre-cooling, and only
+        # ramps up mid-morning once the rising load has already eaten the
+        # plant's spare capacity. Overnight is the ONLY time this house has
+        # spare capacity; a rule that declines to use it is worse than the flat
+        # sum it replaced.
+        #
+        # So: full weight inside a lead horizon, tapering beyond it. The horizon
+        # is 2*tau - two fast time constants ahead of the excess is where
+        # holding the setpoint down starts to pay - and the taper beyond it
+        # falls off with tau. Both come from the identified parameters; neither
+        # is hand-picked. What this buys over a flat sum is a horizon at all:
+        # excess two days out no longer demands pre-cooling tonight.
         _, tau_h = eigen_time_constants_h(self.bp)
+        lead_h = 2.0 * tau_h
         loads, weights = [], []
         for i, pt in enumerate(ahead):
             loads.append(net_load_w(self.bp, target_air, pt.temperature,
                                     self.t_ground, q_sol=self.solar_w(pt),
                                     q_int=self.q_int))
-            weights.append(math.exp(-i / tau_h))
+            weights.append(1.0 if i <= lead_h
+                           else math.exp(-(i - lead_h) / tau_h))
         cool_excess = sum(max(0.0, x - ceiling_w) * w
                           for x, w in zip(loads, weights)) / 1000.0
         heat_excess = sum(max(0.0, -x - ceiling_w) * w

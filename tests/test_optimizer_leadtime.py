@@ -139,26 +139,74 @@ class TestLeadTime:
         assert d_soon < 0 and d_later < 0          # both call for pre-cooling
         assert abs(d_soon) > 3 * abs(d_later)
 
-    def test_the_discount_follows_the_buildings_own_fast_mode(self, monkeypatch):
-        """Not a tuned constant: the weight IS exp(-dt/tau) at the model's tau.
+    def test_timing_inside_the_horizon_does_not_change_the_ask(self, monkeypatch):
+        """Inside the lead horizon there is NO decay discount, deliberately.
 
-        Checks the ratio between one hour of excess now and the same hour of
-        excess later against the analytic weight, so a hand-picked half-life
-        substituted for the eigenvalue would fail here.
+        The first version of this weighted every hour by exp(-dt/tau) - the
+        survival of an impulse of charge. Wrong actuator model: the controller
+        holds a depressed setpoint and replenishes continuously, so held charge
+        does not decay. That form produced weights of 0.07-0.24 through the
+        night against an afternoon peak, i.e. it declined to pre-cool during
+        the only hours this house has spare capacity.
+
+        Mutation-verified: restoring the exp(-i/tau) weight makes these two
+        differ by ~2.6x and the assertion fails.
+        """
+        hot = 38.0
+        early = _estimator(monkeypatch, [hot] * 3 + [NEUTRAL_C] * 21)
+        mid = _estimator(monkeypatch,
+                         [NEUTRAL_C] * 6 + [hot] * 3 + [NEUTRAL_C] * 15)
+        d_early = early.setpoint_delta(target_air=23.0,
+                                       ceiling_w=SYNTH_CEILING_W)
+        d_mid = mid.setpoint_delta(target_air=23.0, ceiling_w=SYNTH_CEILING_W)
+        assert d_early < 0
+        assert d_mid == pytest.approx(d_early, rel=0.01)
+
+    def test_beyond_the_horizon_the_ask_tapers_with_tau(self, monkeypatch):
+        """Past 2*tau the weight falls off, so a distant heatwave is not acted on.
+
+        This is the property a flat sum lacked entirely: without it, excess two
+        days out demanded pre-cooling tonight. Checked against the analytic
+        taper so a hand-picked half-life would fail here.
         """
         _, tau = eigen_time_constants_h(_bp())
-        lag = 6
-        hot, mild = 38.0, NEUTRAL_C
-        now_ = _estimator(monkeypatch, [hot] + [mild] * 23)
-        late = _estimator(monkeypatch, [mild] * lag + [hot] + [mild] * (23 - lag))
+        lead = 2.0 * tau
+        hot = 38.0
+        inside = _estimator(monkeypatch, [hot] + [NEUTRAL_C] * 23)
+        far = 22
+        beyond = _estimator(monkeypatch,
+                            [NEUTRAL_C] * far + [hot] + [NEUTRAL_C] * (23 - far))
+        d_in = inside.setpoint_delta(target_air=23.0, ceiling_w=SYNTH_CEILING_W)
+        d_far = beyond.setpoint_delta(target_air=23.0,
+                                      ceiling_w=SYNTH_CEILING_W)
+        assert d_in < 0 and d_far < 0
+        assert abs(d_far / d_in) == pytest.approx(
+            math.exp(-(far - lead) / tau), rel=0.05)
+
+    def test_an_afternoon_peak_is_pre_cooled_for_from_the_early_hours(
+            self, monkeypatch):
+        """The behavioural claim, stated as a test: 02:00 must pre-cool for 15:00.
+
+        13 hours out, which is the gap the plant actually has to work with,
+        because overnight is when it has spare capacity. At the identified
+        parameters the horizon is 12.7 h, so 13 h sits just outside it and gets
+        0.95 rather than 1.00 - fine, and worth pinning as a ratio rather than
+        as `2*tau > 13`, which is the arithmetic and not the point. An
+        implementation that tapers hard inside this gap has the actuator model
+        wrong however elegant its maths.
+        """
+        hot = 38.0
+        now_ = _estimator(monkeypatch, [hot] + [NEUTRAL_C] * 23)
+        night = _estimator(monkeypatch,
+                           [NEUTRAL_C] * 13 + [hot] + [NEUTRAL_C] * 10)
         d_now = now_.setpoint_delta(target_air=23.0, ceiling_w=SYNTH_CEILING_W)
-        d_late = late.setpoint_delta(target_air=23.0, ceiling_w=SYNTH_CEILING_W)
-        assert d_now < 0 and d_late < 0
-        assert abs(d_late / d_now) == pytest.approx(math.exp(-lag / tau),
-                                                    rel=0.02)
+        d_night = night.setpoint_delta(target_air=23.0,
+                                       ceiling_w=SYNTH_CEILING_W)
+        assert d_now < 0
+        assert abs(d_night / d_now) > 0.9
 
     def test_a_cold_snap_still_produces_a_positive_delta(self, monkeypatch):
-        """The discount must not have broken the winter sign.
+        """The horizon must not have broken the winter sign.
 
         Negative deltas make sense in winter - the user's words - and the
         weighting is applied to both branches identically.
@@ -168,4 +216,5 @@ class TestLeadTime:
 
     def test_a_benign_forecast_asks_for_nothing(self, monkeypatch):
         est = _estimator(monkeypatch, [21.0] * 24)
-        assert est.setpoint_delta(target_air=23.0, ceiling_w=SYNTH_CEILING_W) == 0.0
+        assert est.setpoint_delta(target_air=23.0,
+                                  ceiling_w=SYNTH_CEILING_W) == 0.0

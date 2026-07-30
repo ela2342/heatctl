@@ -2836,11 +2836,27 @@ demanded exactly as much pre-cooling as one two hours out. It only behaved
 overnight by luck - the plant is saturated during the peak and so ignores the
 delta then.
 
-Each forecast hour is now weighted by `exp(-dt / tau_fast)`, because charge put
-into the mass now decays toward the room at the fast mode: that is precisely
-the fraction of today's pre-charge still available when the excess lands. No
-schedule and no tuning constant - `tau` comes from the identified parameters
-(excess 3 h out counts 0.62, 12 h out 0.15, 24 h out 0.02).
+First attempt weighted each hour by `exp(-dt / tau_fast)` - the survival of an
+impulse of charge. **That is the wrong actuator model and was caught on
+validating it against tonight**, before it ran unattended. The controller does
+not inject a lump of coolth and walk away; it holds a depressed setpoint and
+replenishes continuously. Held charge does not decay, only abandoned charge
+does. The impulse form gave weights of 0.07-0.24 through the night against a
+15:00 peak - about 0.05 K of pre-cooling - and only ramped up mid-morning, by
+which time the rising load has eaten the plant's spare capacity. Overnight is
+the ONLY time this house has spare capacity, so that is worse than the flat sum
+it replaced.
+
+Corrected to a **lead horizon**: full weight within `2 * tau_fast` (12.7 h),
+tapering with `tau_fast` beyond. Both from the identified parameters, neither
+hand-picked. Against a 15:00 peak the weight is 1.00 from 06:00, 0.95 at 02:00,
+0.51 at 22:00 and 0.27 at 18:00 the previous evening - the delta ramps in
+through the evening and is at full strength for the whole night. What this buys
+over a flat sum is a horizon at all: excess two days out no longer demands
+pre-cooling tonight.
+
+Both wrong forms are pinned by mutation-verified tests (flat weights, and the
+impulse decay) in `tests/test_optimizer_leadtime.py`.
 
 ### Found while testing: solar, not air temperature, breaks the budget
 
