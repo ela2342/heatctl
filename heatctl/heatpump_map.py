@@ -71,6 +71,20 @@ WRITABLE = [
     Reg(0x0092, "water_temp_compensation", 1.0, "K", writable=True,
         lo=-5, hi=15, signed=True, device_class="temperature"),
     Reg(0x00C4, "freq_min_hz", 1.0, "Hz", writable=True, lo=30, hi=120),
+    # The silent-mode frequency caps. PURPOSE-BUILT ceilings, mode-specific, and
+    # the unit's own feature - so every protection it has stays in play, unlike
+    # taking over the frequency directly. R32 is the cooling one.
+    Reg(0x00EF, "silent_max_freq_heating_hz", 1.0, "Hz", writable=True,
+        lo=30, hi=120),
+    Reg(0x00F1, "silent_max_freq_cooling_hz", 1.0, "Hz", writable=True,
+        lo=30, hi=120),
+    # Powerful mode turns out to be a +5 Hz TRIM, not a cap release. That is why
+    # clearing it on 2026-07-29 had no measurable effect, and why the claim that
+    # it capped the compressor was withdrawn.
+    Reg(0x00F0, "powerful_freq_boost_cooling_hz", 1.0, "Hz", writable=True,
+        lo=-30, hi=30, signed=True),
+    Reg(0x00F4, "silent_max_fan_cooling", 1.0, None, writable=True,
+        lo=0, hi=1000),
     Reg(0x00C5, "freq_max_hz", 1.0, "Hz", writable=True, lo=30, hi=120),
     Reg(0x0101, "pump_operation_mode", writable=True, lo=0, hi=1),
     Reg(0x0102, "pump_cycle_min", 1.0, "min", writable=True, lo=1, hi=120),

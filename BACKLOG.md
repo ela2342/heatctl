@@ -422,6 +422,56 @@ inlet/outlet straight lengths exist between pump outlet and manifold input.
       wrong criterion the night before a 37 °C day.
 
 
+### Options for reducing compressor output, ranked
+
+Read out of the full register map 2026-07-30, after R13 tested negative.
+
+**Incidental finding that settles an earlier question:**
+`0x00F0` **R31 "Frequency increase of Powerful Cooling Mode" = ±30 Hz range,
+default +5.** Powerful mode is a **+5 Hz trim**, not a cap release. That is why
+clearing it had no measurable effect, and it independently confirms the
+withdrawal of that claim — there was never a large effect to observe.
+
+**A — silent cooling mode. RECOMMENDED.**
+
+| addr | register | range | default |
+|---|---|---|---|
+| `0x0001` bit 5 | silent mode | — | off |
+| `0x00F1` | **R32 Max Frequency of Silent Cooling Mode** | 30–120 Hz | **70** |
+| `0x00F4` | D09 Max Wind Speed of Silent Mode in Cooling | 0–1000 | 60 |
+
+Purpose-built, mode-specific, and the unit's own feature — so every protection
+and every piece of modulation logic stays in play. Two writes, both trivially
+reversible, and unlike R13 this register's *name* says it caps frequency in
+cooling specifically.
+
+Arithmetic: at R32 = 45 Hz against the 80 Hz observed, output roughly halves, so
+the 4.5 K spread should fall to about 2.5 K. The floor becomes 16.0 + 2.5 = 18.5
+against a 19.6 running ceiling — **the window opens for the first time today.**
+That is the whole point; peak capacity is traded for a window that exists.
+
+**B — R25–R28 upper limits of frequency adjustment** (`0x00CC`–`0x00CF`,
+0–125 Hz, all at 125). ⚠️ **Ambiguous, do not touch first:** R21–R24, the
+*lower* limits, are ALSO 125, which is a degenerate range and suggests 125 is a
+"disabled" sentinel rather than an active ceiling. Worth understanding, not
+worth guessing at.
+
+**C — the frequency ladder R00–R11** (`0x00B8`–`0x00C3`, defaults ending 75, 80,
+85, 90). Rewrites the unit's own staging table rather than a limit it consults,
+so anything keyed to those steps moves too. More invasive; keep as a fallback.
+
+**D — manual frequency** (`0x00B7`, 15–120, plus `0x0000` bit 2). Takes the
+unit's modulation out of the loop entirely: maximum control, minimum protection,
+and heatctl would then owe the plant a capacity controller it does not have.
+Last resort.
+
+**Why any of this matters**, restated because it is the crux: at a 15.0 °C dew
+point and a 4.5 K spread the minimum safe setpoint is 20.5 while the maximum
+runnable one is 19.6. No setpoint satisfies both, so the plant cannot cool
+safely at all. Spread is the only variable in reach, and frequency is what sets
+spread.
+
+
 ### R13 TEST RESULT: it does not bind. Clean negative.
 
 Written 2026-07-30 11:03, observed 11:22–11:25.

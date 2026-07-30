@@ -369,28 +369,25 @@ class SetpointController:
             # that, which is why the earlier attempt to tune one was withdrawn.
             if supply_limit is not None and self._spread_est is not None:
                 lo = max(lo, supply_limit + self._spread_est)
-            # THE PREDICTIVE FLOOR MUST NOT BE ALLOWED TO STOP THE PLANT.
+            # NO CAP HERE. A cap at `return water - restart differential` was
+            # tried on 2026-07-30 and REVERTED the same hour: it let the setpoint
+            # sit low enough that supply fell to 15.3 against a 16.0 limit, and
+            # the hard guard then closed the valves - but only `hk01` and `hk02`
+            # have actuators. The other eight circuits are open pipe and cannot
+            # close, so cold water below the dew point kept flowing into the slab
+            # through them, condensing inside it invisibly. That is exactly the
+            # failure this whole guard exists to prevent.
             #
-            # `running_ceiling` is `return water - restart differential`. Above
-            # it the unit will not start at all, because P01 (0x008D) is pinned
-            # at its 2 K minimum. The floor above is a HEURISTIC over a decaying
-            # MAXIMUM spread, so after a hard run it predicts a floor for a
-            # frequency the plant will not be at once the error is small - and
-            # that self-defeating estimate then pushes the setpoint past the
-            # ceiling and the machine idles.
+            # The lesson is not about the cap. It is that **the valve guard is
+            # not effective protection while eight of ten circuits cannot be
+            # closed**, so the SETPOINT is the only real control over what
+            # reaches the slab, and it must stay above limit + spread even when
+            # that means the compressor will not run.
             #
-            # Measured three times on 2026-07-30: run hard -> spread 4.5 K ->
-            # floor 21 -> recovery lands on 21 -> 21 exceeds a 19.6 ceiling ->
-            # compressor off -> house warms -> larger error -> runs hard again.
-            # A closed loop, and it cost the overnight pre-charge and most of a
-            # 38 degC morning.
-            #
-            # Capping it does NOT weaken safety. The real protection is
-            # Safety.apply closing valves on MEASURED supply below the limit, on
-            # the manifold PT1000, in a different module. That still fires. What
-            # is given up is a prediction that erred toward doing nothing.
-            if running_ceiling is not None:
-                lo = min(lo, max(self.cooling_min_c, running_ceiling))
+            # The resulting corner is genuine: at a 15.0 dew point and a
+            # measured 4.5 K spread the minimum safe setpoint is 20.5 while the
+            # maximum runnable one is 19.6. No setpoint satisfies both. Reducing
+            # the SPREAD is the only exit; see BACKLOG.
             if dew_point is not None:
                 # Heuristic only - P04 targets RETURN water, so this cannot
                 # guarantee the water reaching the slab is safe. The measured
