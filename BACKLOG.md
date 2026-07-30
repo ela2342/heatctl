@@ -422,6 +422,90 @@ inlet/outlet straight lengths exist between pump outlet and manifold input.
       wrong criterion the night before a 37 °C day.
 
 
+### TIME CONSTANTS: the real eigenvalues are 55 h and 3.4 h, not 5.2 and 8.4
+
+Computed 2026-07-30. **This corrects a figure quoted repeatedly through the day.**
+`BuildingParams.time_constants_h()` returns PER-NODE constants — C over the sum of
+that node's conductances — and its own docstring says they are "not the system
+eigenvalues". They were nevertheless used all day as though they were.
+
+| | slow mode | fast mode |
+|---|---|---|
+| true coupled eigenvalues | **55.2 h** | **3.4 h** |
+| per-node figures quoted instead | (8.4 h "slab") | (5.2 h "air") |
+
+**The slow mode, ~55 h, is the whole building drifting against outdoor.** It is
+almost insensitive to the badly-known parameter: 52.8–58.9 h across a sixfold
+range of `ua_sa`. So it is trustworthy, and it means the house integrates outdoor
+conditions over **two and a half days**, not hours.
+
+**The fast mode, ~3.4 h, is air and slab equilibrating with each other.** It is
+directly proportional to `ua_sa` and therefore soft: 6.2 h at 500 W/K, 1.2 h at
+3000.
+
+**The consequence matters more than the correction.** The fast mode is how quickly
+a charged slab discharges into the room. At 3.4 h, a slab charged at 07:00 has
+transferred most of that charge by early afternoon — roughly two time constants
+before the peak. **So overnight pre-charging helps the MORNING, not the afternoon
+peak.** The energy arithmetic (22.3 kWh of excess, 15.3 kWh/K of capacity) is
+correct but says nothing about *when* the stored coolth is released, and the
+eigenvalue says: earlier than we need it. Charging closer to the peak would be
+better, but the plant is already saturated by then. That tension is real and was
+not visible from the per-node numbers.
+
+### Provenance, per parameter — what is measured and what is guessed
+
+| quantity | value | basis |
+|---|---|---|
+| `ua_ao` heat loss | 267 W/K | **MEASURED**, corroborated twice (winter data, and the summer H estimate) |
+| `c_slab` | 8691 Wh/K | **COMPUTED** from as-built layers, 63.7 Wh/(m²K) × 136.40 m² |
+| `c_air` | 6600 Wh/K | **DERIVED** as predicted total minus slab; the total is corroborated by measurement (15,700–18,300 against 15,300 predicted) |
+| `ua_sg` slab→ground | 29 W/K | **COMPUTED** from as-built |
+| **`ua_sa` slab→air** | **1000 W/K** | **GUESSED.** EN 1264's 10.8 W/(m²K) over 136.40 m², de-rated by a third. params.yaml has said "POOR - estimated, learn this one" since it was written |
+| slow mode 55 h | — | computed; robust to the guess |
+| **fast mode 3.4 h** | — | computed; **inherits the guess entirely** |
+
+**Nothing has been identified from operating data.** The Kalman filter exists to
+learn `ua_sa` from the innovation, and its acceptance gate — two weeks of
+whiteness — has never been started. So every dynamic claim made today rests on a
+survey plus one guessed conductance.
+
+### The control time constants, for completeness
+
+| | |
+|---|---|
+| water setpoint trim | 1 K per **30 min** (D-018), and reset by every restart |
+| capacity controller raise | **10 min**; lowering immediate |
+| Möhlenhoff actuator stroke | **150 s** |
+| fan coil response | **seconds** — the one fast actuator |
+| heat pump config poll | 300 s |
+| forecast refresh | 30 min |
+| optimizer cycle | 60 s |
+
+### ⚠️ THERE IS NO PRE-COOLING SCHEDULE. It is not time-based at all.
+
+Asked directly "when does pre-cooling start", the honest answer is that it does
+not start — **the delta is recomputed every 60 s from the excess still ahead and
+applied continuously.** There is no lead time, no ramp, and no notion of "begin
+8 h before the peak".
+
+It currently *works* overnight by accident: during the peak the delta asks for
+temperatures the saturated plant cannot deliver, so it does nothing; overnight,
+when spare capacity exists, it bites. Right behaviour, wrong reason — and it would
+misbehave on a mild night before a hot day, where the plant could overshoot the
+target with nothing to stop it but the absolute clamp.
+
+- [ ] **A lead-time-aware delta is the missing piece.** It should ramp the offset
+      in ahead of a forecast peak on the timescale the building actually
+      responds — and per the eigenvalues above, that is the 3.4 h air/slab mode
+      for delivery, not the 8 h figure used in the reasoning so far. The correct
+      lead time is therefore SHORTER than assumed, which is the opposite of what
+      was expected.
+- [ ] Validating `ua_sa` would make the fast mode trustworthy. It is the single
+      parameter that governs when stored energy arrives, and it is the one guess
+      in the set.
+
+
 ### MEASURED: the fan coil is worth ~2.5 K over slab, on identical water
 
 Prompted by the owner noticing Arbeitszimmer was comfortable, 2026-07-30 ~15:45,
