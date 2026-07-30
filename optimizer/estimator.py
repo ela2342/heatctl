@@ -98,6 +98,7 @@ class Estimator:
                                .get("stale_data_timeout_s", 300))
         self._client: aiomqtt.Client | None = None
         self._last_load_summary: str | None = None
+        self._last_delta: float | None = None
 
     # ---------- inputs ----------
 
@@ -457,6 +458,16 @@ class Estimator:
                                         str(t["precharge_k"]))
                     delta = self.setpoint_delta(
                         target, opt.get("delivery_ceiling_w", 5700.0))
+                    # LOG IT, not just publish it. This is the one number that
+                    # actually reaches the control core, and it was publish-only
+                    # - so answering "what is the optimizer asking for right
+                    # now" meant hunting an MQTT client, twice. Logged on change
+                    # only, alongside the forecast summary it derives from.
+                    if delta != self._last_delta:
+                        log.info("setpoint delta %+.2f K (target %.1f, "
+                                 "lead time %.1f h)", delta, target,
+                                 eigen_time_constants_h(self.bp)[1])
+                        self._last_delta = delta
                     await self._publish("setpoint_delta", f"{delta:.2f}")
                     if len(days) > 1:
                         n = days[1]
