@@ -422,6 +422,48 @@ inlet/outlet straight lengths exist between pump outlet and manifold input.
       wrong criterion the night before a 37 °C day.
 
 
+### R13 TEST RESULT: it does not bind. Clean negative.
+
+Written 2026-07-30 11:03, observed 11:22–11:25.
+
+| | |
+|---|---|
+| `0x00C5` R13 written | 80 → **50** |
+| R13 read back after the config poll | **50.0** — the write stuck and persisted |
+| compressor while running | **79–80 Hz** |
+
+**R13 is set to 50 and the compressor runs at 79–80 Hz. It does not cap the
+compressor**, at least not in cooling, despite `0x0001` bit 0
+(constant temperature) being ON. The register named "Upper Limit of Constant
+Temperature operating frequency" bounds some narrower function than the
+frequency the unit actually climbs to.
+
+⚠️ **Do not read anything into 79–80 versus the 85–89 seen earlier today.** The
+operating point also changed (setpoint 19 and P08 zeroed, against a much larger
+morning error), so attributing the difference to R13 would be exactly the
+phase-confounding mistake already made once with `powerful_mode`. The only sound
+conclusion from this test is the negative one: 50 is not enforced.
+
+**Remaining candidate: the frequency ladder**, `0x00B8`–`0x00C3` = R00–R11
+"Compressor Operating Frequency 1…12", defaults 30, 35, 40, 45, 55, 60, 65, 70,
+75, 80, **85, 90**. This is the table the unit appears to actually step through.
+
+- [ ] **If the spread problem is to be attacked through frequency, capping the
+      ladder's upper entries is what remains.** It is more invasive than R13:
+      it rewrites the unit's own staging table rather than a limit it consults,
+      so any protection logic keyed to those steps changes with it. Worth doing
+      deliberately, with the defaults recorded first so it is reversible:
+      `0x00C2` = 85, `0x00C3` = 90, `0x00C1` = 80, `0x00C0` = 75.
+- [ ] Also unexplained: what *does* enforce a ceiling? The unit reached 89 Hz
+      this morning and 80 Hz now, and neither matches R13. Until that is known,
+      any frequency intervention is guesswork.
+
+**P08 zeroed at the same time**, confirmed reading 0.0. The +1 K
+outdoor-dependent correction that had been shifting the effective target
+underneath every setpoint is gone, so what heatctl commands is now what the unit
+aims at.
+
+
 ### Read the frequency-limit registers. R13 does not appear to bind.
 
 Named `0x0001`, `0x008D`, `0x0092`, `0x00C4`, `0x00C5` in the register map so they
