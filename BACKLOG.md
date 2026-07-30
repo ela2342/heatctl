@@ -422,6 +422,51 @@ inlet/outlet straight lengths exist between pump outlet and manifold input.
       wrong criterion the night before a 37 °C day.
 
 
+### Read the frequency-limit registers. R13 does not appear to bind.
+
+Named `0x0001`, `0x008D`, `0x0092`, `0x00C4`, `0x00C5` in the register map so they
+could be read at all — they had been in the device the whole time, unnamed and
+therefore invisible. Measured 2026-07-30:
+
+| register | value | documented |
+|---|---|---|
+| `0x00C5` R13 upper limit, constant-temp operating freq | **80 Hz** | default 80 |
+| `0x00C4` R12 lower limit | **30 Hz** | default 30 |
+| `0x008D` P01 restart temperature difference | **2 K** | min 2 — at the floor |
+| `0x0001` bit 0 constant temperature | **ON** | — |
+| `0x0092` P08 water temperature compensation | **+1 K** | −5…15 |
+
+**The contradiction: constant-temperature mode is ON and R13 is 80, yet the
+compressor was measured at 85 and 89 Hz this morning.** R13 therefore does not
+cap what its name suggests, at least not in cooling.
+
+**The likely explanation is the frequency LADDER, not the limit pair.**
+`0x00B8`–`0x00C3` hold R00–R11 "Compressor Operating Frequency 1…12" with
+defaults 30, 35, 40, 45, 55, 60, 65, 70, 75, 80, **85, 90**. The observed 85 Hz is
+exactly R10 and 89 is within a hair of R11. So the unit steps that ladder and
+reaches its top two entries, which sit *above* R13 — meaning R12/R13 bound some
+narrower "constant temperature operation" function rather than the ladder the
+unit actually climbs.
+
+**This is inference, not documented behaviour, and should be tested in the
+cheapest order:**
+
+- [ ] **Write R13 = 50 and observe.** One register, documented purpose,
+      trivially reversible. If the compressor caps at 50, the question is
+      answered and the spread problem has a one-register fix. If it still
+      reaches 85, R13 provably does not bind and the ladder is the lever.
+- [ ] Only then consider rewriting the ladder's top entries
+      (`0x00C2`, `0x00C3`, and downward as needed). That changes the unit's own
+      staging table, so it is the more invasive option and should not be first.
+
+⚠️ **P08 is NOT zero — it is +1 K.** Believed disabled; it is not. So there is an
+outdoor-dependent correction shifting the effective target by a kelvin
+underneath every setpoint heatctl writes, which also means the setpoint we
+command is not exactly what the unit aims at. Small, but it is a second writer
+on the quantity this whole exercise is about, and it was invisible until the
+register was named. Decide deliberately whether to zero it.
+
+
 ### THE OPERATING WINDOW IS ~0.5 K WIDE. This explains everything.
 
 Found 2026-07-30 in `docs/PW58321_MODBUS.local.md`, which holds the **complete**

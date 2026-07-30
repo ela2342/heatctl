@@ -61,6 +61,17 @@ WRITABLE = [
         device_class="temperature"),
     Reg(0x0091, "setpoint_heating", 1.0, "°C", writable=True, lo=15, hi=50,
         device_class="temperature"),
+    # Added 2026-07-30. These were in the register map all along but unnamed,
+    # so nothing could read them - which is how the restart dead zone stayed
+    # invisible while it dictated the plant's behaviour. Naming them here makes
+    # them readable as entities and writable by name, with range checks.
+    Reg(0x0001, "control_flags_1", writable=True),
+    Reg(0x008D, "restart_diff_c", 1.0, "K", writable=True, lo=2, hi=18,
+        device_class="temperature"),
+    Reg(0x0092, "water_temp_compensation", 1.0, "K", writable=True,
+        lo=-5, hi=15, signed=True, device_class="temperature"),
+    Reg(0x00C4, "freq_min_hz", 1.0, "Hz", writable=True, lo=30, hi=120),
+    Reg(0x00C5, "freq_max_hz", 1.0, "Hz", writable=True, lo=30, hi=120),
     Reg(0x0101, "pump_operation_mode", writable=True, lo=0, hi=1),
     Reg(0x0102, "pump_cycle_min", 1.0, "min", writable=True, lo=1, hi=120),
     Reg(0x010B, "pump_delta_t", 1.0, "K", writable=True, lo=2, hi=30),
@@ -109,6 +120,7 @@ CONTROL_BITS = {
     (0x0000, 0): "power",                    # NOT the water pump - see docs
     (0x0000, 2): "manual_frequency",
     (0x0000, 4): "pump_non_stop",            # C01
+    (0x0001, 0): "constant_temperature",   # gates whether R12/R13 bind at all
     (0x0001, 4): "powerful_mode",
     (0x0001, 5): "silent_mode",
     (0x0002, 1): "vacation_mode",
