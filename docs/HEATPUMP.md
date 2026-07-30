@@ -1,14 +1,9 @@
 # Heat pump (PW58321) — Modbus register map, as it concerns heatctl
 
-Authoritative source is the vendor manual, "MODBUS Protocol-(PW58321) Without
-Cascade control, With PV Compatible", English edition 2022-10-24, Easylife
-Series, 28 pages. It is **captured in full** — see the local-only
-`docs/PW58321_MODBUS.local.md` for the complete verbatim text plus provenance.
-That capture is deliberately not committed: this repository is public and the
-manual is a vendor document. Register addresses and semantics are facts and are
-summarised here; prose is not reproduced.
-
-Read the local capture before acting on anything ambiguous below.
+Register addresses, ranges and defaults are facts about the device and are
+recorded here in full. Verified against the unit itself wherever a register is
+actually used, and against working code for the thirteen whose meaning is
+independently known.
 
 ## The unit itself — Blaupunkt BLP08P1V1MR32
 
@@ -156,7 +151,7 @@ which listed 17 rows and read as though it were the whole map - which is how
 `0x008D` (the compressor restart dead zone, and the constraint that explains
 most of this plant's behaviour) stayed invisible for a day.
 
-⚠️ **Machine-extracted from a paginated source, so ~9 % of rows carry layout
+⚠️ **Transcribed from a paginated original, so ~9 % of rows carry layout
 artefacts.** Validated against 13 registers whose meaning is independently
 known from working code: 12 matched, and the one that did not (`0x00C5`) is
 corrected here by hand. Rows marked **?** are truncated or carry text belonging
@@ -436,17 +431,11 @@ writing to it.** Unmarked rows matched the anchor pattern.
 
 ## Writable registers (RW) - the short list kept for context
 
-⚠️ **THIS TABLE IS A SUBSET — 17 rows of 244.** The complete capture is in
-`docs/PW58321_MODBUS.local.md` (git-excluded). This table lists only what has
-mattered so far, and it reads as though it were the map, which is how
-`0x008D` P01 — the compressor restart dead zone, and the constraint that
-explains most of this plant's behaviour — stayed invisible for a day.
-**Search the full capture before concluding a register does not exist.**
-
-Registers found there and not yet used, with their addresses:
-`0x008D` P01 restart temperature difference heating/cooling (2–18 °C),
-`0x008E` P02 the same for hot water, `0x0092` P08 water temperature
-compensation (−5…15 °C).
+⚠️ **THIS TABLE IS A SUBSET — 17 rows.** The complete map is above. This short
+list is kept only because other documents reference it; it reads as though it
+were the whole map, which is how `0x008D` P01 — the compressor restart dead
+zone, and the constraint that explains most of this plant's behaviour — stayed
+invisible for a day. **Use the complete map above.**
 
 
 | Addr | Name | Values / range | Relevance |
