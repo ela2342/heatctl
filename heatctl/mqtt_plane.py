@@ -327,6 +327,14 @@ class ControlPlane:
         # against leaving water it is the whole cooling story on one axis.
         await sensor("cooling_supply_limit", "Cooling supply limit",
                      "cooling_supply_limit", "°C", "temperature")
+        # The pre-conditioning delta ACTUALLY IN FORCE, after staleness and the
+        # absolute clamp. Discovered because it was invisible: layer 2 published
+        # a number, layer 1 consumed it, and nothing showed whether the two
+        # agreed - which made "will it do the right thing tonight?" unanswerable
+        # without reading code. A control input that cannot be observed cannot be
+        # trusted.
+        await sensor("setpoint_delta_active", "Pre-conditioning delta",
+                     "setpoint_delta/active", "K")
 
         # --- house demand / source engagement (diagnostic) ---
         # What heatctl is holding the heat pump's power at. It is a

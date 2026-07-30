@@ -204,42 +204,77 @@ def test_the_optimizer_honours_the_same_mqtt_env_overrides_as_layer_1(tmp_path):
 
 # ---------- the pre-conditioning delta layer 1 consumes ----------
 
-def _days(**over):
-    d = {"day": "2026-07-30", "peak_kw": 8.9, "cooling_kwh": 94.0,
-         "free_kwh": 16.0, "hours_over": 9, "store_kwh": 22.3,
-         "precharge_k": 1.46}
-    d.update(over)
-    return d
+import datetime as _dt
+
+from optimizer.weather import ForecastPoint as _FP
 
 
-def test_a_cooling_day_gives_a_NEGATIVE_delta(sp_est=None):
-    """`active = dial + delta`, so pre-cooling must be negative. A sign error
-    here would pre-HEAT the house before a 38 degC afternoon, which is the
-    single most expensive mistake available."""
+def _est_with_forecast(loads_ahead):
+    """An estimator whose forecast is `loads_ahead` hours of given outdoor temps,
+    starting at the current hour. Solar is zero so the load is fabric-only and
+    the arithmetic stays checkable by hand."""
     est = _estimator()
-    assert est.setpoint_delta([_days()]) == -1.46
+    est.params["solar"] = {"albedo": 0.2, "facades": []}
+    from optimizer.solar import SolarModel
+    est.solar = SolarModel([], 52.0, 13.0)
+    now = _dt.datetime.now(_dt.timezone.utc).replace(
+        minute=0, second=0, microsecond=0)
+
+    class _W:
+        points = [_FP(time=(now + _dt.timedelta(hours=i)).isoformat()[:19],
+                      temperature=t, raw_temperature=t, dew_point=10.0,
+                      cloud_cover=100.0, wind_speed=5.0, shortwave=0.0)
+                  for i, t in enumerate(loads_ahead)]
+    est.weather = _W()
+    return est
 
 
-def test_a_heating_dominated_day_gives_a_POSITIVE_delta():
-    """The winter case: pre-charge before a storm drops the outdoor
-    temperature, which means aiming WARMER than the dial."""
+def test_a_hot_window_ahead_gives_a_NEGATIVE_delta():
+    """`active = dial + delta`, so pre-cooling is negative. A sign error here
+    would pre-HEAT the house before a hot afternoon, the most expensive mistake
+    available."""
+    # Ceiling deliberately low so the fabric-only load exceeds it: at 45 degC
+    # with no solar the load is 5.55 kW, just UNDER the real 5.7 kW ceiling, so
+    # using the real one would test nothing. Real days exceed it mainly via
+    # solar, which this synthetic forecast has none of.
+    est = _est_with_forecast([45.0] * 12)
+    assert est.setpoint_delta(24.0, 2000.0) < 0
+
+
+def test_a_cold_window_ahead_gives_a_POSITIVE_delta():
+    """The winter case: pre-charge before a storm drops the outdoor temperature,
+    which means aiming WARMER than the dial."""
+    est = _est_with_forecast([-25.0] * 12)
+    assert est.setpoint_delta(21.0, 2000.0) > 0
+
+
+def test_a_benign_window_asks_for_nothing():
+    """Zero is the common case and must stay cheap - it means the plant does
+    exactly what the occupant's dial says."""
+    est = _est_with_forecast([22.0] * 12)
+    assert est.setpoint_delta(22.0, 2000.0) == 0.0
+
+
+def test_only_hours_AHEAD_are_counted():
+    """REGRESSION. The forecast window begins at MIDNIGHT, so the earlier
+    calendar-day version kept seeing "today has 9 hours over the ceiling" at
+    23:00 and would have pre-cooled overnight for a day already finished -
+    measured 2026-07-30 as asking 1.44 K when the next day needed 0.28.
+    """
+    est = _est_with_forecast([22.0] * 12)      # nothing ahead needs storing
+    CEIL = 2000.0
+    now = _dt.datetime.now(_dt.timezone.utc).replace(
+        minute=0, second=0, microsecond=0)
+    # prepend twelve brutally hot hours that are already PAST
+    past = [_FP(time=(now - _dt.timedelta(hours=i + 1)).isoformat()[:19],
+                temperature=45.0, raw_temperature=45.0, dew_point=10.0,
+                cloud_cover=100.0, wind_speed=5.0, shortwave=0.0)
+            for i in range(12)]
+    est.weather.points = past[::-1] + list(est.weather.points)
+    assert est.setpoint_delta(22.0, CEIL) == 0.0, \
+        "past excess must not drive a pre-charge"
+
+
+def test_no_forecast_asks_for_nothing():
     est = _estimator()
-    d = _days(cooling_kwh=5.0, free_kwh=80.0, precharge_k=1.2)
-    assert est.setpoint_delta([d]) == +1.2
-
-
-def test_no_excess_left_today_looks_at_tomorrow():
-    """Charging the mass for a day already decided is wasted work, and with an
-    8 h slab constant 'already decided' arrives in the early afternoon."""
-    est = _estimator()
-    today = _days(hours_over=0, precharge_k=0.9)
-    tomorrow = _days(day="2026-07-31", precharge_k=2.0)
-    assert est.setpoint_delta([today, tomorrow]) == -2.0
-
-
-def test_nothing_to_store_means_exactly_the_dial():
-    """Zero is the common case and must stay cheap: it means the plant does
-    precisely what the occupant asked for."""
-    est = _estimator()
-    assert est.setpoint_delta([_days(precharge_k=0.0)]) == 0.0
-    assert est.setpoint_delta([]) == 0.0
+    assert est.setpoint_delta(24.0, 5700.0) == 0.0

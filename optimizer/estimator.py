@@ -292,35 +292,44 @@ class Estimator:
             })
         return out
 
-    def setpoint_delta(self, days: list[dict]) -> float:
+    def setpoint_delta(self, target_air: float, ceiling_w: float,
+                       hours: int = 24) -> float:
         """Signed pre-conditioning delta in K: `active = dial + delta`.
 
-        DERIVED, not chosen. `precharge_k` is the day's excess energy divided by
-        the building's thermal capacity - i.e. exactly how far below target the
-        mass has to start for the excess to land in it instead of in the room.
-        The sign follows from which way the excess runs: cooling load means aim
-        cooler, heating load means aim warmer.
+        DERIVED, not chosen: the excess energy still AHEAD of us, divided by the
+        building's thermal capacity - i.e. exactly how far below target the mass
+        has to start for that excess to land in it rather than in the room.
 
-        Uses TODAY's figure while there are still hours over the ceiling left to
-        absorb, and TOMORROW's once today is decided. Charging the mass for a
-        day that is already over is wasted work, and with an 8 h slab constant
-        "already over" arrives in the early afternoon.
+        **Forward-looking from the current hour, and that is the whole point.**
+        The earlier version worked off calendar-day totals from `load_forecast`,
+        and the forecast window begins at MIDNIGHT - so "today still has 9 hours
+        over the ceiling" stayed true at 23:00, and the delta would have
+        pre-cooled overnight for a day that was already finished. Measured
+        2026-07-30: that would have asked for 1.44 K when the next day needed
+        0.28 K, over-cooling the house by more than a kelvin for nothing.
 
-        Returns 0.0 when nothing needs storing, which is the common case and
-        must stay cheap - a delta of zero means the plant does exactly what the
-        occupant's dial says.
+        Summing forward also removes the day-boundary logic entirely. Excess
+        does not care which calendar day it falls in; the mass has to absorb
+        whatever is coming.
         """
-        if not days:
+        if not self.weather or not self.weather.points:
             return 0.0
-        today = days[0]
-        # Still worth charging today only if excess remains ahead of us.
-        target = today if today["hours_over"] > 0 else (
-            days[1] if len(days) > 1 else today)
-        pre = target.get("precharge_k", 0.0)
-        if pre <= 0.0:
+        now = dt.datetime.now(dt.timezone.utc).replace(
+            minute=0, second=0, microsecond=0)
+        ahead = [pt for pt in self.weather.points
+                 if dt.datetime.fromisoformat(pt.time).replace(
+                     tzinfo=dt.timezone.utc) >= now][:hours]
+        if not ahead:
             return 0.0
-        # Cooling-dominated day -> aim cooler; heating-dominated -> aim warmer.
-        return -pre if target["cooling_kwh"] >= target["free_kwh"] else +pre
+        loads = [net_load_w(self.bp, target_air, pt.temperature, self.t_ground,
+                            q_sol=self.solar_w(pt), q_int=self.q_int)
+                 for pt in ahead]
+        cool_excess = sum(max(0.0, x - ceiling_w) for x in loads) / 1000.0
+        heat_excess = sum(max(0.0, -x - ceiling_w) for x in loads) / 1000.0
+        cap = (self.bp.c_slab_wh + self.bp.c_air_wh) / 1000.0
+        if cool_excess >= heat_excess:
+            return 0.0 if cool_excess <= 0 else -round(cool_excess / cap, 2)
+        return 0.0 if heat_excess <= 0 else round(heat_excess / cap, 2)
 
     # ---------- MQTT, status only ----------
 
@@ -420,7 +429,8 @@ class Estimator:
                                         str(t["cooling_kwh"]))
                     await self._publish("today/precharge_k",
                                         str(t["precharge_k"]))
-                    delta = self.setpoint_delta(days)
+                    delta = self.setpoint_delta(
+                        target, opt.get("delivery_ceiling_w", 5700.0))
                     await self._publish("setpoint_delta", f"{delta:.2f}")
                     if len(days) > 1:
                         n = days[1]
