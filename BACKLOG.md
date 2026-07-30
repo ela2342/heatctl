@@ -2794,3 +2794,77 @@ constraint binds.**
       for long-term reproducibility
 - [ ] Keep docs/HARDWARE.md current: every terminal, wire and register
 
+## ua_sa identified, and the lead time it implies (2026-07-30)
+
+`ua_sa` was a **guess of 1000 W/K that sat above a directly measurable upper
+bound** for as long as nobody measured it. Identified from operating data at
+16:53 (plant in steady operation, manifold dT 2.10 K at 1.24 m3/h = 3020 W,
+room mean 25.37 against water mean 19.20):
+
+    UA(room -> water) = 3020 / 6.17 = 490 W/K
+
+No flow split is needed for that figure, which is why it is the one adopted:
+the 2-state model has no coil node, so every watt leaving the rooms into water
+passes through `ua_sa` by construction. Stripping the coil out by assuming it
+takes a proportional share of flow puts the slab alone at 256-355 W/K, but that
+rests on a flow split nobody has measured.
+
+**Consequence: the fast coupled mode is 6.35 h, not the 3.4 h recorded earlier
+today.** That REVERSES the conclusion recorded alongside it. The note saying
+"the correct lead time is therefore SHORTER than assumed, which is the opposite
+of what was expected" was itself wrong - it was arithmetic on a guessed
+parameter. With a 6.3 h fast mode an overnight charge does survive to the
+afternoon peak, so overnight pre-charging is vindicated after all.
+
+Two errors in a row here, in opposite directions, both from quoting a number
+without asking what it rested on: first per-node time constants quoted as system
+eigenvalues, then correct eigenvalues computed from a parameter that was never
+measured. `optimizer/model.eigen_time_constants_h` now exists so the modes are
+never hand-derived again, and `tests/test_optimizer_leadtime.py` pins both.
+
+Caveats on the 490, none of which move it by more than about 20 %: the assumed
+flow carries +-10 % systematic (COP-map-derived, no heat meter - the MULTICAL
+403 retires this), the room mean covers 3 of 7 rooms, water mean stands in for
+the slab node temperature, and the plant was not strictly at steady state.
+Re-identify once the heat meter is in.
+
+### The lead time is now derived, not scheduled
+
+The delta was applied flat: recomputed every 60 s from the excess still ahead,
+with no notion of WHEN that excess arrives. A hot spell twenty hours out
+demanded exactly as much pre-cooling as one two hours out. It only behaved
+overnight by luck - the plant is saturated during the peak and so ignores the
+delta then.
+
+Each forecast hour is now weighted by `exp(-dt / tau_fast)`, because charge put
+into the mass now decays toward the room at the fast mode: that is precisely
+the fraction of today's pre-charge still available when the excess lands. No
+schedule and no tuning constant - `tau` comes from the identified parameters
+(excess 3 h out counts 0.62, 12 h out 0.15, 24 h out 0.02).
+
+### Found while testing: solar, not air temperature, breaks the budget
+
+At 38 degC outdoor with no sun the house needs **4.0 kW against a 5.7 kW
+plant** - it fits. It is the ~3 kW of glazing gain that pushes it over. Worth
+holding onto when reasoning about hot days: the air temperature in the forecast
+is not the thing to watch.
+
+### Open: opaque-envelope solar is not modelled at all
+
+`solar.py` computes per-facade gain through GLAZING only. `ua_ao` is driven by
+air temperature, so there is no sol-air term - the roof and sunlit walls are
+treated as if they were shaded. Rough size at solar noon (alpha 0.6, h_o 25):
+
+    roof   UA 24.0 W/K, sol-air +17.2 K  ->  413 W
+    wall S UA  7.7 W/K, sol-air +10.8 K  ->   83 W
+    wall W UA  9.5 W/K, sol-air +12.0 K  ->  114 W
+                                    total ~610 W
+
+About 12 % of the peak load, systematically biasing the peak prediction LOW,
+and concentrated in the afternoon (the W wall peaks late). The roof is the bulk
+of it and is nearly massless (41.8 kg/m2 timber), so it arrives at the air node
+with little lag. Two things cut it: the flat-roof PV shades part of the roof,
+and at night the same roof radiates to the sky for about -94 W of free cooling
+that is equally unmodelled. `alpha` for the trapezoidal sheet is unknown and is
+the dominant uncertainty - worth a look at the actual roof colour before
+implementing.

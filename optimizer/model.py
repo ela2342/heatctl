@@ -31,6 +31,7 @@ Wh/K the building survey quotes. The conversion happens once, here.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from .kalman import Matrix, expm
@@ -75,6 +76,36 @@ class BuildingParams:
         """
         return ((self.c_air / (self.ua_ao + self.ua_sa)) / 3600.0,
                 (self.c_slab / (self.ua_sa + self.ua_sg)) / 3600.0)
+
+
+def eigen_time_constants_h(p: BuildingParams) -> tuple[float, float]:
+    """(slow, fast) time constants in hours - the TRUE coupled modes.
+
+    Use these, not `BuildingParams.time_constants_h()`. That returns per-node
+    figures which ignore the coupling entirely, and they were quoted as system
+    behaviour throughout 2026-07-30 - "the 8 h slab constant" - when the actual
+    modes at the parameters of the day were 55 h and 3.4 h. Neither per-node
+    number was either eigenvalue.
+
+    The slow mode is the building drifting against outdoor and is insensitive to
+    `ua_sa`; the fast mode is air and slab equilibrating with each other and is
+    directly proportional to it. **The fast mode is the one that matters for
+    pre-conditioning**, because it is the rate at which stored charge reaches
+    the room - i.e. how long a charge put in overnight survives to the
+    afternoon.
+    """
+    a, _ = continuous(p)
+    tr = a[0][0] + a[1][1]
+    det = a[0][0] * a[1][1] - a[0][1] * a[1][0]
+    disc = tr * tr - 4.0 * det
+    if disc < 0.0:                      # complex pair: no real time constants
+        raise ValueError("oscillatory thermal model - check the parameters")
+    r = math.sqrt(disc)
+    l1, l2 = (tr + r) / 2.0, (tr - r) / 2.0
+    if l1 >= 0.0 or l2 >= 0.0:
+        raise ValueError("unstable thermal model - check the parameters")
+    t1, t2 = -1.0 / l1 / 3600.0, -1.0 / l2 / 3600.0
+    return max(t1, t2), min(t1, t2)
 
 
 def continuous(p: BuildingParams) -> tuple[Matrix, Matrix]:

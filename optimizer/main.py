@@ -17,6 +17,7 @@ import sys
 import yaml
 
 from .estimator import Estimator
+from .model import eigen_time_constants_h
 
 log = logging.getLogger("optimizer")
 
@@ -55,8 +56,11 @@ def load(config_path: str, params_path: str) -> tuple[dict, dict]:
 async def amain(config_path: str, params_path: str) -> None:
     cfg, params = load(config_path, params_path)
     est = Estimator(cfg, params)
-    ta, ts = est.bp.time_constants_h()
-    log.info("model time constants: air %.1f h, slab %.1f h", ta, ts)
+    slow, fast = eigen_time_constants_h(est.bp)
+    # The COUPLED modes, not the per-node figures this used to print. The fast
+    # one is the pre-conditioning lead time and is worth seeing at every start.
+    log.info("model modes: slow %.1f h, fast %.2f h (pre-conditioning lead time)",
+             slow, fast)
     if est.weather is None:
         log.warning("no coordinates configured - running without forecast; "
                     "set HEATCTL_LATITUDE / HEATCTL_LONGITUDE")

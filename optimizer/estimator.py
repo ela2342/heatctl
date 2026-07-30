@@ -24,6 +24,7 @@ import asyncio
 import contextlib
 import datetime as dt
 import json
+import math
 import logging
 import time
 from dataclasses import dataclass, field
@@ -33,7 +34,7 @@ import aiomqtt
 from .kalman import KalmanFilter, eye
 from .model import (N_INPUTS, U_GROUND, U_HEAT, U_INTERNAL, U_OUTDOOR,
                     U_SOLAR, BuildingParams, discretise, heat_demand_w,
-                    net_load_w)
+                    eigen_time_constants_h, net_load_w)
 from .solar import SolarModel
 from .weather import WeatherSource
 
@@ -311,6 +312,10 @@ class Estimator:
         Summing forward also removes the day-boundary logic entirely. Excess
         does not care which calendar day it falls in; the mass has to absorb
         whatever is coming.
+
+        **And each future hour is discounted by what survives until then**, at
+        the fast coupled mode of the building. See the comment on the sum below;
+        that discount is what gives the delta a lead time at all.
         """
         if not self.weather or not self.weather.points:
             return 0.0
@@ -321,11 +326,32 @@ class Estimator:
                      tzinfo=dt.timezone.utc) >= now][:hours]
         if not ahead:
             return 0.0
-        loads = [net_load_w(self.bp, target_air, pt.temperature, self.t_ground,
-                            q_sol=self.solar_w(pt), q_int=self.q_int)
-                 for pt in ahead]
-        cool_excess = sum(max(0.0, x - ceiling_w) for x in loads) / 1000.0
-        heat_excess = sum(max(0.0, -x - ceiling_w) for x in loads) / 1000.0
+        # DISCOUNT BY WHAT SURVIVES. Charge put into the mass now decays toward
+        # the room at the FAST coupled mode, so excess arriving in dt hours is
+        # only worth exp(-dt/tau) of pre-charge today. That is the lead time,
+        # and it falls out of the physics rather than being a scheduled
+        # "start N hours before the peak" - there is no schedule to tune.
+        #
+        # Before this, the delta was applied flat and continuously. It happened
+        # to work overnight only because the plant is saturated during the peak
+        # and so ignores it, and would have overshot on a mild night before a hot
+        # day. It also had no way to distinguish excess arriving in two hours
+        # from excess arriving in twenty.
+        #
+        # tau comes from the identified `ua_sa`, not a guess: at 490 W/K the
+        # fast mode is ~6.3 h, so excess a day out is discounted to ~2 % and
+        # excess this evening counts almost fully.
+        _, tau_h = eigen_time_constants_h(self.bp)
+        loads, weights = [], []
+        for i, pt in enumerate(ahead):
+            loads.append(net_load_w(self.bp, target_air, pt.temperature,
+                                    self.t_ground, q_sol=self.solar_w(pt),
+                                    q_int=self.q_int))
+            weights.append(math.exp(-i / tau_h))
+        cool_excess = sum(max(0.0, x - ceiling_w) * w
+                          for x, w in zip(loads, weights)) / 1000.0
+        heat_excess = sum(max(0.0, -x - ceiling_w) * w
+                          for x, w in zip(loads, weights)) / 1000.0
         cap = (self.bp.c_slab_wh + self.bp.c_air_wh) / 1000.0
         if cool_excess >= heat_excess:
             return 0.0 if cool_excess <= 0 else -round(cool_excess / cap, 2)

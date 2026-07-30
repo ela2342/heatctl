@@ -20,13 +20,29 @@ building:
   # matter for a 2-state model; it will matter for per-room work.
   ua_ao: 267.2          # W/K   confidence: good in total, poor in split
 
-  # Slab core -> room air. NOT a survey figure. EN 1264's upward surface
-  # coefficient of ~10.8 W/(m^2 K) over 136.40 m^2 would give ~1470 W/K, but
-  # that is the floor SURFACE to air, and what this model needs is the pipe
-  # plane to air - the screed cover above the pipes is a series resistance
-  # that the surface figure excludes. 1000 W/K is that number de-rated by
-  # roughly a third.
-  ua_sa: 1000.0         # W/K   confidence: POOR - estimated, learn this one
+  # Room air -> water. IDENTIFIED FROM OPERATING DATA 2026-07-30, replacing a
+  # guess of 1000 that was above a measured upper bound.
+  #
+  # Measured at 16:53 with the plant in steady operation: manifold dT 2.10 K at
+  # 1.24 m3/h gives 3020 W, against a room mean of 25.37 degC and a mean water
+  # temperature of 19.20 - so 3020 / 6.17 = 490 W/K.
+  #
+  # No flow-split assumption is needed for this figure, which is why it is the
+  # one used. The 2-state model has no separate coil node, so ALL heat leaving
+  # the rooms into water passes through this conductance by construction. (For
+  # reference, stripping the coil by assuming it takes a proportional share of
+  # flow puts the slab alone at 256-355 W/K, but that rests on a flow split
+  # nobody has measured.)
+  #
+  # The old 1000 came from EN 1264's 10.8 W/(m2 K) surface coefficient over
+  # 136.40 m2, de-rated by a third. That reasoning was doubly wrong: it used the
+  # floor SURFACE coefficient where the model needs the path from the thermal
+  # mass, and the de-rating was invented. It sat above a directly measurable
+  # ceiling for as long as nobody measured it.
+  #
+  # Confidence: fair, roughly +-20 %. The dominant uncertainties are the assumed
+  # flow (+-10 % systematic) and a room mean taken over 3 of 7 rooms.
+  ua_sa: 490.0          # W/K   confidence: fair - IDENTIFIED, was a guess
 
   # Slab -> ground. From the as-built floor build-up.
   ua_sg: 29.0           # W/K   confidence: good
