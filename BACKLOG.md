@@ -3785,7 +3785,28 @@ Written down because they were discussed at length, agreed in principle, and
 then existed only in conversation. The owner's framing: *"maximize flow,
 maximize spread, limited only by demand and dew point."*
 
-- [ ] **A · Pin the pump at maximum flow.** NOT DONE. The unit runs its own
+- [x] **A · Pin the pump at maximum flow. DONE 2026-07-31 18:56.**
+      `pump_manual_speed_pct` (F6, 0x0107) 30 -> 100, THEN `pump_mode` (F4,
+      0x0105) 1 -> 2. That order matters: F6 was at 30 %, so switching to
+      manual first would have dropped flow to 30 % in the gap.
+      Result: pump 70 % -> 100 % at unchanged spread (2.6 K) and unchanged
+      compressor frequency (47 Hz), so m_dot_c went ~1169 -> ~1670 W/K and
+      delivered heat ~3.0 -> ~4.3 kW. No faults.
+
+      **Manual mode rather than pinning F8 (min speed) to 100** - the owner's
+      call, and the reasoning is worth keeping. F8 = 100 would corner the DeltaT
+      regulator so it has no room to move; F4 = manual turns it OFF. The
+      difference matters twice over: a cornered regulator is still running and
+      still wanting to throttle, and it is silently restored the moment anyone
+      changes F8 for an unrelated reason - a service visit, a settings restore,
+      someone chasing a flow problem. That is precisely the
+      implicit-by-constraint design D-030 exists to reject.
+      A concern about manual mode running the pump when the unit would rather
+      stop it turned out to be unfounded: **F2 (`0x0101`
+      `pump_operation_mode`) = 1, "Always open"**, governs WHETHER the pump
+      runs and is a different register. F4 only governs how fast.
+      (superseded plan follows)
+      **A · Pin the pump at maximum flow.** NOT DONE. The unit runs its own
       DeltaT loop (F4 = AUTO, F10 = 2 K) which throttles flow when we throttle
       the compressor, cancelling the throttling - observed at 70 % while
       Arbeitszimmer was nowhere near setpoint, recovering to 90 % once the
