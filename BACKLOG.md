@@ -3387,7 +3387,27 @@ rate is now observable, so that is answerable from data.
       is now removed for an entirely different and valid reason. Same edit,
       opposite justification; the justification is what mattered.
 
-- [!] **A dropout of the BINDING room silently RELAXES the condensation limit.**
+- [i] **A dropout of the binding room lowers the reference - and that is not a
+      defect to fix.** Owner, 2026-07-31: *"There's nothing to fix about the max
+      of a sensor that goes missing. We just don't know any better at this
+      point."* Correct, and it retires the "options worth weighing" below, which
+      were cleverness dressed as safety: holding a last-known value or
+      synthesising a fallback adds no information, it only makes the guess look
+      more confident.
+      The missing-sensor case is a small subset of a much larger permanent
+      blindness. **Coverage is 2 rooms of 7** (Gaestebad, Wohnzimmer). Bad, both
+      Kinderzimmer, Schlafzimmer and Diele have no humidity measurement at all -
+      and `Bad` is a bathroom, which is why "the condensation guard is BLIND to
+      showers" is already an entry on this page. `dew_point_margin_c` at 1.0 K is
+      what covers that whole class, and **sensors, not logic, are what shrink
+      it** - the Shelly H&T rollout.
+      Kept below as an explanation, because someone will one day see the limit
+      move after a restart and need to know why. The right response was
+      observability, and that is already done: `sensor.system_dew_point_source`
+      names the binding room, so a change in it is visible.
+
+  (original text, retained for the mechanism:)
+  **A dropout of the BINDING room RELAXES the condensation limit.**
       Noticed 2026-07-31: `fineoffset_wh32_245` (Arbeitszimmer) went
       `unavailable` at 11:26 - battery, most likely, since its battery sensor
       went with it while the other rtl_433 devices stayed up - and the dew point
