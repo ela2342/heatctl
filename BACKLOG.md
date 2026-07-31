@@ -3748,3 +3748,33 @@ stays on measured supply (D-031, D-032).
       limit's own drift plus a quantisation tick. Owner asked the right
       question ("wouldn't a margin of 0 be on target?"); the answer is no, and
       the reason is measurable rather than a matter of taste.
+
+- [!] **30-MINUTE OUTAGE, 2026-07-31 17:03-17:33, caused by a deploy with no
+      failure semantics.** Recorded because the cause is procedural and will
+      recur otherwise.
+      `vl_min_cooling_c` was removed from BOTH `safety.py` and `config.yaml`.
+      The deploy ran as a loose chain of commands: the code `scp` failed with a
+      single line (`scp: Connection closed`), **everything after it ran anyway**
+      - the config upload succeeded and the App rebuilt. Result: new config
+      against old code, and the controller died on startup with
+      `KeyError: 'vl_min_cooling_c'`.
+      It failed SAFE - the coupler watchdog zeroed the outputs and the NC valves
+      closed, which is the designed behaviour for a dead controller - but the
+      house got no cooling for half an hour on a warm afternoon and **nothing
+      announced it**. It was found only because the next status query returned
+      `unavailable` for everything.
+      **The lesson is not "be careful with scp".** A deploy that is a sequence
+      of independent commands has no failure semantics at all: any step may fail
+      and the rest proceed. Two of today's incidents share that shape - this
+      one, and the capacity tuning that was reported as live for hours while the
+      App ran yesterday's config.
+      Fixed: `deploy/ha-addon/deploy.sh` is `set -euo pipefail`, **verifies by
+      checksum that the upload actually arrived**, reports config drift and
+      makes you acknowledge it, waits for `started`, and greps the log for a
+      traceback before declaring success. Use it instead of hand-chaining.
+      **Still missing: nothing watches whether heatctl is alive.** The App has
+      `watchdog: false` and there is no alert on the control loop stopping. A
+      30-minute silent outage should not be possible to discover by accident.
+      Simplest fix: an HA automation on `binary_sensor.heatctl_*` going
+      unavailable, or the Supervisor's own App watchdog. Do this before the
+      next structural change.
