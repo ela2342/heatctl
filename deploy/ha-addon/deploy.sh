@@ -86,7 +86,15 @@ ssh "$HOST" 'curl -s -X POST -H "Authorization: Bearer $SUPERVISOR_TOKEN" http:/
 sleep 15
 
 say "verify it is actually running"
-log=$(ssh "$HOST" 'curl -s -H "Authorization: Bearer $SUPERVISOR_TOKEN" http://supervisor/addons/'"$SLUG"'/logs' | tail -40)
+# ONLY the current instance's log. The App's log carries the previous
+# instance's shutdown noise - asyncio prints "Task was destroyed but it is
+# pending!" with a Traceback on every restart - so a naive tail|grep flags a
+# perfectly healthy start as crashing. It did exactly that on this script's
+# second run. A deploy check that cries wolf is one you learn to ignore, which
+# is worse than not having it.
+full=$(ssh "$HOST" 'curl -s -H "Authorization: Bearer $SUPERVISOR_TOKEN" http://supervisor/addons/'"$SLUG"'/logs')
+log=$(awk '/Starting heatctl with/ {buf=""} {buf = buf $0 "\n"} END {printf "%s", buf}' <<<"$full")
+[ -z "$log" ] && log=$(tail -40 <<<"$full")
 if grep -qE 'Traceback|KeyError|ModuleNotFound' <<<"$log"; then
     echo "$log" | tail -20 >&2
     echo >&2
