@@ -2885,13 +2885,12 @@ that is equally unmodelled. `alpha` for the trapezoidal sheet is unknown and is
 the dominant uncertainty - worth a look at the actual roof colour before
 implementing.
 
-## The dew point reference was regulating on OUTDOOR air (fixed 2026-07-31)
+## No cooling overnight: Arbeitszimmer sets the limit, and a wrong fix for it (2026-07-31)
 
-**Symptom:** no cooling overnight. The compressor ran briefly around 23:00-01:00
-and then sat at 0 Hz from 01:00 to past 09:00, through the exact hours the
-optimizer was asking for pre-cooling (-0.46 to -0.50 K) and the only hours the
-plant has spare capacity and its best COP. Wohnzimmer's 0.7 K overnight fall was
-passive loss to a 19.7 degC night, not the machine.
+**Symptom.** Compressor ran briefly 23:00-01:00 then sat at 0 Hz until past
+09:00 - through exactly the hours the optimizer was asking for pre-cooling
+(-0.46 to -0.50 K) and the only hours with spare capacity and the best COP.
+Wohnzimmer's 0.7 K overnight fall was passive loss to a 19.7 degC night.
 
 **Mechanism.** The plant was stuck 0.6 K below its own restart threshold:
 
@@ -2899,49 +2898,64 @@ passive loss to a 19.7 degC night, not the machine.
     return water     22.4
     restart dead zone 2.0 -> needs return >= 23.0
 
-heatctl said so itself - `water_setpoint_saturated = on`, and
+heatctl reported this itself: `water_setpoint_saturated = on`, and
 `water_setpoint_decision = "house -3.63 K and valves at 100% - not enough
-capacity (already at the limit)"`. Ten valves open, house 3.6 K too warm,
-setpoint on the floor, compressor idle.
+capacity (already at the limit)"`.
 
-**Root cause.** `sensor.system_dew_point_reference` in Home Assistant took a
-`max()` over four temperature/humidity pairs, and the fourth was the OUTDOOR
-weather station (`fineoffset_wh32_245`). Both this repo's config.yaml and the
-helper's own consuming automation documented it as "highest INDOOR dew point,
-falling back to the outdoor station only when no indoor pair is available".
-The outdoor station was not a fallback - it was a permanent participant, and in
-summer it usually wins.
+**A WRONG DIAGNOSIS WAS SHIPPED AND REVERTED. Read this part before touching
+the dew point reference.** The HA helper takes a max() over four
+temperature/humidity pairs. The fourth, `fineoffset_wh32_245`, was assumed from
+its name to be the outdoor weather station and removed - "restoring documented
+intent". The reference fell 17.1 -> 15.7, the limit fell with it, and the
+compressor started, which looked like a clean confirmation. It was not.
 
-Measured at the moment of the fix: true indoor dew points 14.45 (Gaestebad) and
-15.69 (Wohnzimmer, window open), reference reading **16.9**.
+WH32-245 is the **Arbeitszimmer** sensor. `config.yaml` uses that exact topic as
+the room's `room_temp_topic`. Hourly means from the same night settle it:
 
-**Fix.** Outdoor pair removed from the list; it remains the `else` fallback when
-no indoor pair is available. Applied through the config-entry flow API, not by
-editing `.storage`. Effect within seconds:
+    WH32-245   26.4 26.4 25.8 25.3 25.3 25.4 25.5 25.7   <- does not swing
+    WH65B-210  22.1 18.9 17.4 17.3 19.5 20.9 22.4 24.2   <- genuinely outdoor
 
-    dewref     16.9 -> 15.7        limit    17.9 -> 16.7
-    setpoint   21.0 -> 20.0        saturated  on -> off
-    compressor  0   -> 44 Hz       (first run since 01:00)
+A sensor that does not follow the diurnal swing is indoors. With the wrong
+version live the plant drove supply toward a limit 1.4 K too low, and the
+capacity controller was actively raising frequency to push it further; measured
+margin at revert was 0.70 K against a 1.0 K target. Reverted within the hour, no
+breach.
 
-**Why this was worth ~2.4 kW.** At 1438 W/K, the 1.6 K of false headroom is
-2.4 kW on a plant whose entire ceiling is 5.7 kW. But the real cost was not
-efficiency - it was that the floor sat high enough to keep the machine below its
-restart dead zone entirely, so the capacity was not merely reduced, it was zero.
+**The lesson is not "check sensor names".** The wrong version produced exactly
+the effect that had been predicted for it - dewref down, compressor starts - and
+that agreement was taken as confirmation. It confirmed nothing: the prediction
+followed from removing ANY high-reading member of a max(), whatever it measured.
+The identity of the sensor was never tested, only its effect. The check that
+settled it - does this sensor track the outdoor diurnal swing - costs one
+history query and should have run BEFORE the change, not after a user asked an
+unrelated question about which floor a room was on.
 
-**What the fix does NOT change, deliberately.** `dew_point_margin_c` stays at
-1.0. It covers RH-sensor error propagated into dew point (+-2-3 % RH is
-+-0.5-0.9 K at these temperatures), and no amount of supply-side precision or
-finer frequency control improves how well the dew point is KNOWN. That margin
-comes down when humidity sensing improves, not before.
+**The real finding: Arbeitszimmer sets the condensation limit for the whole
+plant, legitimately.** Its dew point runs ~2.5 K above the ground floor (17.1 vs
+14.5 Gaestebad, 15.7 Wohnzimmer). It is the only OG room, coupled to the
+Wohnzimmer by the open Luftraum so warm moist air collects there, and it holds
+the FAN COIL - a cold surface in a moving airstream, the most condensation-prone
+component in the system. It is the room that most needs the protection.
 
-**Residual risk, accept knowingly.** An open window raises its own room's
-humidity and so still raises the reference - Wohnzimmer went 14.43 -> 15.69
-within an hour of opening on the morning of the fix, which is the mechanism
-working. What is not covered is a window opened ONLY in one of the five rooms
-with no humidity sensor. Mitigations today are the 1.0 K margin and interior
-doors coupling the air. **`sensor.luftfeuchte_elternschlafzimmer` is currently
-`unavailable`** - restoring it is the cheapest real improvement available and
-would add a third room, upstairs. The Shelly H&T rollout retires this properly.
+So the overnight idling was not a bug. The chain is sound:
+
+    AZ dew 17.1 -> floor 17.1 + dew_floor_offset_c 4.0 = 21.1 -> setpoint ~21
+    -> restart needs return >= 23.0 -> return sat at 22.4 -> idle
+
+**Real levers, in order of value.** None of them is the dew point reference:
+  (a) `safety.restart_dead_zone` / P01 at **2 K is the direct cause** of the
+      0.6 K shortfall. The owner proposed dropping it to 1 K on 2026-07-30.
+      This costs no condensation margin whatsoever and should be first.
+  (b) `dew_floor_offset_c: 4.0` is a coarse backstop and the single largest
+      term in the floor. The spread-based estimate this file already describes
+      would replace it with something measured.
+  (c) **Dehumidify Arbeitszimmer.** Every 1 K off its dew point is 1 K of supply
+      depression for the entire plant, worth ~1.4 kW at this flow.
+  (d) Ventilation is NOT free on a humid day: outdoor dew point was 18.7 against
+      14.5-17.1 indoors, so opening windows IMPORTS moisture and raises the
+      plant's own condensation floor. Measured: Wohnzimmer 14.43 -> 15.69 within
+      an hour of opening. Cooling by ventilation and cooling by the slab are in
+      direct conflict when the outdoor dew point is above the indoor one.
 
 ### Also found, not yet fixed: the Wohnzimmer wall unit is sunlit
 

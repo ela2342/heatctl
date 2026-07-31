@@ -78,20 +78,26 @@ mqtt:                          # control-plane broker (telemetry, setpoints, She
   # this at an outdoor dew point, which is often higher and would forbid
   # cooling that is perfectly safe indoors.
   #
-  # ⚠️ THAT LAST SENTENCE WAS DOCUMENTATION, NOT REALITY, UNTIL 2026-07-31.
-  # The HA helper had the outdoor station as a fourth member of its max(), so
-  # the plant WAS regulated at the outdoor dew point whenever that was higher.
-  # It cost 1.6 K of supply depression - about 2.4 kW at this flow - and on the
-  # night of 2026-07-30/31 it pinned the water setpoint to its floor and kept
-  # the compressor off from 01:00 to past 09:00 with the house 3.6 K too warm.
-  # Removing it dropped the reference 16.9 -> 15.7 and the compressor started
-  # within seconds. **If this ever reads close to outdoor again, check the
-  # helper's pair list first.**
+  # ⚠️ THE HELPER'S FOURTH PAIR IS *NOT* THE OUTDOOR STATION, however much its
+  # name suggests it. `fineoffset_wh32_245` is the ARBEITSZIMMER sensor - this
+  # very file uses it as that room's `room_temp_topic` - and it is the only
+  # sensor on the OG. On 2026-07-31 it was removed from the helper's max() in
+  # the belief that it was outdoor, which dropped the reference 17.1 -> 15.7 and
+  # the condensation limit with it. That was wrong and was reverted the same
+  # hour. Proof, hourly means from that night:
   #
-  # Open windows remain covered, because an open window raises that room's own
-  # humidity: measured the same morning, Wohnzimmer went 14.43 -> 15.69 within
-  # an hour of opening. What is NOT covered is a window opened only in one of
-  # the five rooms with no humidity sensor - see BACKLOG.
+  #   WH32-245   26.4 26.4 25.8 25.3 25.3 25.4 25.5 25.7   <- does not swing
+  #   WH65B-210  22.1 18.9 17.4 17.3 19.5 20.9 22.4 24.2   <- genuinely outdoor
+  #
+  # A sensor that does not follow the diurnal swing is indoors. Check that
+  # before concluding anything from a sensor's name.
+  #
+  # ARBEITSZIMMER LEGITIMATELY SETS THE LIMIT FOR THE WHOLE PLANT. Its dew
+  # point runs ~2.5 K above the ground-floor rooms (17.1 vs 14.5 Gaestebad), it
+  # is on the OG coupled to the Wohnzimmer by the open Luftraum so warm moist
+  # air collects there, and it holds the FAN COIL - a cold surface in a moving
+  # airstream, the most condensation-prone thing in the system. It is the room
+  # that most needs this protection, not a nuisance in the average.
   dew_point_topic: "heatctl/env/dew_point"
 
 # --- Heat pump (PW58321) -------------------------------------------------
