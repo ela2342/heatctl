@@ -458,3 +458,110 @@ Radiant floor cooling cannot dehumidify — it must stay above the dew point —
 so latent load accumulates and tightens the very constraint limiting sensible
 cooling. Constraint memory stops the plant wasting capacity it has; it cannot
 create capacity the dew point forbids.
+
+## D-030
+
+**One owner per actuator; the condensation constraint is evaluated in exactly
+one place. Optimisation moves to layer 2, enforcement stays in layer 1.**
+
+*2026-07-31, prompted by the owner: "three or more processes fighting about
+setpoint control is a desaster."* That is the correct diagnosis and this entry
+records the audit behind it, the defect it exposed, and the decomposition that
+replaces it. It supersedes the ad-hoc parts of D-018 and D-029 — both remain
+accurate descriptions of what the code did and why, and both describe patches
+to a structure that should not have needed them.
+
+### The audit
+
+Roughly **25 tuning constants across four hand-rolled loops** (setpoint trim,
+capacity controller, demand/mode logic, RL gate). Provenance is defensible for
+about six:
+
+| Derived | From |
+|---|---|
+| `dew_point_release_margin_c: 0.3` | 0.1 K sensor quantisation + measured 0.1 K per 10–25 s recovery |
+| `min_on_s` / `min_off_s: 600` | the compressor's observed unaided ~10 min on / ~9 min off |
+| write budget 30/h, 200 ms spacing | device manual (D-013) |
+| 2 K restart dead zone | the machine's own P01 |
+| `poll_interval_s: 1.0` | the 750-463 refreshes at ~1 Hz |
+
+The rest were chosen: `interval_s: 1800`, `step_c: 1.0`, `saturated_pct: 85`,
+`idle_pct: 30`, `dew_floor_offset_c: 4.0`, `breach_jump_c: 6.0`,
+`constraint_retry_margin_c: 0.5`, `target_margin_c: 1.0`, `deadband_c: 0.4`,
+`step_hz: 5.0`, `raise_interval_s: 600`, `at_ceiling_hz: 3.0`,
+`mode_deadband_c: 1.0`, `mode_dwell_s: 3600`, and more.
+
+### The structural fault
+
+**Three controllers act on one physical quantity — how cold the water gets —
+with different objectives and no arbitration:** the setpoint trim (comfort),
+the capacity controller (maximise spread under the condensation limit), and the
+heat pump's own return-water regulator with its 2 K hysteresis. Two separate
+mechanisms then constrain the same quantity from below: the derived floor
+`supply_limit + measured spread`, and the coarse `dew_point + 4.0` backstop.
+
+Every guard in `setpoint.py` is a referee bolted on after a specific collision —
+constraint memory after a limit cycle, the reversal guard after a direction
+reversal, seed-on-first-use after a start-up ratchet. **A controller with one
+objective function cannot produce a direction reversal, because there is
+nothing to reverse against.** The guards are the symptom, not the fix, and each
+new one is evidence the structure is wrong.
+
+### The defect this exposed
+
+The floor is `max(supply_limit + spread_est, dew_point + dew_floor_offset_c)`.
+Since `supply_limit = dew_point + margin` and margin is 1.0, the constant wins
+whenever the **measured spread is below 3.0 K**. Silent-mode operation and the
+frequency ceiling exist precisely to drive the spread down — so *the better the
+capacity controller works, the more completely the constant overrides the
+derived floor*, and the measured mechanism becomes dead code exactly when it
+has something to say. Observed live at 11:17: derived floor 20.4, constant
+floor 21.2, constant binding, setpoint frozen at 20.0 by the reversal guard,
+with the true measured margin healthy at 1.2 K.
+
+**But the constant is not merely wrong.** `_spread_est` decays at 0.995 per
+1 Hz cycle and is only sampled while the compressor runs, so ~10 minutes of
+off-time takes it to its 1.0 floor. The machine then restarts into a 3–4 K
+spread against a floor computed for 1 K, and the supply undershoots. The
+constant is guarding against the estimate turning optimistic at precisely the
+moment it is about to be tested. Deleting it without fixing that would
+reintroduce a breach.
+
+**So the real fix is the estimator, not the constant:** hold the spread estimate
+while the compressor is off rather than decaying it toward optimism, because
+the off state is the one it will restart from. Then `dew_floor_offset_c` becomes
+what it claims to be — a fallback for "never measured" — instead of a permanent
+override.
+
+### The decomposition
+
+The timescales are now measured rather than assumed (`ua_sa` identified
+2026-07-31; fast mode 6.35 h), so the split can be derived:
+
+- **Supply-temperature constraint — fast (1–3 min), safety-critical, layer 1.**
+  Evaluated once, from measurement, in one place. Owns the frequency ceiling
+  *and* `P04_min`. Both enforce the same constraint and must therefore share
+  state instead of each computing their own version of it. `P04_min` cannot be
+  delegated to the valve guard: eight of ten circuits are open pipe with no
+  actuator, so the setpoint is the only real control over what reaches the slab.
+- **House temperature — slow (6.35 h), layer 2.** A planning problem against a
+  forecast, not a reactive loop, and layer 2 already holds the model, the
+  estimator and the forecast. It emits a P04 *request* over MQTT with TTL;
+  layer 1 clamps it to `>= P04_min` and ignores it when stale.
+- **Layer 1 fallback when layer 2 is dead:** the existing trim, demoted from
+  primary to fallback. A one-step-per-30-minutes rule is a perfectly good
+  degraded behaviour; it was only ever wrong as the primary controller while an
+  identified model sat unused one process away.
+
+This is what `docs/DESIGN.md` §2 and §8 already specify. The heuristics accreted
+in layer 1 because layer 2 was not yet doing its job; the correction is to move
+the decision to where the model lives, not to keep refining the if-statements.
+
+**Rules that follow, and that new code must obey:**
+1. One writer per actuator. A second writer is a design error, not a feature.
+2. The condensation constraint is computed once per cycle and passed to whoever
+   needs it. No component re-derives it.
+3. Every constant is either a device limit, a measured quantity, or derived from
+   identified dynamics — and says which in a comment. "Chosen" is not a
+   provenance.
+4. A new guard is a signal to re-open this entry, not to add a constant.
