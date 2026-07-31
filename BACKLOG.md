@@ -2884,3 +2884,75 @@ and at night the same roof radiates to the sky for about -94 W of free cooling
 that is equally unmodelled. `alpha` for the trapezoidal sheet is unknown and is
 the dominant uncertainty - worth a look at the actual roof colour before
 implementing.
+
+## The dew point reference was regulating on OUTDOOR air (fixed 2026-07-31)
+
+**Symptom:** no cooling overnight. The compressor ran briefly around 23:00-01:00
+and then sat at 0 Hz from 01:00 to past 09:00, through the exact hours the
+optimizer was asking for pre-cooling (-0.46 to -0.50 K) and the only hours the
+plant has spare capacity and its best COP. Wohnzimmer's 0.7 K overnight fall was
+passive loss to a 19.7 degC night, not the machine.
+
+**Mechanism.** The plant was stuck 0.6 K below its own restart threshold:
+
+    water setpoint   21.0   (saturated at its floor)
+    return water     22.4
+    restart dead zone 2.0 -> needs return >= 23.0
+
+heatctl said so itself - `water_setpoint_saturated = on`, and
+`water_setpoint_decision = "house -3.63 K and valves at 100% - not enough
+capacity (already at the limit)"`. Ten valves open, house 3.6 K too warm,
+setpoint on the floor, compressor idle.
+
+**Root cause.** `sensor.system_dew_point_reference` in Home Assistant took a
+`max()` over four temperature/humidity pairs, and the fourth was the OUTDOOR
+weather station (`fineoffset_wh32_245`). Both this repo's config.yaml and the
+helper's own consuming automation documented it as "highest INDOOR dew point,
+falling back to the outdoor station only when no indoor pair is available".
+The outdoor station was not a fallback - it was a permanent participant, and in
+summer it usually wins.
+
+Measured at the moment of the fix: true indoor dew points 14.45 (Gaestebad) and
+15.69 (Wohnzimmer, window open), reference reading **16.9**.
+
+**Fix.** Outdoor pair removed from the list; it remains the `else` fallback when
+no indoor pair is available. Applied through the config-entry flow API, not by
+editing `.storage`. Effect within seconds:
+
+    dewref     16.9 -> 15.7        limit    17.9 -> 16.7
+    setpoint   21.0 -> 20.0        saturated  on -> off
+    compressor  0   -> 44 Hz       (first run since 01:00)
+
+**Why this was worth ~2.4 kW.** At 1438 W/K, the 1.6 K of false headroom is
+2.4 kW on a plant whose entire ceiling is 5.7 kW. But the real cost was not
+efficiency - it was that the floor sat high enough to keep the machine below its
+restart dead zone entirely, so the capacity was not merely reduced, it was zero.
+
+**What the fix does NOT change, deliberately.** `dew_point_margin_c` stays at
+1.0. It covers RH-sensor error propagated into dew point (+-2-3 % RH is
++-0.5-0.9 K at these temperatures), and no amount of supply-side precision or
+finer frequency control improves how well the dew point is KNOWN. That margin
+comes down when humidity sensing improves, not before.
+
+**Residual risk, accept knowingly.** An open window raises its own room's
+humidity and so still raises the reference - Wohnzimmer went 14.43 -> 15.69
+within an hour of opening on the morning of the fix, which is the mechanism
+working. What is not covered is a window opened ONLY in one of the five rooms
+with no humidity sensor. Mitigations today are the 1.0 K margin and interior
+doors coupling the air. **`sensor.luftfeuchte_elternschlafzimmer` is currently
+`unavailable`** - restoring it is the cheapest real improvement available and
+would add a third room, upstairs. The Shelly H&T rollout retires this properly.
+
+### Also found, not yet fixed: the Wohnzimmer wall unit is sunlit
+
+From 06:32 it read 25.44 -> 29.06 in 87 minutes - **2.5 K/h against the ~0.2 K/h
+the thermal load can actually produce** - with a clean dip at 07:32-07:45 and a
+resumed climb, which is a cloud crossing the sun. Air in a 6600 Wh/K space
+cannot do that. It is direct beam on the unit via the ESE facade at 106.3 deg,
+the largest glazed elevation at 21.54 m2, which `optimizer/params.yaml` already
+documents as catching sun early.
+
+So Wohnzimmer's room PID chases a sensor reading roughly +3.5 K of sunshine for
+a few hours each morning. Needs shading or relocation; until then, consider
+falling back to return-temperature control for that room during the affected
+hours. Gaestebad is unaffected and believable.
