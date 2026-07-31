@@ -3332,3 +3332,36 @@ rate is now observable, so that is answerable from data.
       Removing them is cleanup with no functional effect, but it was not asked
       for and deleting HA config is not trivially reversible, so it is recorded
       rather than done. The backup above covers all five.
+
+- [!] **THE HOUSE HAS NO DEHUMIDIFICATION PATH IN COOLING MODE, AND THAT IS A
+      RATCHET.** Measured 2026-07-31, and it explains why a milder day felt
+      worse than a hot one.
+      Arbeitszimmer humidity rose all morning with the fan coil running and the
+      windows shut: 57.2 % at 08:00 to 60.0 % at 14:00 at a near-constant
+      25.3-25.7 degC, taking its dew point 16.2 -> 17.4.
+      **The fan coil cannot dehumidify.** Its surface sits at supply
+      temperature - 19.2 degC at the time - while the room dew point was 17.4.
+      A coil 1.8 K ABOVE dew point condenses nothing, and it can never be below
+      it, because `dew_point_margin_c` exists precisely to keep supply above
+      dew point. The constraint that protects the slab also disables the only
+      component that could lower the dew point.
+      So: the slab cannot dehumidify (above dew point by design), the coil
+      cannot (same limit), and there is no dedicated unit. Outdoor dew point was
+      19.2, so every air exchange adds moisture with nothing removing it.
+      Indoor absolute humidity ratchets upward, the condensation limit follows,
+      and cooling capacity is progressively strangled. **No software change
+      fixes this** - it is a plant capability that does not exist.
+      **Immediate answer: a standalone dehumidifier in Arbeitszimmer.** That
+      room sets the limit for the whole house, so every 1 K off its dew point is
+      ~1.4 kW of cooling unlocked in every room. Cheapest and fastest fix
+      available.
+      **Why the obvious alternative does not work today:** running the fan coil
+      deliberately below dew point is exactly what fan coils are built for, and
+      would need only a condensate tray and drain (unverified on this unit -
+      check before assuming). But the coil shares one manifold supply
+      temperature with all ten slab circuits, and its valve controls flow, not
+      temperature. There is no way to give the coil cold water and the slab warm
+      water until the buffer and mixing arrangement in docs/DESIGN.md exist.
+      **This is a strong argument for that work package**, and it should be
+      recorded as a requirement on it: hydraulic separation of the fan coil from
+      the slab circuits buys the house a dehumidifier it already owns.
