@@ -414,6 +414,15 @@ class HeatPump:
                         self.config.update(ctrl)
                         await self._publish_block(ctrl)
 
+                # PUBLISH THE WRITE RATE EVERY CYCLE, not only when a write is
+                # attempted. `_check_budget` runs inside write_register, so on a
+                # quiet plant these entities would sit at `unknown` indefinitely
+                # and the alarm would be indistinguishable from a dead sensor.
+                # An alarm that only exists once something has gone wrong is not
+                # an alarm. Publishing 0 continuously is what makes a later 1
+                # mean something.
+                await self._publish_write_rate()
+
                 if self.status or self.config:
                     await self._publish_decoded()
                     if not self._discovered:
@@ -424,6 +433,15 @@ class HeatPump:
             except Exception:
                 log.exception("heat pump cycle failed")
             await asyncio.sleep(self.poll_s)
+
+    async def _publish_write_rate(self) -> None:
+        """Heartbeat the write-rate telemetry so silence means healthy."""
+        n = self.writes_last_hour()
+        with contextlib.suppress(Exception):
+            await self.plane.publish("hp/writes_last_hour", str(n))
+            await self.plane.publish(
+                "hp/write_budget_exceeded",
+                "1" if n >= self.write_budget_per_hour else "0")
 
     async def _publish_discovery(self) -> None:
         """HA entities for the decoded subset.

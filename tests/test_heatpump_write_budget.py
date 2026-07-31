@@ -89,3 +89,25 @@ class TestBudgetIsAWarningNotAGate:
         hp._writes = [time.monotonic() - 4000] * 500     # all older than 1 h
         assert hp.writes_last_hour() == 0
         assert await hp._check_budget(0x0090) is True
+
+
+class TestTheAlarmIsAlwaysLive:
+    async def test_the_rate_is_published_without_any_write_attempt(self):
+        """Silence is not success.
+
+        `_check_budget` only runs inside `write_register`, so on a quiet plant
+        these entities would stay `unknown` and a dead publisher would look
+        exactly like a healthy idle one. Publishing 0 continuously is what
+        makes a later 1 meaningful.
+        """
+        hp, plane = _hp()
+        await hp._publish_write_rate()
+        assert plane.published["heatctl/hp/writes_last_hour"] == "0"
+        assert plane.published["heatctl/hp/write_budget_exceeded"] == "0"
+
+    async def test_the_heartbeat_reports_the_alarm_too(self):
+        hp, plane = _hp()
+        hp._writes = [time.monotonic()] * 40
+        await hp._publish_write_rate()
+        assert plane.published["heatctl/hp/writes_last_hour"] == "40"
+        assert plane.published["heatctl/hp/write_budget_exceeded"] == "1"
