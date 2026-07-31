@@ -3116,7 +3116,49 @@ Details that need care when building this:
     it sees and corrects the disturbance, but if the two loops ever run at
     similar speeds they will interact.
 
-### THE CONSTRAINT-OPTIMAL SETPOINT — derived 2026-07-31
+### ⚠️ SUPERSEDED — the constraint-optimal setpoint solved the wrong problem
+
+**Kept because the error is instructive, not because the result is usable.**
+Owner, 2026-07-31: *"Are we talking about the same thing to fix? I am still at
+'maximize flow, maximize spread, limited only by demand and dew point'."* That
+framing is correct and the derivation below is not.
+
+**The false assumption: that return water reaches P04.** It only does if the
+machine can get there. Once the capacity loop caps frequency to protect supply,
+it cannot - return floats *above* P04, set by how fast the rooms give up heat.
+So below the point where P04 stops binding, Q does not fall away at
+`m_dot_c` per K as claimed. **It plateaus.** The "sharp asymmetric peak" and the
+"erring low costs 2.4x erring high" conclusion are both wrong on the low side.
+
+**The correct statement fixes SUPPLY, not return:**
+
+    Q = m_dot_c * s = UA * (T_room - supply - s/2)
+    =>  Q = m_dot_c*UA/(m_dot_c + UA/2) * (T_room - supply)
+          = 478 * (T_room - supply)      [m_dot_c 1503 at 90 % pump, UA 568]
+
+**P04 does not appear.** Delivered cooling is set by the room temperature and
+how low supply dares go - nothing else. Note `(m_dot_c + UA/2)` where the old
+derivation had `(m_dot_c - UA/2)`; that sign is the whole difference between
+fixing return and fixing supply.
+
+**What follows, and it is much simpler than what it replaces:**
+  - **Flow: maximum, always.** Not coordinated with the unit's pump loop -
+    that loop is removed.
+  - **Spread: whatever the compressor gives** with supply driven to
+    `dew + margin`. The capacity loop already does exactly this and is the only
+    capacity control needed.
+  - **P04 is not a capacity lever.** It needs only to be low enough never to
+    bind. Its real jobs are the restart dead zone and backing off once demand
+    is satisfied.
+  - **Demand and dew point are the only limits.**
+
+There is no optimum to compute and no `P04_opt` telemetry to publish. The
+machinery that was about to be built would have searched for a number that does
+not need finding.
+
+The superseded derivation follows.
+
+### (superseded) The constraint-optimal setpoint — derived 2026-07-31
 
 Prompted by the owner: *"instead of increasing the spread, the set point walks
 down. This is broken."* It was, and working out why produced the first
