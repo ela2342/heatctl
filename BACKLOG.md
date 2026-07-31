@@ -3365,3 +3365,46 @@ rate is now observable, so that is answerable from data.
       **This is a strong argument for that work package**, and it should be
       recorded as a requirement on it: hydraulic separation of the fan coil from
       the slab circuits buys the house a dehumidifier it already owns.
+
+- [x] **Arbeitszimmer removed from the dew point limit - it has no slab and its
+      coil drains, 2026-07-31.** Owner: *"I still have the temporary hose for
+      condensation installed at the fan coil. We can take out this sensor from
+      the dew point calculation without harm - condensate will land in a
+      bucket."*
+      The limit exists to keep water below the dew point out of the SCREED,
+      where condensation is invisible and unrecoverable. Arbeitszimmer has no
+      floor heating - it is served by the fan coil on circuit 11 - and that coil
+      drains to a bucket. Condensation there is collected, not damage.
+      Including it cost the whole house about **2 K of supply depression, ~2.8
+      kW**, to protect a surface designed to get wet. It was the binding room
+      all day: reference 17.4 while the actual slab rooms sat at 14.0
+      (Gaestebad) and 15.4 (Wohnzimmer).
+      **The rule this establishes: only rooms with a slab circuit belong in the
+      condensation max().** If the coil's condensate drain is ever removed, put
+      Arbeitszimmer back.
+      Note the sequencing lesson - the previous entry on this page correctly
+      refused to remove WH32 when it was mistaken for an outdoor station, and it
+      is now removed for an entirely different and valid reason. Same edit,
+      opposite justification; the justification is what mattered.
+
+- [!] **A dropout of the BINDING room silently RELAXES the condensation limit.**
+      Noticed 2026-07-31: `fineoffset_wh32_245` (Arbeitszimmer) went
+      `unavailable` at 11:26 - battery, most likely, since its battery sensor
+      went with it while the other rtl_433 devices stayed up - and the dew point
+      reference immediately fell 17.4 -> 15.4 because the max() lost its highest
+      member. The limit dropped 2 K with it.
+      **That is the wrong direction on a sensor failure.** It happened to be
+      harmless here (that room should not have been in the calculation at all),
+      but the general case is not: lose the humid room's sensor and the plant
+      becomes MORE aggressive exactly when it has less information.
+      The `max()` has no notion of "a source I expected is missing". Options
+      worth weighing: hold the last known value for that room until it ages out,
+      fall back to the outdoor dew point when any expected pair is missing, or
+      publish a distinct "degraded coverage" state that heatctl treats as a
+      reason to add margin rather than remove it. Do this before the Shelly
+      rollout multiplies the number of sources that can drop.
+
+- [!] **`fineoffset_wh32_245` has been dead since 11:26 on 2026-07-31.** Battery
+      is the likely cause (its battery entity went unavailable at the same
+      instant; wh65b and wh24 stayed alive). It is also **Arbeitszimmer's
+      `room_temp_topic`**, so that room's PID has no input until it is replaced.
