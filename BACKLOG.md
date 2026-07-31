@@ -4058,3 +4058,38 @@ maximize spread, limited only by demand and dew point."*
           up.
       Do it after the capacity PI, and reuse `heatctl/pid.py` rather than
       hand-rolling a second one.
+
+- [!] **CASCADE ERROR, 2026-07-31 20:52-21:02: the outer loop was made as fast
+      as the inner one and outran it.** Recorded because it is the sharpest
+      lesson of the day and it very nearly cost a slab.
+
+      With the condensation floor removed, P04 became free to fall - correct.
+      But `saturated_interval_s` had just been set to **120 s**, which is the
+      same speed as the capacity loop's own settle times (60 s lowering,
+      120 s raising). The trim walked P04 **19 -> 14 in ten minutes**, the
+      machine chased it, and the frequency ceiling could not cut fast enough to
+      hold supply up:
+
+          20:59   supply 15.6   limit 16.2   MARGIN -0.6   dew 15.2
+                  -> 0.4 K from actual condensation
+
+      **In a cascade the outer loop must be several times SLOWER than the
+      inner.** That is not a tuning preference, it is what makes the inner loop
+      able to reject the outer loop's moves as disturbances. Setting them equal
+      turns a cascade into two controllers racing. `saturated_interval_s` is now
+      **900 s**, about 7x the inner loop's interval.
+
+      **What worked, and is why nothing was damaged:** the capacity loop cut the
+      ceiling 73 -> 52 continuously, and the valve guard tripped and closed the
+      owned circuits. Supply bottomed at 15.6 against a 15.2 dew point - no
+      condensation. The layering held even while one layer was mistuned.
+
+      **What to take from it:**
+        * The floor removal was right; the cadence change shipped alongside it
+          was not, and shipping two changes to the same axis in one evening is
+          how you cannot tell which one bit.
+        * Any future PI on the setpoint (owner's stated preference) inherits
+          this constraint: its bandwidth must sit well below the capacity
+          loop's, or it reproduces this exactly and faster.
+        * Eight of ten circuits still cannot close, so the valve guard is a
+          partial protection. It was the capacity loop that did the real work.
