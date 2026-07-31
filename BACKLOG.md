@@ -3561,3 +3561,91 @@ rate is now observable, so that is answerable from data.
       *"only once layer 2's forecast can gate it"*, which lands with WP-S Stage
       2. So: merge the surface whenever, but `auto` must consult the forecast
       before it is allowed to be the default in a live plant.
+
+## WP-R · Online parameter identification as a Rao-Blackwellised filter
+
+Owner's observation, 2026-07-31: *"Did we just re-invent a Rao-Blackwell
+filter?"* Not quite - but both halves are in the tree and only one wire is
+missing, so this records the join and, more importantly, the caveats.
+
+### What already exists
+
+  - **Samples over parameters** - `derived.propagate()` draws `flow`, the
+    `ua_sa` identification measurements, `f_sol`, respecting bounds (D-032).
+  - **An exact Kalman filter over states** - `kalman.py`, 2-state.
+  - **A likelihood signal** - the filter's own innovation.
+
+That is exactly the Rao-Blackwell decomposition: sample the awkward part
+(parameters), handle the conditionally linear-Gaussian part (states)
+analytically, and marginalise the analytic part out. What is missing is that
+**the sampling is offline and static** - it propagates uncertainty into derived
+constants once, and the filter then runs on a single point estimate. The
+particles never see the innovation, so they never learn.
+
+### The join
+
+One Kalman filter per parameter particle; weight each particle by the
+likelihood of its innovation; resample. Online identification of `ua_sa`,
+`f_sol` and `q_internal_w` then arrives as a by-product rather than as separate
+machinery - which is what `docs/DESIGN.md` 7.3's identification ladder asks for.
+
+Cost is not the obstacle: a 2x2 filter is a handful of multiplies and even 100
+particles at a 60 s cadence is nothing. We already run 4000 offline samples per
+derived quantity, which is more work than the online version needs.
+
+### CAVEATS - none of these is optional, and each needs an answer
+
+**(a) Particle degeneracy on static parameters. THE failure mode.** Parameters
+do not evolve, so weights collapse onto one particle and the filter stops
+learning while *looking* converged. It fails silently, which is the worst
+property a thing can have here. Options, none free:
+  - artificial parameter jitter - simple, but inflates the posterior and the
+    jitter magnitude is another invented constant (D-030 applies to it)
+  - Liu & West kernel smoothing - shrinks toward the mean while adding noise,
+    preserving posterior mean and variance
+  - resample-move (Gilks & Berzuini) - an MCMC step after resampling; correct
+    and expensive
+  - Storvik / sufficient-statistic filters - exact where the structure is
+    conjugate
+  **Detect it regardless of the fix chosen: publish effective sample size**
+  `ESS = 1 / sum(w^2)` and alarm on it. Same lesson as the dew point argmax -
+  a quantity nobody can see is a quantity that fails unnoticed for eight hours.
+
+**(b) `f_sol` and `ua_sa` are hard to separate.** Both raise daytime air
+temperature. DESIGN.md 6.1.1 already warns that unsensored rooms make the
+3-state form unidentifiable; the same logic applies to telling these two apart
+from one air measurement.
+  **The natural experiment is night.** With no sun, `f_sol` has no effect, so
+  night data identifies `ua_sa` alone; day data then identifies `f_sol` given
+  it. Sun angle helps further - per-facade gain varies by hour and orientation
+  while `ua_sa` does not, which is one more argument for the per-facade solar
+  model already being in `solar.py`. Sequential identification, exploiting a
+  free experiment that runs every day.
+
+**(c) The parameters are not actually static, and that is the ANSWER to (a).**
+`ua_sa` depends on flow (which starts modulating the moment the DC pump does)
+and on which circuits are open; `f_sol` moves with shading, furniture and
+season. Treating them as static is itself an approximation. So the jitter that
+fixes degeneracy is not arbitrary - **it can be derived from the expected drift
+rate**, which converts an invented constant into a measured one (D-031). Do it
+that way round.
+
+**(d) Bad control data identifies the controller, not the building.** While the
+loops fight each other (D-030), the excitation is correlated with the
+controller's own pathologies. This is the real reason WP-R comes after WP-S,
+not merely a preference about ordering.
+
+**(e) SAFETY MUST NEVER CONSUME AN IDENTIFIED PARAMETER.** An online estimate
+feeding a safety limit is a mechanism for the filter to talk itself into a
+breach - it would only need to become confident and wrong, which is precisely
+what (a) produces. Parameters serve optimisation. The condensation constraint
+stays on measured supply (D-031, D-032).
+
+### Validation gates
+
+  1. `ESS` published and alarmed before any parameter is believed.
+  2. Night-only identification of `ua_sa` first - the cleanest separation - and
+     it must agree with the 2026-07-31 manual identification within the stated
+     sigma, or one of the two is wrong and that is the finding.
+  3. Only then `f_sol`, conditioned on the identified `ua_sa`.
+  4. No safety path reads any of it, checked by test.
