@@ -3034,3 +3034,101 @@ So Wohnzimmer's room PID chases a sensor reading roughly +3.5 K of sunshine for
 a few hours each morning. Needs shading or relocation; until then, consider
 falling back to return-temperature control for that room during the affected
 hours. Gaestebad is unaffected and believable.
+
+## WP-S · Setpoint authority: one owner per actuator (planned 2026-07-31)
+
+Implements D-030. **Not an afternoon.** Staged so every stage ships something
+that stands on its own and can be stopped after, because the plant runs a
+house and a half-migrated controller is worse than either end state.
+
+### What we actually need — two questions, one answer each
+
+Everything below follows from separating two questions that are currently both
+answered in several places at once:
+
+    "How cold MAY the water be?"     -> a CONSTRAINT. Safety-critical, fast,
+                                        measured, layer 1, evaluated ONCE.
+    "How cold SHOULD the water be?"  -> an OBJECTIVE. Slow, model-based,
+                                        forecast-driven, layer 2, one writer.
+
+The objective, written down once so constants can be derived from it instead of
+chosen (D-030 rule 3):
+
+    minimise    room comfort error
+    subject to  T_supply >= T_dew + margin          (hard, condensation)
+                device limits (write budget, restart hysteresis, freq range)
+    preferring  the warmest water that still meets demand   (COP)
+    penalising  P04 moves                                   (flash wear)
+
+Move suppression is a PHYSICAL constraint here, not a tuning knob - which is
+what makes this closer to MPC-with-move-penalty than to PID, and why
+`docs/DESIGN.md` 8 already names linear MPC as planner v2. Layer 2 holds the
+identified model, the estimator and the forecast; layer 1 holds the envelope.
+
+### Stage 0 — fix the spread estimator (small, do first)
+
+`_spread_est` decays 0.995 per 1 Hz cycle and is sampled only while the
+compressor runs, so ~10 min of off-time drops it to its 1.0 floor and the
+machine restarts into a 3-4 K spread against a floor computed for 1 K. That
+optimism is the *only* reason the coarse `dew_point + 4.0` backstop has to
+override the derived floor.
+
+  - Hold the estimate while the compressor is off; decay only while running.
+  - Then demote `dew_floor_offset_c` from a `max()` term to a genuine
+    never-measured fallback.
+  - **Gate:** on a restart after >30 min off, supply must not undershoot the
+    limit. Test with the recorded 2026-07-30 restart trace. Recovers ~0.8 K of
+    floor at today's numbers (derived 20.4 vs constant 21.2) and unsticks the
+    frozen setpoint without touching any controller.
+
+### Stage 1 — evaluate the constraint once
+
+Compute `supply_limit` and `P04_min` in one place per cycle and pass them to
+both the setpoint and capacity controllers, which currently each derive their
+own view of the same limit.
+
+  - Pure refactor. **Gate: no behavioural change** - pin current outputs with
+    tests first, then move the code, then prove the tests still pass.
+  - Publish `P04_min` and the name of the binding term as telemetry. Today
+    nothing says whether the floor, the guard or the demand is in charge; the
+    dew point argmax work of the same day proved how expensive that blindness
+    is.
+
+### Stage 2 — layer 2 emits the P04 request
+
+Optimizer publishes a water-setpoint request on `heatctl/set/...` with a TTL.
+Layer 1 clamps it to `>= P04_min`, applies its own rate limit, and ignores it
+when stale.
+
+  - **The independence rule is the gate**: pull the optimizer's plug and the
+    house must still be safe and warm. Test with layer 2 killed, with layer 2
+    publishing garbage, and with layer 2 publishing a value below `P04_min`.
+  - Layer 2 gets the comfort/COP/forecast trade-off because that is where the
+    model is. Layer 1 never gains a model.
+
+### Stage 3 — demote the trim, delete the referees
+
+With one objective and one owner there is nothing left to arbitrate.
+
+  - Trim becomes the layer-2-is-dead fallback, unchanged in behaviour. A
+    one-step-per-30-min rule is good degraded behaviour; it was only wrong as
+    the primary.
+  - Remove the reversal guard, the constraint memory and `breach_jump_c` **only
+    where the structure makes them unreachable**, and keep every regression test
+    (D-029's limit cycle, the 08:20 reversal, the start-up ratchet). A test that
+    survives the deletion of its guard is the proof the structure fixed it; one
+    that fails means the guard was load-bearing and the structure is not ready.
+
+### Stage 4 — re-derive what remains
+
+Every surviving constant gets a device limit, a measurement, or a derivation
+from identified dynamics, and says which. Known targets: `raise_interval_s: 600`
+is ~5x slower than its own 1-3 min process and should come from the write budget
+and the process time constant; `step_hz: 5.0` is ~0.37 K of supply movement at
+the measured ~0.074 K/Hz and wants to be smaller; `interval_s: 1800` and
+`step_c: 1.0` want deriving from the 6.35 h fast mode rather than taste.
+
+### Out of scope
+
+The floor-circuit cascade (`docs/DESIGN.md` 4) is separately designed and is not
+touched here. This work package is only about who decides the water temperature.
