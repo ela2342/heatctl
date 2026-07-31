@@ -3317,8 +3317,17 @@ rate is now observable, so that is answerable from data.
       value out. `automations.yaml` backed up on the HA host as
       `automations.yaml.bak-legacy-chiller-20260731` before the delete.
 
-- [!] **Four more dead legacy chiller automations remain, same family.** Found
-      while removing the one above. All are `off` and all target the same
+- [x] **DONE: all four remaining legacy chiller automations deleted**, along
+      with 80 orphaned entities and 475 lines of dead `configuration.yaml`
+      (the commented-out WSDEV0001 modbus block and the template block that
+      decoded its registers). `automations.yaml` and `configuration.yaml` were
+      backed up on the HA host first, as `*.bak-legacy-chiller-20260731` and
+      `*.bak-cleanup-20260731`.
+      The energy chain was NOT deleted - `Heat Pump Power` was rewired onto
+      `sensor.heatctl_hp_power_estimate` keeping its `unique_id`, so
+      `sensor.heat_pump_energy` and both utility meters carried their history
+      across intact (74.968 kWh verified after the restart). Original list,
+      found while removing the one above: All are `off` and all target the same
       commented-out `WSDEV0001` hub, so all are inert:
       * `Climate: Chilling Setpoint Supervisory Loop` (`1782601857263`) -
         **worth noting given D-030**: this is a fourth process that once
