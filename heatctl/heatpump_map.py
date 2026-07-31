@@ -89,6 +89,25 @@ WRITABLE = [
     Reg(0x0101, "pump_operation_mode", writable=True, lo=0, hi=1),
     Reg(0x0102, "pump_cycle_min", 1.0, "min", writable=True, lo=1, hi=120),
     Reg(0x010B, "pump_delta_t", 1.0, "K", writable=True, lo=2, hi=30),
+    # --- the DC pump control block, F4-F9 -----------------------------------
+    # Mapped 2026-07-31 for VISIBILITY, not to be written. The unit runs its own
+    # pump loop and D-030 counts three controllers in this plant; this block is
+    # a fourth, and it was invisible. Owner: "Pump should never be at 70 %
+    # according to our design principles. We want to maximize flow to minimize
+    # spread." Observed at 70 % with an hp spread of 2.9 K against an F10 target
+    # of 2 K - if the DeltaT loop were regulating it would speed UP, so
+    # something else is in charge and we could not see what.
+    #
+    # `docs/HEATPUMP.md` claims F10=2 "holds the pump at full flow". That claim
+    # is unverified and the evidence contradicts it. Read these before touching
+    # anything: writing F6 or F8 blind is how you end up fighting a loop you
+    # have not identified.
+    Reg(0x0105, "pump_mode", writable=True, lo=0, hi=2),      # 0 off 1 auto 2 manual
+    Reg(0x0106, "pump_regulation_cycle_s", 1.0, "s", writable=True, lo=10, hi=120),
+    Reg(0x0107, "pump_manual_speed_pct", 1.0, "%", writable=True, lo=10, hi=100),
+    Reg(0x0108, "pump_max_speed_pct", 1.0, "%", writable=True, lo=10, hi=100),
+    Reg(0x0109, "pump_min_speed_pct", 1.0, "%", writable=True, lo=10, hi=100),
+    Reg(0x010A, "pump_regulation_speed_pct", 1.0, "%", writable=True, lo=0, hi=50),
 ]
 
 # --- read-only status -------------------------------------------------------

@@ -42,8 +42,13 @@ def call(c, supply=18.0, limit=16.0, ceiling=45.0, hz=45.0, silent=True,
 def test_spare_margin_at_the_ceiling_takes_more_capacity(cap):
     """The whole point: 2 K of margin going unused on a 38 degC day is capacity
     left on the table, and the spread is how the plant delivers it."""
+    RETARGETED = """The step is now PROPORTIONAL to the error, not fixed
+    (2026-07-31). Margin 2.0 against a 1.0 target is a 1.0 K error, so at
+    loop_gain 0.5 and 0.074 K/Hz that is 0.5*1.0/0.074 = 7 Hz, not the old
+    flat 5. The behaviour under test - spare margin at the ceiling is taken as
+    capacity - is unchanged; only the size of the move is derived now."""
     d = call(cap(), supply=18.0, limit=16.0, ceiling=45.0, hz=45.0)
-    assert d.kind == RAISE and d.target_hz == 50.0
+    assert d.kind == RAISE and d.target_hz == 52.0
 
 
 def test_a_thin_margin_backs_off_immediately_with_no_rate_limit(cap):
@@ -128,6 +133,43 @@ def test_no_raise_in_the_first_interval_after_start_up(cap):
 def test_lowering_is_NOT_delayed_by_the_start_up_seed(cap):
     """The protective direction must work from the first cycle. A plant that
     breaches thirty seconds after a restart cannot wait ten minutes."""
+    RETARGETED = """Proportional step (2026-07-31): margin 0.1 against a 1.0
+    target is a 0.9 K error, so 0.5*0.9/0.074 = 6 Hz. The property under test -
+    that lowering is never delayed by the start-up seed - is unchanged."""
     c = cap(primed=False)
     d = call(c, supply=16.1, limit=16.0, ceiling=60.0, now=1_000.0)
-    assert d.kind == LOWER and d.target_hz == 55.0
+    assert d.kind == LOWER and d.target_hz == 54.0
+
+
+def test_one_write_closes_the_error_instead_of_walking_down(cap):
+    """The defect this replaced. Measured 2026-07-31 15:06 with a fixed 2 Hz
+    step: 46->44->42->40 in three consecutive seconds, three flash cycles to
+    correct one error, because lowering is deliberately un-rate-limited and
+    each write moved only a fraction of it.
+
+    TWO fixes apply, and the settle time is the load-bearing one. A
+    proportional step sizes the move to the error; a settle time then stops the
+    loop judging that error again before the plant has responded to it. Within
+    one second of a move, the answer must be "wait", not "move again".
+    """
+    c = cap()
+    d = call(c, supply=16.3, limit=16.0, ceiling=46.0, hz=46.0, now=1_000.0)
+    assert d.kind == LOWER and d.target_hz is not None
+    c.note_write(1_000.0)
+    # one second later, same error: the previous move cannot have taken effect
+    again = call(c, supply=16.3, limit=16.0, ceiling=d.target_hz,
+                 hz=d.target_hz, now=1_001.0)
+    assert again.target_hz is None, "wrote again before the plant could respond"
+    assert "waiting" in again.reason
+    # after the settle time it may act again
+    later = call(c, supply=16.3, limit=16.0, ceiling=d.target_hz,
+                 hz=d.target_hz, now=1_100.0)
+    assert later.kind == LOWER and later.target_hz is not None
+
+
+def test_the_step_is_bounded_at_both_ends(cap):
+    """The plant gain is POORLY known, and the bounds are what make that
+    survivable: a bad estimate costs an extra cycle, never a lurch."""
+    c = cap()
+    assert c._step_for(0.001) == c.step_min_hz     # never write for nothing
+    assert c._step_for(50.0) == c.step_max_hz      # nor lurch on one estimate

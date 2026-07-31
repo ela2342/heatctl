@@ -58,8 +58,38 @@ class CapacityController:
         # pushes frequency up until the supply sits this far above the limit.
         self.target_margin_c = float(c.get("target_margin_c", 1.0))
         self.deadband_c = float(c.get("deadband_c", 0.4))
-        self.step_hz = float(c.get("step_hz", 5.0))
+        # PROPORTIONAL STEP, not a fixed one. The step is the error divided by
+        # the plant's gain, so one write corrects the whole error instead of
+        # walking toward it. Observed 2026-07-31 15:06 with a fixed 2 Hz step:
+        # three writes in three consecutive seconds (46->44->42->40), because
+        # lowering is deliberately un-rate-limited and each write only moved a
+        # fraction of the error. Every one of those is a flash cycle.
+        #
+        # This is the P of the PI agreed with the owner. The integral term is
+        # deliberately NOT here yet: it needs anti-windup for the two ways this
+        # actuator saturates (max frequency, and the compressor modulating
+        # BELOW the ceiling so the ceiling has no authority at all), and that
+        # is worth doing properly rather than bolting on.
+        self.supply_k_per_hz = float(c.get("supply_k_per_hz", 0.074))
+        # Dimensionless loop gain. Closing the ENTIRE error in one move is
+        # unstable on a plant with transport lag, so take a fraction of it and
+        # let successive cycles converge - textbook proportional control.
+        self.loop_gain = float(c.get("loop_gain", 0.5))
+        self.step_min_hz = float(c.get("step_min_hz", 1.0))
+        self.step_max_hz = float(c.get("step_max_hz", 10.0))
         self.raise_interval_s = float(c.get("raise_interval_s", 600.0))
+        # SETTLE TIME ON THE LOWERING PATH. Not a rate limit for wear's sake -
+        # it is control. The manifold transport plus compressor response is
+        # 1-3 min, so writing again after one second means acting on an error
+        # the previous write has not had time to correct. That is integrating
+        # your own un-responded moves, and it is exactly what produced
+        # 46->44->42->40 in three consecutive seconds on 2026-07-31.
+        #
+        # Deliberately much shorter than `raise_interval_s`: this is still the
+        # protective direction and must not wait ten minutes. The FIRST move is
+        # never delayed - only the follow-up.
+        self.lower_settle_s = float(c.get("lower_settle_s", 60.0))
+        self._last_lower: float | None = None
         self.min_hz = float(c.get("min_hz", 35.0))
         self.max_hz = float(c.get("max_hz", 90.0))
         # Frequency must be within this of the ceiling before raising it means
@@ -93,14 +123,21 @@ class CapacityController:
         margin = supply_temp - supply_limit
         err = margin - self.target_margin_c
 
-        # LOWER: immediate, no rate limit. This is the protective direction and
-        # the supply is already closer to the limit than intended.
+        # LOWER: the first move is immediate - the protective direction must
+        # never wait for a timer. Follow-ups wait `lower_settle_s` so the plant
+        # can actually respond before we judge the error again.
         if err < -self.deadband_c:
-            target = max(self.min_hz, current_ceiling - self.step_hz)
+            if (self._last_lower is not None
+                    and now - self._last_lower < self.lower_settle_s):
+                return CapacityDecision(
+                    None, f"margin {margin:+.2f} K low, waiting for the last "
+                          f"move to take effect")
+            target = max(self.min_hz, current_ceiling - self._step_for(err))
             if target >= current_ceiling:
                 return CapacityDecision(
                     None, f"margin {margin:+.2f} K but already at {self.min_hz:.0f} Hz",
                     BLOCKED)
+            self._last_lower = now
             return CapacityDecision(
                 target, f"margin {margin:+.2f} K below target "
                         f"{self.target_margin_c:.1f} - backing off", LOWER)
@@ -134,7 +171,7 @@ class CapacityController:
         if self._last_raise is not None and now - self._last_raise < self.raise_interval_s:
             return CapacityDecision(None, f"margin {margin:+.2f} K spare, "
                                           "within the raise interval")
-        target = min(self.max_hz, current_ceiling + self.step_hz)
+        target = min(self.max_hz, current_ceiling + self._step_for(err))
         if target <= current_ceiling:
             return CapacityDecision(
                 None, f"margin {margin:+.2f} K spare but already at "
@@ -144,6 +181,17 @@ class CapacityController:
             target, f"margin {margin:+.2f} K above target "
                     f"{self.target_margin_c:.1f} at the ceiling - taking more "
                     "capacity", RAISE)
+
+    def _step_for(self, err: float) -> float:
+        """Hz needed to close `err` kelvin of margin, bounded.
+
+        `supply_k_per_hz` is the plant gain - how far the manifold supply moves
+        per Hz of compressor ceiling. It is POORLY KNOWN (see config.yaml) and
+        the bounds are what make that survivable: too small a gain estimate
+        merely takes two writes instead of one, too large is clamped.
+        """
+        raw = self.loop_gain * abs(err) / max(self.supply_k_per_hz, 1e-6)
+        return min(self.step_max_hz, max(self.step_min_hz, round(raw)))
 
     def note_write(self, now: float) -> None:
         """Called after a ceiling write of either direction.
