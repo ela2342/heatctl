@@ -3116,6 +3116,74 @@ Details that need care when building this:
     it sees and corrects the disturbance, but if the two loops ever run at
     similar speeds they will interact.
 
+### THE CONSTRAINT-OPTIMAL SETPOINT — derived 2026-07-31
+
+Prompted by the owner: *"instead of increasing the spread, the set point walks
+down. This is broken."* It was, and working out why produced the first
+statement of what layer 2 should actually COMPUTE rather than merely own.
+
+At steady state, with `T_water_mean = P04 - s/2`:
+
+    Q = m_dot_c * s                          (heat into the water)
+    Q = UA * (T_room - T_water_mean)         (heat out of the rooms)
+    =>  s = UA (T_room - P04) / (m_dot_c - UA/2)   =  k (T_room - P04)
+
+With the identified `UA = 490` and `m_dot_c = 1438`, **k = 0.41**, so
+`supply = 1.41*P04 - 0.41*T_room`. Applying `supply >= limit`:
+
+    P04_opt = (limit + k*T_room) / (1 + k)
+    Q_max   = m_dot_c * k/(1+k) * (T_room - limit)  =  **418 * (T_room - limit)**
+
+Checked against the plant at 14:48: limit 16.5, T_room ~26 gives P04_opt 19.3
+and Q_max 3975 W, against 4026 W measured. Agreement to 1 %.
+
+**The peak is sharp and ASYMMETRIC**, which is the practical result:
+
+    below P04_opt:  constraint binds, s = P04 - limit,  dQ/dP04 = +1438 W/K
+    above P04_opt:  room side binds,  s = k(T_room-P04), dQ/dP04 =  -590 W/K
+
+**Erring 1 K low costs 2.4x what erring 1 K high costs.** So when uncertain,
+P04 should err HIGH - the exact opposite of the current trim's bias, which
+lowers P04 whenever the house is warm and the valves are open. At 14:48 it sat
+at 19.0 against an optimum of 19.3, i.e. ~430 W surrendered, and it got there by
+stepping down past the peak at 13:27.
+
+**CORRECTION TO A FIGURE REPEATED ALL DAY.** "Every 1 K off the dew point is
+worth ~1.4 kW" appears several times above and in the 2026-07-31 entries. It is
+wrong. `m_dot_c = 1438 W/K` converts a MEASURED spread into power, which is
+correct; it does not value a kelvin of the limit, because the rooms can only
+surrender heat at `UA * dT`. The right figure is **Q_max = 418 W per kelvin of
+(T_room - limit)** - so removing Arbeitszimmer's 2 K was worth ~840 W, not
+2.8 kW. Still the largest single lever found today, but a third of what was
+claimed.
+
+**Two regimes, and the design needs both:**
+  - **Saturated** (house wants everything it can get): P04 has ONE right value,
+    `P04_opt` above. House demand contributes nothing to it - it only says
+    "everything". The value comes from the limit and the room temperature.
+  - **Satisfied**: P04 should be as HIGH as still meets demand, for COP. This
+    is the mild-weather regime and the trim's descent logic is fine there.
+
+**Where this derivation is soft, and what to do about it:**
+  - **Steady state.** The plant rarely is. Dew point moves, sun comes and goes,
+    rooms drift. The optimum is therefore a slowly-moving target, which suits a
+    coarse, rare P04 and a fast frequency ceiling absorbing the rest.
+  - **UA = 490 was identified once**, at one operating point, over 3 of 7 rooms,
+    and it lumped the slab with the fan coil. With Arbeitszimmer now outside the
+    condensation limit, the slab-only UA is the relevant one and is smaller.
+    Re-identify.
+  - **`T_room` is a lumped house node** while `limit` comes from ONE room's dew
+    point. Mixing a house average with a single-room constraint is defensible
+    but should be stated, not hidden.
+  - **`m_dot_c` assumes fixed flow.** True today only because eight of ten
+    circuits cannot close. It stops being true as actuators are fitted, and
+    then the valve loop moves `m_dot_c` under this equation.
+  - **P04 is quantised to 1 K** (int16 degC register) and the optimum fell at
+    19.3, between two settable values. The plant can never sit exactly at the
+    peak; the frequency ceiling must absorb the residual. That is what the fast
+    loop is for, but it means the setpoint loop should be coarse and rare BY
+    DESIGN rather than by flash-budget accident.
+
 ### What we actually need — two questions, one answer each
 
 Everything below follows from separating two questions that are currently both
