@@ -77,7 +77,21 @@ class CapacityController:
         self.loop_gain = float(c.get("loop_gain", 0.5))
         self.step_min_hz = float(c.get("step_min_hz", 1.0))
         self.step_max_hz = float(c.get("step_max_hz", 10.0))
-        self.raise_interval_s = float(c.get("raise_interval_s", 600.0))
+        # RAISE SETTLE TIME. Same reasoning as `lower_settle_s` below: wait for
+        # the plant to respond before judging the error again. It was 600 s,
+        # which made sense when the step was small and FIXED - many little
+        # writes would otherwise burn flash. With a proportional step one move
+        # closes the error, so the only thing left to wait for is the process.
+        #
+        # Measured 2026-07-31: raises at 16:15:28 and 16:25:28, exactly 600 s
+        # apart and gated by the clock rather than the error - the controller
+        # sat on ~1 K of unused margin, about 1.3 kW of cooling, for ten minutes
+        # at a time all afternoon.
+        #
+        # 2x the lowering settle, deliberately: both directions face the same
+        # 1-3 min process, but raising spends margin that a breach would cost
+        # us, so the asymmetric CONSEQUENCE gets an asymmetric wait.
+        self.raise_interval_s = float(c.get("raise_interval_s", 120.0))
         # SETTLE TIME ON THE LOWERING PATH. Not a rate limit for wear's sake -
         # it is control. The manifold transport plus compressor response is
         # 1-3 min, so writing again after one second means acting on an error

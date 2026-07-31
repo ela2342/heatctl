@@ -411,7 +411,11 @@ control:
     loop_gain: 0.5
     step_min_hz: 1.0        # never write for less than this
     step_max_hz: 10.0       # nor lurch further than this on one estimate
-    raise_interval_s: 600
+    # Settle between raises. Was 600 s, which only made sense with a small
+    # FIXED step; a proportional step closes the error in one move, so the only
+    # thing to wait for is the plant (1-3 min). 2x lower_settle_s because
+    # raising spends margin a breach would cost us.
+    raise_interval_s: 120
     # Settle time between SUCCESSIVE lowering moves. The first is never
     # delayed. This is control, not wear management: the plant responds in
     # 1-3 min, so judging the error again after one second means acting on
