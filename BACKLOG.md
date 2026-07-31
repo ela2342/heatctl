@@ -3711,7 +3711,34 @@ stays on measured supply (D-031, D-032).
       dew point has been seen once. The third is the most honest and costs a
       couple of minutes of cooling after a restart.
 
-- [i] **`target_margin_c` should be derived from the limit's drift, not chosen.**
+- [!] **DECIDED: collapse the two cooling margins into one.** Owner,
+      2026-07-31: *"I am fine with collapsing all of that to one single number.
+      The 'limit' has 1K of headroom."* Correct - and working out how exposed
+      what `target_margin_c` was actually buying, which is not what the entry
+      below assumed.
+      **The guard trips AT the limit.** `safety.py` closes owned valves when
+      `supply < cooling_supply_limit`. So if the controller also targets the
+      limit, its normal operating point sits exactly on the guard's trip
+      threshold and every quantisation tick trips valves. `target_margin_c` has
+      been buying separation from the GUARD, not covering loop noise.
+      Collapsing therefore has to move the guard down with it:
+
+          now   guard trips at dew + 1.0   controller targets dew + 1.6
+          one   guard trips at dew + 0.0   controller targets dew + 1.0
+
+      The 1 K then becomes what it was always meant to be - the control margin,
+      sized to how badly the dew point is known - and the guard becomes a
+      genuine last resort at the physical boundary instead of a second budget
+      stacked on the first. Excursions dip to dew + 0.8, still clear, and
+      spurious trips stop.
+      Worth **~290 W** at the 2026-07-31 operating point, on top of everything
+      else recovered that day.
+      **Not implemented** - it touches the safety path and was decided as the
+      owner was leaving. Do it deliberately, with the guard change and the
+      margin change in the same commit, or there is a window where the
+      controller targets a limit the guard still trips on.
+
+- [i] **(superseded by the entry above)** `target_margin_c` derived from drift.
       Measured 2026-07-31 over an hour of converged operation: supply holds to
       about +-0.1 K within 5-minute buckets (mostly the 0.1 K quantisation),
       while the LIMIT moves +-0.2 K underneath it as the dew point drifts.
