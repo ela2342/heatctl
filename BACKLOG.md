@@ -3872,3 +3872,44 @@ maximize spread, limited only by demand and dew point."*
       -24 as a signed int16, and has done constantly. Not the cause here, but a
       garbage value in a register that caps the condenser fan in silent mode
       deserves investigation before anyone pushes frequency harder.
+
+- [!] **750-8212 ARRIVED 2026-07-31. Phase 0 is two hours of bench work and it
+      gates everything.** The 2026-07-29 entry above records that the PLC was
+      ordered and the five things to settle; this records the plan for the unit
+      now physically here.
+
+      **The gating question: does the PFC200's Modbus server offer an
+      equivalent output-zeroing watchdog?** heatctl's outermost safety net is
+      the 750-352's coupler watchdog at `0x1000+`, armed with mask `0x8020` so
+      only FC6/FC16 output writes retrigger it - which means heatctl needs no
+      separate heartbeat, its per-cycle valve write IS the heartbeat. Verified
+      on hardware 2026-07-26. It is the only failsafe that survives heatctl
+      crashing outright, and on 2026-07-31 it did exactly that during a
+      30-minute outage.
+      A PFC200 is not a coupler; its Modbus server presents a process image
+      under its own program's control. If the answer is yes, the swap is a day.
+      If no, the watchdog must be built in CODESYS and the whole toolchain is on
+      the critical path for what was meant to be a drop-in - at which point
+      point (e) of the 2026-07-29 entry applies in full.
+
+      **Phase 0, bench, no plant downtime, ~2 h:**
+        1. Power it standalone, find it, get into the WBM, check firmware.
+        2. The watchdog question above.
+        3. Process-image layout. `config.yaml` hardcodes `base_register: 12`
+           for both sensors and valves; a PLC maps its image differently from a
+           352. This is the THIRD time the register map has moved.
+        4. Internal-bus 5 V budget against the existing module rail - the
+           8212's budget differs from the 352's, and the symptom of exceeding
+           it is not a clean failure but modules at the far end reading
+           nonsense. Use WAGO's configurator, do not eyeball it.
+
+      **Phase 1, the swap, ~1 day, only if Phase 0 clears:** back up the 352's
+      watchdog and IP config, swap (same backplane, modules carry over), IP to
+      the coupler's address, re-verify every register against known live sensor
+      values, re-arm the watchdog and **re-run the deliberate trip test** from
+      2026-07-26, then run heatctl against it and diff the readings.
+
+      **Window: 08-01 / 08-02.** Forecast 27.3 and 26.2 degC with 0 hours over
+      the delivery ceiling, against 31.3 on 08-03 and 36.0 on 08-04. Losing
+      plant I/O for a few hours costs almost nothing on those two days and a
+      lot afterwards. Do not let it slip to 08-03.
