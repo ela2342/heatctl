@@ -19,6 +19,57 @@ so the reasoning that led there stays visible.
 
 ---
 
+## Standing principles — the audit list
+
+Thirty-two entries in date order cannot be audited against. This is the short
+form: the rules that are *live*, each pointing at the entry that argues it.
+**Check code against this list; read the entry when you want the reasoning.**
+
+Added 2026-07-31 after a day in which the same instruction was softened twice,
+a constant survived four requests to remove it, and a "pinned" parameter
+changed within two hours of being called pinned. The failure mode of this
+project is not ignorance, it is **drift between what is written and what runs**.
+
+### Safety
+1. **Safety runs last and always wins**, and works standalone — no HA, no
+   layer 2, no network. · D-001
+2. **Restart == safe state.** No state may need to survive a restart.
+3. **Fail OPEN on lost knowledge** (faulted sensor, stale data, crash);
+   **fail CLOSED on known-bad supply** (screed overtemp, sub-dew-point water).
+   The known-bad rules are checked *first*. · D-003, D-011
+4. **The condensation constraint is evaluated once per cycle, from MEASURED
+   supply**, and passed to whoever needs it. Nothing re-derives it. · D-030
+5. **Safety never consumes an optimised or identified parameter.** A wrong
+   parameter must cost efficiency, never containment. · D-031, D-032, WP-R(e)
+6. **One writer per actuator.** A second writer is a design error. · D-030
+
+### Parameters and constants
+7. **No derived constant is ever a literal.** A number in the code is a
+   parameter or it is a bug; derived quantities are computed at runtime. · D-031
+8. **Every parameter carries value, uncertainty, kind and provenance**, in one
+   place. `config.yaml` = the installation and the policy; `params.yaml` = the
+   physics. · D-031, D-032
+9. **An identified parameter stores its MEASUREMENT, not its result**, so
+   correlations are structural and cannot be forgotten. · D-032
+10. **"Chosen" is not a provenance.** Every surviving constant is a device
+    limit, a measurement, or a derivation — and says which. · D-030
+
+### Working practice
+11. **A new guard is a signal the structure is wrong**, not a fix. Re-open
+    D-030 instead of adding a constant.
+12. **Names are hypotheses.** Where ground truth exists — floor plans, the
+    register map, `config.yaml`, the entity registry — read it before asserting
+    what a sensor or room *is*.
+13. **A predicted effect is not confirmation** if any change of that shape
+    would produce it. Test the mechanism, not the outcome.
+14. **Every safety rule gets a test**, the test asserts the *direction* of
+    failure, and regression tests are mutation-verified — a test that passes
+    against the bug is worse than none.
+15. **A deploy ships code, not config.** Run
+    `deploy/ha-addon/check-live-config.sh` after any `config.yaml` change.
+
+---
+
 ## D-001 · Two layers, and layer 1 never calls Home Assistant
 Layer 1 (`heatctl/`) is the safety-critical control core; layer 2 (the future
 optimizer) may fail at any time and talks to layer 1 only over MQTT, clamped by
