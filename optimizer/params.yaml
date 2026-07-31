@@ -42,7 +42,17 @@ building:
   #
   # Confidence: fair, roughly +-20 %. The dominant uncertainties are the assumed
   # flow (+-10 % systematic) and a room mean taken over 3 of 7 rooms.
-  ua_sa: 490.0          # W/K   confidence: fair - IDENTIFIED, was a guess
+  # ⚠️ RESCALED 2026-07-31 when the flow was corrected 1.24 -> 1.44 m3/h.
+  # This was identified as Q/(T_air - T_water) with Q = m_dot_c * dT, so it is
+  # PERFECTLY CORRELATED with the flow: 490 * (1.44/1.24) = 568.
+  #
+  # **That correlation is load-bearing and must not be lost.** In
+  # `k = ua_sa / (m_dot_c - ua_sa/2)` the flow error cancels exactly, so the
+  # constraint-optimal setpoint P04_opt is INVARIANT to the worst-known
+  # parameter in this file. `Q_max`, which carries a bare m_dot_c, scales with
+  # it linearly (418 -> 486 W per K). Propagating flow and ua_sa as independent
+  # would overstate the uncertainty on one and understate it on the other.
+  ua_sa: 568.0          # W/K   confidence: fair - IDENTIFIED, tied to flow
 
   # Slab -> ground. From the as-built floor build-up.
   ua_sg: 29.0           # W/K   confidence: good
@@ -113,21 +123,30 @@ hydronics:
   # installation's delivered flow. `dc_pump_speed` telemetry sits at 90-100 %,
   # which puts us near the top of the band: 1.2-1.44 m3/h (docs/HEATPUMP.md).
   #
-  # 1.30 is the midpoint of THAT narrowed band. Earlier work used 1.24, taken
-  # from a COP-map derivation, which sits at the very bottom of the plausible
-  # range and therefore UNDERSTATES every energy figure computed before this
-  # date by up to ~15 %.
+  # CORRECTED within the hour (owner): the spec band IS what the installation
+  # delivers at minimum and maximum PUMP SPEED - that is why it is a spread,
+  # not a tolerance. The pump is internal to the unit, so `dc_pump_speed`
+  # (0x802A, %) maps onto this band directly. Measured 2026-07-31: **100 %**,
+  # i.e. the top of the band, 1.44 m3/h. Earlier work used 1.24 from a COP-map
+  # derivation and understated every energy figure by 16 %.
   #
-  # Confidence: POOR. The bound is a specification, the position within it is
-  # inferred from a pump-speed percentage, and nothing measures actual flow.
+  # ⚠️ THIS SHOULD TRACK `dc_pump_speed` RATHER THAN BE A CONSTANT. It is
+  # pinned only because F7 (DC Pump Max Speed) is at its 100 % default and the
+  # pump is running there. The moment pump modulation is enabled this becomes
+  # wrong, and per D-031 the flow should then be computed from the live
+  # register against `flow_min_m3_h`/`flow_max_m3_h` rather than stored.
+  #
+  # Confidence: fair at the current pinned speed - the endpoints are specified
+  # and the speed is telemetered. It degrades to POOR as soon as the pump
+  # modulates. Nothing measures actual flow; the MULTICAL 403 retires this.
   # **The MULTICAL 403 on the shopping list is what retires this**, and it is
   # the single measurement that would most improve every number in this file.
   #
   # ⚠️ Do NOT store the derived `m_dot_c` beside this (D-031). Compute it:
   #     m_dot_c [W/K] = density * specific_heat * flow_m3_h / 3600
-  #   = 998 * 4183 * 1.30 / 3600 = 1508 W/K
+  #   = 998 * 4183 * 1.44 / 3600 = 1670 W/K
   # so that re-measuring the flow moves every dependent figure by itself.
-  flow_m3_h: 1.30           # m3/h  confidence: POOR - spec bound + pump speed
+  flow_m3_h: 1.44           # m3/h  = spec max, pump measured at 100 %
   flow_min_m3_h: 0.58       # m3/h  spec sheet, hard minimum for the exchanger
   flow_max_m3_h: 1.44       # m3/h  spec sheet, hard maximum
   # Water properties at the ~20 degC this circuit runs at in cooling. Stored
