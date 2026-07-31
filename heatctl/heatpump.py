@@ -500,7 +500,12 @@ class HeatPump:
             "device_class": "problem",
         })
         await self.plane.discover("sensor", "hp_writes_last_hour", {
-            "name": "HP writes in the last hour",
+            # Name kept in lockstep with the object id and the MQTT topic
+            # (`hp/writes_last_hour`): HA derives the entity_id from the NAME,
+            # so "HP writes in the last hour" would yield
+            # sensor.heatctl_hp_writes_in_the_last_hour and a diagnosis at
+            # 03:00 would be hunting three different spellings of one quantity.
+            "name": "HP writes last hour",
             "state_topic": f"{self.plane.base}/hp/writes_last_hour",
             "state_class": "measurement",
             "entity_category": "diagnostic",
