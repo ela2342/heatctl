@@ -367,7 +367,9 @@ class SetpointController:
             # limit". Measured 2026-07-29 the spread moved from 5.8 K to 2.0 K
             # within an hour on two register writes; no fixed offset can track
             # that, which is why the earlier attempt to tune one was withdrawn.
-            if supply_limit is not None and self._spread_est is not None:
+            have_measured_floor = (supply_limit is not None
+                                   and self._spread_est is not None)
+            if have_measured_floor:
                 lo = max(lo, supply_limit + self._spread_est)
             # NO CAP HERE. A cap at `return water - restart differential` was
             # tried on 2026-07-30 and REVERTED the same hour: it let the setpoint
@@ -388,20 +390,30 @@ class SetpointController:
             # measured 4.5 K spread the minimum safe setpoint is 20.5 while the
             # maximum runnable one is 19.6. No setpoint satisfies both. Reducing
             # the SPREAD is the only exit; see BACKLOG.
-            if dew_point is not None:
-                # Heuristic only - P04 targets RETURN water, so this cannot
-                # guarantee the water reaching the slab is safe. The measured
-                # -leaving-water branch above is the real mechanism.
+            elif dew_point is not None:
+                # FALLBACK ONLY - reached solely when the spread has never been
+                # measured or the limit is missing, i.e. start-up. It is NOT a
+                # second opinion on a floor we can compute.
                 #
-                # COARSE BACKSTOP ONLY. Do not tighten this into a real
-                # condensation guard by deriving it from the setpoint-to-supply
-                # gap: that gap is the leaving/return spread, which is DYNAMIC
-                # in flow, load and modulation, so no constant can represent
-                # it. See config.yaml for the withdrawn attempt and why its
-                # evidence was selection-biased.
-                # Static backstop, kept BELOW the dynamic floor by max() so it
-                # can only ever tighten, never relax it. Covers start-up before
-                # any spread has been measured, and a stale/absent limit.
+                # **This used to be a `max()` against the measured floor and
+                # that was a defect** (D-030, fixed 2026-07-31). Since
+                # `supply_limit = dew_point + margin` and margin is 1.0, the
+                # constant won whenever the measured spread was below 3.0 K -
+                # and driving the spread down is exactly what silent mode and
+                # the frequency ceiling exist to do. So the better the capacity
+                # controller worked, the more completely this constant overrode
+                # the measured mechanism, which became dead code precisely when
+                # it had something to say. Measured 2026-07-31 11:17: derived
+                # floor 20.4, this constant 21.2, this constant binding, while
+                # the true margin was a healthy 1.2 K.
+                #
+                # The comment it replaced claimed it was "kept BELOW the dynamic
+                # floor by max() so it can only ever tighten". That was simply
+                # false, and it went unchallenged through three separate owner
+                # objections that the dew point handling was too conservative.
+                #
+                # Do not restore the max(). If this value is ever binding while
+                # a spread estimate exists, that is the bug, not the safety.
                 lo = max(lo, dew_point + self.dew_floor_offset_c)
         else:
             lo, hi = self.heating_min_c, self.heating_max_c

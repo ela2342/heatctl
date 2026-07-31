@@ -421,6 +421,13 @@ control:
     # load, where the spread is genuinely small and colder water is safe,
     # while adding no safety at all: the breach branch already covers the real
     # limit, on the right quantity, measured.
+    # START-UP FALLBACK ONLY (D-030, 2026-07-31). Reached when no spread has
+    # ever been measured or the supply limit is missing - NOT a second opinion
+    # on a floor that can be computed. It was previously combined with the
+    # measured floor by max(), which meant it won whenever the measured spread
+    # was under 3.0 K, i.e. exactly the regime silent mode and the frequency
+    # ceiling are built to produce. If this value is ever binding while a
+    # spread estimate exists, that is a bug.
     dew_floor_offset_c: 4.0
     breach_jump_c: 6.0
     # CONSTRAINT MEMORY (2026-07-29). How far the cooling supply limit must

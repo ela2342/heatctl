@@ -446,14 +446,29 @@ def test_the_static_offset_survives_as_a_backstop_before_any_measurement(sp):
     assert floor >= 12.0 + c.dew_floor_offset_c
 
 
-def test_the_dynamic_floor_can_only_tighten_the_static_one(sp):
-    """Taken with max(), so a small measured spread can never relax the floor
-    below the static backstop - the two are belt and braces, not alternatives."""
+def test_a_narrow_measured_spread_relaxes_the_floor_below_the_static_prior(sp):
+    """REPLACES a test that asserted the opposite and was wrong (D-030).
+
+    The old test read: "taken with max(), so a small measured spread can never
+    relax the floor below the static backstop - the two are belt and braces,
+    not alternatives." That pinned the defect rather than a requirement. Since
+    `supply_limit = dew_point + margin`, the static prior won whenever the
+    measured spread fell below `dew_floor_offset_c - margin` (3.0 K at the
+    shipped values) - and narrowing the spread is precisely what silent mode
+    and the frequency ceiling exist to achieve. The measured mechanism was
+    therefore dead exactly when it had something to say, and this test was
+    guarding that.
+
+    A measured 1 K spread against a 14.0 limit means water reaching the slab
+    lands at 13.0, so 15 is a genuinely safe setpoint and the 16 the prior
+    demanded was 1 K of capacity surrendered for nothing.
+    """
     c = sp()
     for _ in range(5):
         c.observe_spread(1.0)                       # very narrow
     floor = c._clamp("cooling", 5.0, dew_point=12.0, supply_limit=14.0)
-    assert floor >= 12.0 + c.dew_floor_offset_c
+    assert floor == 15.0
+    assert floor < 12.0 + c.dew_floor_offset_c
 
 
 def test_the_spread_estimate_is_bounded(sp):

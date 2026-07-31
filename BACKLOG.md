@@ -3065,21 +3065,24 @@ what makes this closer to MPC-with-move-penalty than to PID, and why
 `docs/DESIGN.md` 8 already names linear MPC as planner v2. Layer 2 holds the
 identified model, the estimator and the forecast; layer 1 holds the envelope.
 
-### Stage 0 — fix the spread estimator (small, do first)
+### Stage 0 — DONE 2026-07-31: demote the coarse floor to a fallback
 
-`_spread_est` decays 0.995 per 1 Hz cycle and is sampled only while the
-compressor runs, so ~10 min of off-time drops it to its 1.0 floor and the
-machine restarts into a 3-4 K spread against a floor computed for 1 K. That
-optimism is the *only* reason the coarse `dew_point + 4.0` backstop has to
-override the derived floor.
+This stage was planned around a premise that turned out to be false. The plan
+said `_spread_est` decays toward optimism while the compressor is off, so the
+constant had to stay until the estimator was fixed. **It does not** —
+`main.py:705` passes `None` when frequency is 0 and `observe_spread` returns
+before decaying, so the estimate already holds. The premise was taken from the
+decay term without reading the caller, which is the same mistake as the WH32
+identification earlier the same day.
 
-  - Hold the estimate while the compressor is off; decay only while running.
-  - Then demote `dew_floor_offset_c` from a `max()` term to a genuine
-    never-measured fallback.
-  - **Gate:** on a restart after >30 min off, supply must not undershoot the
-    limit. Test with the recorded 2026-07-30 restart trace. Recovers ~0.8 K of
-    floor at today's numbers (derived 20.4 vs constant 21.2) and unsticks the
-    frozen setpoint without touching any controller.
+The constant was guarding against nothing; it simply assumes 3 K of spread
+against a plant now producing ~2.2 K. `max()` removed,
+`dew_floor_offset_c` is now reached only when no spread has ever been measured
+or the limit is absent. Recovers ~0.8 K of floor at the live numbers (derived
+20.4 vs constant 21.2). `tests/test_setpoint_floor.py` pins both directions and
+is mutation-verified against restoring the `max()`; the old
+`test_the_dynamic_floor_can_only_tighten_the_static_one`, which pinned the
+defect as a requirement, is replaced.
 
 ### Stage 1 — evaluate the constraint once
 

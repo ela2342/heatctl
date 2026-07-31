@@ -519,19 +519,30 @@ has something to say. Observed live at 11:17: derived floor 20.4, constant
 floor 21.2, constant binding, setpoint frozen at 20.0 by the reversal guard,
 with the true measured margin healthy at 1.2 K.
 
-**But the constant is not merely wrong.** `_spread_est` decays at 0.995 per
-1 Hz cycle and is only sampled while the compressor runs, so ~10 minutes of
-off-time takes it to its 1.0 floor. The machine then restarts into a 3–4 K
-spread against a floor computed for 1 K, and the supply undershoots. The
-constant is guarding against the estimate turning optimistic at precisely the
-moment it is about to be tested. Deleting it without fixing that would
-reintroduce a breach.
+**FIXED the same day. An earlier revision of this entry claimed the constant was
+protecting against `_spread_est` decaying toward optimism during off periods,
+and that the real fix was therefore the estimator. That was wrong** — it was
+written from the estimator's decay term without checking its caller.
+`main.py` passes `None` whenever compressor frequency is 0, and
+`observe_spread(None)` returns before decaying, so the estimate already holds
+while the machine is off. The constant was guarding against nothing. It was
+simply over-conservative: it assumes 3 K of spread where the plant currently
+produces ~2.2 K.
 
-**So the real fix is the estimator, not the constant:** hold the spread estimate
-while the compressor is off rather than decaying it toward optimism, because
-the off state is the one it will restart from. Then `dew_floor_offset_c` becomes
-what it claims to be — a fallback for "never measured" — instead of a permanent
-override.
+`dew_floor_offset_c` is now a start-up fallback only, reached when no spread has
+ever been measured or the limit is missing. The `max()` is gone, and
+`tests/test_setpoint_floor.py` pins both directions — a narrow measured spread
+must relax the floor below the prior, a wide one must raise it above.
+
+**The owner had objected three times** that the dew point handling was too
+conservative ("dew + 4 sounds like a lot of buffer"; "1 K of safety for the dew
+point is just fine"; "we're still too conservative ... 1.5 K headroom seems
+excessive"). Each time the response addressed an adjacent constant or wrote a
+longer comment justifying this one. A test named
+`test_the_dynamic_floor_can_only_tighten_the_static_one` had been written to
+pin the defective behaviour as though it were a requirement, which is how it
+survived. That test is replaced, with its own docstring recording that it was
+wrong.
 
 ### The decomposition
 
