@@ -3404,7 +3404,26 @@ rate is now observable, so that is answerable from data.
       reason to add margin rather than remove it. Do this before the Shelly
       rollout multiplies the number of sources that can drop.
 
-- [!] **`fineoffset_wh32_245` has been dead since 11:26 on 2026-07-31.** Battery
-      is the likely cause (its battery entity went unavailable at the same
-      instant; wh65b and wh24 stayed alive). It is also **Arbeitszimmer's
-      `room_temp_topic`**, so that room's PID has no input until it is replaced.
+- [!] **AN HA RESTART CAN TRANSIENTLY RELAX THE CONDENSATION LIMIT.** Corrected
+      entry - the first version of this said `fineoffset_wh32_245` was "dead
+      since 11:26, battery the likely cause". **Wrong on both counts.** Its
+      battery reads 100 %, and it recovered by itself 21 minutes later. The
+      battery entity going unavailable alongside the others was simply all of
+      that device's entities dropping together, which I read as evidence when it
+      was a consequence.
+      What actually happened (owner spotted the correlation): WH32 went
+      unavailable at 13:26 local, **a few minutes after an HA core restart**, and
+      returned at 13:47. Both `rtl_433` add-ons were `started` with watchdogs
+      throughout and the other two devices never visibly dropped - but they are
+      outdoor stations transmitting every ~16 s, so a restart-induced gap in
+      them would be invisible. WH32 is indoors on the OG with a weaker path.
+      Restart artefact and radio dropout cannot be separated from the evidence
+      available; the SDR chain itself is healthy.
+      **The operational point stands regardless of cause, and it is the one that
+      matters:** MQTT-discovered entities are `unavailable` after an HA restart
+      until their device next transmits. Combined with the entry above - a
+      dropout of the binding room RELAXES the limit - **restarting Home
+      Assistant can silently lower the plant's condensation limit for as long as
+      it takes the slowest room sensor to report.** Here that was 21 minutes.
+      Fix the max()'s handling of missing expected sources and this goes away
+      too.
