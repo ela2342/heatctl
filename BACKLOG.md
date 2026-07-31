@@ -3830,3 +3830,45 @@ maximize spread, limited only by demand and dew point."*
       change the `unique_id` (creating a new entity and orphaning the old) or
       rename in the entity registry. Worth knowing before anyone tidies another
       one and believes it worked.
+
+- [!] **THE P04 FLOOR IS CIRCULAR, AND IT CAUGHT US LIVE, 2026-07-31 18:00.**
+      Owner: *"The current margin is gigantic, spread should go up."* It could
+      not, and the reason is the clearest demonstration of D-030 yet.
+
+          spread_est = 3.20     decaying MAX, latched from a brief excursion
+          limit      = 16.5
+          P04 floor  = 16.5 + 3.20 = 19.7  ->  setpoint forced UP to 20.0
+
+      The sequence, all within twenty minutes:
+        1. The capacity controller pushed the ceiling 62 -> 73 Hz. Correct.
+        2. The compressor briefly produced a 3.2 K spread.
+        3. `_spread_est` is a decaying maximum, so it LATCHED 3.2 and relaxes
+           only slowly (0.995 per sample).
+        4. The P04 floor is `limit + spread_est` -> 19.7 -> the setpoint was
+           forced UP from 19 to 20.
+        5. Higher setpoint -> the machine throttled itself to 35 Hz (its
+           minimum) -> spread collapsed to 2.3.
+        6. The estimate still held 3.2, so the floor stayed high and the plant
+           stayed throttled, margin stuck at 0.8 K.
+
+      **The controller sabotaged itself through its own success.** The floor is
+      computed from MEASURED SPREAD, but spread is a *consequence* of the
+      control action, not an independent constraint - feedback through the
+      wrong path. Making the capacity controller more aggressive made this
+      worse, not better, because bigger excursions latch a higher floor.
+
+      No fault was involved: `heat_pump_active_faults = none`. The frequency
+      drop was the unit's own modulation easing off as return approached its
+      raised setpoint - not a protection trip.
+
+      **This is the argument for change C.** Once the compressor can be stopped
+      as the bottom of the spread actuator, the P04 floor is deleted entirely
+      and this loop cannot form. Until then, note that a decaying-max estimate
+      feeding a floor is strictly worse than a slower controller: consider
+      whether the estimate should sample only at steady state, or be dropped
+      from the floor in favour of a fixed worst case, as an interim.
+
+      Also worth an alarm: **`silent_max_fan_cooling` reads 65512**, which is
+      -24 as a signed int16, and has done constantly. Not the cause here, but a
+      garbage value in a register that caps the condenser fan in silent mode
+      deserves investigation before anyone pushes frequency harder.
