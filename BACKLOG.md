@@ -3041,6 +3041,81 @@ Implements D-030. **Not an afternoon.** Staged so every stage ships something
 that stands on its own and can be stopped after, because the plant runs a
 house and a half-migrated controller is worse than either end state.
 
+### THE DESIGN, as settled with the owner 2026-07-31
+
+Three loops, one actuator each, no negotiation between them:
+
+| Loop | Actuator | Controls | Timescale | Layer |
+|---|---|---|---|---|
+| Valves | per-circuit opening | room / circuit temperature | minutes | 1 |
+| **Spread** | frequency ceiling R32, **down to OFF** | manifold supply vs limit | 1-3 min | 1 |
+| Setpoint | P04 | house demand only | 6.35 h | 2, clamped by 1 |
+
+It all follows from `supply = return - spread` and `return -> P04`, so
+`supply ~ P04 - spread`, against the constraint `supply >= dew + margin`. Two
+variables, one constraint: P04 serves demand, spread serves the constraint.
+
+**The assignment is forced by the timescales, not chosen.** Condensation is a
+minutes-scale hazard (a shower, an opened window); spread responds in 1-3 min
+while P04 is rate-limited to a step per 30 min by flash wear. Serving a fast
+hazard with the slow actuator is exactly why the current code needs
+`breach_jump_c` - the slow actuator cannot catch up, so it has to leap.
+
+It also breaks the circularity that every guard in `setpoint.py` exists to
+referee: today the setpoint floor is `limit + spread_estimate`, but spread is
+what the capacity controller is *manipulating*, so each loop moves the other's
+target.
+
+#### OFF IS THE BOTTOM OF THE SPREAD ACTUATOR'S RANGE (owner, 2026-07-31)
+
+An earlier draft of this plan said that when the spread loop saturates at the
+machine's minimum frequency, P04 must be raised - `P04_min = dew + margin +
+spread_min`. **The owner rejected that: "DO NOT TOUCH THE SETPOINT AS A LAST
+RESORT. The conclusion here is to turn off the compressor entirely."** Correct,
+for four reasons:
+
+  1. P04 is the slow actuator; the hazard is fast.
+  2. It re-couples condensation to the setpoint actuator, undoing the whole
+     separation.
+  3. Raising P04 only *gradually* stops the machine pulling return down. It
+     keeps running and keeps making cold water meanwhile, and eight of ten
+     circuits cannot close.
+  4. The spread loop's authority is one continuous axis - full frequency, down
+     to minimum, down to **off**. Reaching for a different actuator at the end
+     of that range is what manufactured the "operating window" corner where the
+     floor exceeds the ceiling and no setpoint satisfies both. With OFF as the
+     bottom of the range that corner does not exist.
+
+**A setpoint floor survives, but as EFFICIENCY, not safety, and therefore in
+layer 2.** Without one, an over-aggressive P04 is not unsafe - it is cyclic:
+cool until supply hits the limit, stop, drift up, restart on the 2 K dead zone.
+The house still gets cooling, in bursts. Choosing P04 to keep the plant in
+continuous operation is worth doing because cycling is inefficient, but if
+layer 2 gets it wrong layer 1 degrades to cycling. Suboptimal, never unsafe.
+`safety.py` gets no setpoint floor at all.
+
+Details that need care when building this:
+  - **The circulation pump KEEPS RUNNING when the compressor stops for
+    condensation.** That is the recovery mechanism - circulating warms the loop
+    back above dew point. Stopping both leaves cold water in the slab with no
+    way out.
+  - Asymmetric as everywhere else: stop immediately, restart only after
+    `min_off_s` and the machine's own dead zone.
+  - **Reconcile with the existing HA automation** that stops *circulation* on
+    dew-point knowledge loss (and raises P04 before circulation resumes on
+    recovery). "Dew point unknown" and "constraint unsatisfiable at minimum
+    spread" are different conditions wanting different responses; they need
+    reconciling, not layering.
+  - Measure `spread_min` across flow and load before relying on it. One
+    afternoon's figure is not a device constant.
+  - **Known coupling, stated rather than discovered later:** closing valves
+    reduces flow, and less flow means more spread at the same power - so the
+    valve loop is a disturbance source for the spread loop. Weak today because
+    eight of ten circuits are open pipe; it will not stay weak once the
+    remaining actuators are fitted. The spread loop measures supply directly so
+    it sees and corrects the disturbance, but if the two loops ever run at
+    similar speeds they will interact.
+
 ### What we actually need — two questions, one answer each
 
 Everything below follows from separating two questions that are currently both
