@@ -3456,3 +3456,22 @@ rate is now observable, so that is answerable from data.
       it takes the slowest room sensor to report.** Here that was 21 minutes.
       Fix the max()'s handling of missing expected sources and this goes away
       too.
+
+- [!] **A DEPLOY SHIPS CODE, NOT CONFIG - and that silently cost half a day.**
+      2026-07-31. `run.sh` seeds the App's `config.yaml` on first start only and
+      never overwrites it, deliberately: it is the operator's source of truth for
+      the register map and safety limits. The consequence is that editing
+      `config.yaml` in the repository does **not** change the running plant.
+      Found when the capacity controller's own log lines still read
+      `target 1.0` and 5 Hz steps after the change to 0.6 / 2 Hz had been
+      committed, deployed, and reported as live. The App was running a config
+      file from 13:14 the previous day. Three separate deploys had "succeeded".
+      Mitigation shipped: `deploy/ha-addon/check-live-config.sh` prints the
+      behavioural diff between repo and running config. It reports rather than
+      reconciles - divergence is often legitimate (`mode`, host addresses,
+      operator tuning) and deciding which side is right is a human job.
+      **The memory note claiming "the App's live config is deliberately
+      overwritten on every deploy" was wrong and has been corrected.** It is the
+      opposite.
+      Remaining known-legitimate divergence: repo ships `mode: heating` as the
+      fresh-install default, live runs `mode: cooling` for the season.

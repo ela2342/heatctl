@@ -15,6 +15,25 @@ rather than duplicated in git:
     ./assemble.sh                       # -> dist/ha-addon/
     scp -r dist/ha-addon root@<ha-host>:/addons/heatctl
 
+**A DEPLOY SHIPS CODE, NOT CONFIG.** `run.sh` seeds
+`/addon_configs/local_heatctl/config.yaml` on first start only and never
+overwrites it - deliberately, because that file is the operator's source of
+truth for the register map and safety limits and clobbering it on restart would
+be catastrophic. So **editing `config.yaml` in this repository does not change
+the running plant.**
+
+On 2026-07-31 that cost half a day: capacity tuning was committed, deployed,
+reported as live, and was not - the App ran a config from the previous
+afternoon while its own logs printed the old constants. After any change to
+`config.yaml`, run:
+
+    ./deploy/ha-addon/check-live-config.sh
+
+It prints the behavioural diff between repo and running config. Divergence is
+often legitimate (`mode`, host addresses, anything tuned in place); *silent*
+divergence is the failure. Copy deliberately, per line - never overwrite the
+live file wholesale.
+
 Then in HA: **Settings → Apps → Add-on Store → ⋮ → Check for updates**, and
 install heatctl from *Local add-ons*. Re-run `assemble.sh` and re-copy after
 changing the source, then Rebuild.
