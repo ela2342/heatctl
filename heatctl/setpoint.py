@@ -82,7 +82,12 @@ class SetpointController:
     def __init__(self, cfg: dict):
         s = dict(cfg["control"].get("water_setpoint") or {})
         self.enabled = bool(s.get("enabled", False))
-        self.interval_s = float(s.get("interval_s", 1800.0))   # 30 min
+        self.interval_s = float(s.get("interval_s", 1800.0))
+        # Cadence while the house is under-served - see the two-regime note in
+        # step(). Matched to the plant's 1-3 min response, like the capacity
+        # loop's settle times, rather than to the slab.
+        self.saturated_interval_s = float(
+            s.get("saturated_interval_s", 120.0))
         self.step_c = float(s.get("step_c", 1.0))
         # How open the valves must be before "not enough capacity" is the
         # right diagnosis rather than "the rooms are simply satisfied".
@@ -185,11 +190,31 @@ class SetpointController:
         if self._last_change is None:
             self._last_change = now
             return SetpointDecision(None, "settling after start-up")
-        if now - self._last_change < self.interval_s:
-            return SetpointDecision(None, "within interval")
         if deviation is None:
             return SetpointDecision(None, "no room data")
 
+        # TWO REGIMES, TWO CADENCES (2026-07-31).
+        #
+        # The 30-minute interval was justified by flash wear and the slab's
+        # thermal mass. Neither holds while the house is under-served:
+        #   - one write per 30 min against a 30/hour budget is not binding;
+        #   - the slab is the setpoint's PURPOSE, not its EFFECT. Changing P04
+        #     changes what the compressor modulates toward, and the water loop
+        #     settles in 1-3 min - the same process the capacity loop waits on.
+        #     The hours-long constant belongs to the house.
+        #
+        # So: move at the PLANT's speed when the house wants everything it can
+        # get, and at the HOUSE's speed when trimming for comfort and COP.
+        #
+        # Measured the evening this landed: with the condensation floor gone,
+        # P04 became the binding constraint (compressor easing off at 49 Hz
+        # against a 73 Hz ceiling because return was 0.5 K from setpoint) and
+        # the walk from 19 to 16 would have taken 90 minutes purely on cadence.
+        #
+        # INTERIM. The owner's preference is a PI here, as in capacity.py -
+        # this fixed step at two speeds is a coarse stand-in for proportional
+        # action. See BACKLOG.
+        #
         # `deviation` is signed house demand: + = too cold, - = too warm.
         # Translate to "does the house want more from this mode".
         wants_more = deviation > self.deviation_band_c if mode == "heating" \
@@ -197,6 +222,13 @@ class SetpointController:
         satisfied = abs(deviation) <= self.deviation_band_c or not wants_more
         saturated = max_open is not None and max_open >= self.saturated_pct
         idle = max_open is not None and max_open <= self.idle_pct
+
+        # The cadence gate, now that the regime is known.
+        interval = (self.saturated_interval_s if (wants_more and saturated)
+                    else self.interval_s)
+        if now - self._last_change < interval:
+            return SetpointDecision(
+                None, f"within interval ({interval:.0f} s)")
 
         wants_capacity = False
         if wants_more and saturated:

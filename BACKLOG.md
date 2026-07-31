@@ -4032,3 +4032,29 @@ maximize spread, limited only by demand and dew point."*
       the delivery ceiling, against 31.3 on 08-03 and 36.0 on 08-04. Losing
       plant I/O for a few hours costs almost nothing on those two days and a
       lot afterwards. Do not let it slip to 08-03.
+
+- [!] **The setpoint trim should be a PI, like the capacity loop.** Owner,
+      2026-07-31: *"I'd probably want that to be a PI, but for now I accept it
+      as an immediate solution."*
+      Shipped instead: a regime-dependent CADENCE (`saturated_interval_s: 120`
+      while the house is under-served, `interval_s: 1800` when only trimming
+      for comfort). That fixes the immediate problem - with the condensation
+      floor gone, P04 became the binding constraint and the walk from 19 to 16
+      would have taken 90 minutes purely on the clock - but it is still a fixed
+      1 K step at two speeds, which is a coarse stand-in for proportional
+      action.
+      The same argument as `capacity.py`: a step controller with a deadband and
+      an interval is a bang-bang with hysteresis; its steady state is a limit
+      cycle rather than convergence. A PI on the house deviation would size the
+      move to the error.
+      Two things make it harder here than in the capacity loop, and are the
+      reason it is not done yet:
+        * **P04 is quantised to 1 K** (int16 degC register), so the output is
+          integer and a PI must accumulate below the quantum rather than
+          rounding each cycle to zero;
+        * **the process is the HOUSE** (5.6 h fast mode), not the water loop, so
+          the integral term needs an anti-windup that survives hours - and the
+          plant saturates often, which is exactly when naive integrators wind
+          up.
+      Do it after the capacity PI, and reuse `heatctl/pid.py` rather than
+      hand-rolling a second one.

@@ -438,7 +438,14 @@ control:
 
   water_setpoint:
     enabled: true
-    interval_s: 1800        # 30 min between trims
+    interval_s: 1800        # 30 min - the COMFORT cadence, matched to the slab
+    # The CAPACITY cadence, used while the house wants everything it can get.
+    # The setpoint's effect on the machine is immediate and the water loop
+    # settles in 1-3 min, same as the capacity loop; the hours-long constant
+    # belongs to the house, not to the plant. Flash is not the constraint -
+    # this is at most 30 writes/hour against a 30/hour budget only in the
+    # pathological case, and the deviation band stops it hunting.
+    saturated_interval_s: 120
     step_c: 1.0
     saturated_pct: 85.0     # valves this open = not enough capacity
     idle_pct: 30.0          # valves this shut = water more aggressive than needed

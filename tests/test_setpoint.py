@@ -90,10 +90,32 @@ def test_mid_range_valves_hold(sp):
 # ---------- cadence ----------
 
 def test_a_trim_starts_the_interval_clock(sp):
+    """RETARGETED 2026-07-31: the cadence is now regime-dependent.
+
+    `call()` drives the SATURATED case - house too warm, valves wide - which
+    moves at the plant's 1-3 min response rather than the slab's half hour.
+    The comfort-trimming cadence is covered below.
+    """
     c = sp()
     assert call(c, now=10_000.0).target is not None
-    assert call(c, now=10_000.0 + 1799).target is None
-    assert call(c, now=10_000.0 + 1801, current=19.0).target is not None
+    assert call(c, now=10_000.0 + 119).target is None
+    assert call(c, now=10_000.0 + 121, current=19.0).target is not None
+
+
+def test_the_slow_cadence_still_applies_when_only_trimming_for_comfort(sp):
+    """The half hour was never wrong - it was applied to the wrong regime.
+
+    Backing the water off because the house is satisfied is a comfort/COP
+    decision on a slab with hours of thermal mass, and it keeps the slow
+    cadence. Mutation-verified: using the saturated interval here lets it
+    trim at 121 s and this fails.
+    """
+    c = sp()
+    # satisfied and idle -> the "water is more aggressive than needed" branch
+    assert call(c, dev=0.0, open_pct=10.0, now=10_000.0).target is not None
+    assert call(c, dev=0.0, open_pct=10.0, now=10_000.0 + 200).target is None
+    assert call(c, dev=0.0, open_pct=10.0,
+                now=10_000.0 + 1801).target is not None
 
 
 def test_holding_does_not_start_the_clock(sp):
@@ -180,11 +202,14 @@ def test_no_trim_in_the_first_interval_after_start_up(sp):
     """
     c = sp(primed=False)
     assert call(c, now=50_000.0).target is None      # first sight: settle
-    assert call(c, now=50_000.0 + 1799).target is None
-    assert call(c, now=50_000.0 + 1801).target is not None
+    # `call()` is the saturated regime, so the wait is the plant cadence
+    # (2026-07-31). The property under test - that a restart does not trim
+    # immediately, so a restart LOOP cannot hammer the flash - is unchanged.
+    assert call(c, now=50_000.0 + 119).target is None
+    assert call(c, now=50_000.0 + 121).target is not None
 
 
-# ---------- constraint memory (the 2026-07-29 limit cycle) ----------
+# ---------- trim behaviour ----------
 
 def test_a_less_aggressive_setpoint_is_still_allowed(sp):
     """Blocking 18 must not block 20. Only setpoints at or below the rejected
