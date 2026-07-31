@@ -40,6 +40,11 @@ from dataclasses import dataclass
 log = logging.getLogger("heatctl.capacity")
 
 HOLD, RAISE, LOWER, BLOCKED = "hold", "raise", "lower", "blocked"
+# The bottom and the floor of the actuator's range. STOP is not a separate
+# mechanism reaching for a different lever - it is simply what lies below
+# `min_hz`, and RESUME is coming back up off it (owner, 2026-07-31: "the
+# conclusion here is to turn off the compressor entirely").
+STOP, RESUME = "stop", "resume"
 
 
 @dataclass
@@ -47,6 +52,14 @@ class CapacityDecision:
     target_hz: float | None      # None = leave the ceiling alone
     reason: str
     kind: str = HOLD
+
+    @property
+    def stops(self) -> bool:
+        return self.kind == STOP
+
+    @property
+    def resumes(self) -> bool:
+        return self.kind == RESUME
 
 
 class CapacityController:
@@ -104,6 +117,11 @@ class CapacityController:
         # never delayed - only the follow-up.
         self.lower_settle_s = float(c.get("lower_settle_s", 60.0))
         self._last_lower: float | None = None
+        # Anti-short-cycle on the STOP/RESUME pair. The compressor already
+        # cycles ~10 min on / ~9 min off unaided, so this matches the machine's
+        # own rhythm rather than imposing a new one.
+        self.min_off_s = float(c.get("min_off_s", 600.0))
+        self._stopped_at: float | None = None
         self.min_hz = float(c.get("min_hz", 35.0))
         self.max_hz = float(c.get("max_hz", 90.0))
         # Frequency must be within this of the ceiling before raising it means
@@ -116,10 +134,34 @@ class CapacityController:
     def step(self, mode: str, supply_temp: float | None,
              supply_limit: float | None, current_ceiling: float | None,
              compressor_hz: float | None, silent_ok: bool,
-             now: float) -> CapacityDecision:
-        """Decide the frequency ceiling. See the module docstring for why."""
+             now: float, stopped: bool = False) -> CapacityDecision:
+        """Decide the frequency ceiling. See the module docstring for why.
+
+        `stopped` says the compressor is currently commanded OFF. While it is,
+        the only decision available is whether to RESUME.
+        """
         if not self.enabled or mode != "cooling":
             return CapacityDecision(None, "disabled")
+
+        # --- coming back up off the bottom of the range ---
+        if stopped:
+            if supply_temp is None or supply_limit is None:
+                return CapacityDecision(
+                    None, "stopped, and no supply reading to judge a restart")
+            margin = supply_temp - supply_limit
+            if self._stopped_at is not None and now - self._stopped_at < self.min_off_s:
+                return CapacityDecision(
+                    None, f"stopped, margin {margin:+.2f} K - within the "
+                          f"{self.min_off_s:.0f} s anti-short-cycle")
+            # Hysteresis: leave on a CLEARLY safe margin, not the same
+            # threshold that stopped us, or the plant chatters on the boundary.
+            if margin < self.target_margin_c + self.deadband_c:
+                return CapacityDecision(
+                    None, f"stopped, margin {margin:+.2f} K still too thin "
+                          "to restart")
+            self._stopped_at = None
+            return CapacityDecision(
+                None, f"margin {margin:+.2f} K recovered - restarting", RESUME)
         if current_ceiling is None:
             return CapacityDecision(None, "ceiling unknown")
         if not silent_ok:
@@ -148,9 +190,17 @@ class CapacityController:
                           f"move to take effect")
             target = max(self.min_hz, current_ceiling - self._step_for(err))
             if target >= current_ceiling:
+                # AT THE BOTTOM OF THE FREQUENCY RANGE AND STILL TOO COLD.
+                # There is no smaller step; the next thing below `min_hz` is
+                # off. Reaching for the SETPOINT here instead would be the
+                # thing the owner rejected - it is slow, it is a modulation
+                # rather than a stop, and it puts the condensation constraint
+                # back onto P04. So: stop the compressor. The pump keeps
+                # running, which is what warms the loop back above dew point.
+                self._stopped_at = now
                 return CapacityDecision(
-                    None, f"margin {margin:+.2f} K but already at {self.min_hz:.0f} Hz",
-                    BLOCKED)
+                    None, f"margin {margin:+.2f} K at the {self.min_hz:.0f} Hz "
+                          "floor - stopping the compressor", STOP)
             self._last_lower = now
             return CapacityDecision(
                 target, f"margin {margin:+.2f} K below target "

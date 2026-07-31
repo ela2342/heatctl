@@ -162,6 +162,10 @@ class Controller:
         # controller that died while the compressor was stopped.
         self.default_cooling_sp = float(c["return_temp_setpoint_cooling_c"])
         self._off_checked = False
+        # The setpoint in force when the compressor was stopped, restored on
+        # resume so the plant returns to its operating point rather than to a
+        # default it had already trimmed away from.
+        self._sp_before_off: float | None = None
         self.return_sp = (c["return_temp_setpoint_heating_c"]
                           if mode == "heating"
                           else c["return_temp_setpoint_cooling_c"])
@@ -280,8 +284,32 @@ class Controller:
                           if self.mode == "cooling" else None),
             current_ceiling=None if ceiling is None else float(ceiling),
             compressor_hz=None if freq is None else float(freq),
-            silent_ok=silent_ok, now=now)
+            silent_ok=silent_ok, now=now,
+            stopped=self.hp.cooling_is_off())
         await self.plane.publish("capacity/reason", d.reason)
+
+        # STOP and RESUME are the bottom of this actuator's range, not a
+        # separate mechanism. The setpoint register is the transport (see
+        # HeatPump.set_cooling); it is NOT being modulated.
+        if d.stops:
+            keep = self.hp.cooling_setpoint()
+            if keep is not None:
+                self._sp_before_off = keep
+            log.warning("compressor STOP: %s", d.reason)
+            self.log_event("compressor_stop", d.reason)
+            await self.hp.set_cooling(None, d.reason)
+            await self.plane.publish("capacity/compressor_stopped", "1")
+            return
+        if d.resumes:
+            restore = self._sp_before_off or self.default_cooling_sp
+            log.warning("compressor RESUME at %.0f degC: %s", restore, d.reason)
+            self.log_event("compressor_resume", f"{restore:.0f}: {d.reason}")
+            await self.hp.set_cooling(restore, d.reason)
+            await self.plane.publish("capacity/compressor_stopped", "0")
+            return
+        await self.plane.publish("capacity/compressor_stopped",
+                                 "1" if self.hp.cooling_is_off() else "0")
+
         if d.target_hz is None:
             return
         log.info("frequency ceiling %s -> %.0f Hz (%s)",

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from heatctl.capacity import BLOCKED, LOWER, RAISE, CapacityController
+from heatctl.capacity import BLOCKED, LOWER, RAISE, RESUME, STOP, CapacityController
 
 
 @pytest.fixture
@@ -33,10 +33,10 @@ def cap(cfg):
 
 
 def call(c, supply=18.0, limit=16.0, ceiling=45.0, hz=45.0, silent=True,
-         now=10_000.0, mode="cooling"):
+         now=10_000.0, mode="cooling", stopped=False):
     return c.step(mode=mode, supply_temp=supply, supply_limit=limit,
                   current_ceiling=ceiling, compressor_hz=hz,
-                  silent_ok=silent, now=now)
+                  silent_ok=silent, now=now, stopped=stopped)
 
 
 def test_spare_margin_at_the_ceiling_takes_more_capacity(cap):
@@ -100,8 +100,16 @@ def test_the_band_is_respected_in_both_directions(cap):
 
 
 def test_the_bounds_hold(cap):
+    """RETARGETED 2026-07-31: the bottom of the range is no longer BLOCKED.
+
+    At `min_hz` with the supply still too cold there is no smaller step, and
+    what lies below the frequency floor is OFF - so the decision is STOP, not
+    "give up". Reaching for the setpoint instead is what the owner rejected:
+    slow, a modulation rather than a stop, and it puts the condensation
+    constraint back onto P04.
+    """
     c = cap(min_hz=35.0, max_hz=90.0)
-    assert call(c, supply=16.1, ceiling=35.0).kind == BLOCKED
+    assert call(c, supply=16.1, ceiling=35.0).kind == STOP
     d = call(c, supply=20.0, ceiling=90.0, hz=90.0, now=99_999.0)
     assert d.target_hz is None
 
@@ -173,3 +181,55 @@ def test_the_step_is_bounded_at_both_ends(cap):
     c = cap()
     assert c._step_for(0.001) == c.step_min_hz     # never write for nothing
     assert c._step_for(50.0) == c.step_max_hz      # nor lurch on one estimate
+
+
+# ---------- the bottom of the range: STOP and RESUME ----------
+
+def test_at_the_frequency_floor_and_still_too_cold_it_stops(cap):
+    """There is no smaller step below `min_hz`; what is below it is OFF.
+
+    Reaching for the SETPOINT here is what the owner rejected on 2026-07-31 -
+    slow, a modulation rather than a stop, and it puts the condensation
+    constraint back onto P04. Mutation-verified: returning BLOCKED instead
+    leaves the plant running too cold with nothing left to do about it.
+    """
+    c = cap(min_hz=35.0)
+    d = call(c, supply=16.0, limit=16.5, ceiling=35.0, hz=35.0, now=0.0)
+    assert d.kind == STOP and d.stops
+    assert d.target_hz is None, "a stop is not a frequency"
+
+
+def test_a_stopped_compressor_does_not_restart_inside_the_anti_short_cycle(cap):
+    """The machine already cycles ~10 min on / ~9 min off unaided. Restarting
+    sooner than that fights its own rhythm and wears the compressor."""
+    c = cap(min_hz=35.0, min_off_s=600.0)
+    call(c, supply=16.0, limit=16.5, ceiling=35.0, hz=35.0, now=0.0)   # stop
+    d = call(c, supply=20.0, limit=16.5, ceiling=35.0, hz=0.0, now=100.0,
+             stopped=True)
+    assert d.kind != RESUME and "anti-short-cycle" in d.reason
+
+
+def test_it_resumes_once_the_margin_is_clearly_safe_and_the_wait_is_over(cap):
+    c = cap(min_hz=35.0, min_off_s=600.0)
+    call(c, supply=16.0, limit=16.5, ceiling=35.0, hz=35.0, now=0.0)   # stop
+    d = call(c, supply=20.0, limit=16.5, ceiling=35.0, hz=0.0, now=1_000.0,
+             stopped=True)
+    assert d.kind == RESUME and d.resumes
+
+
+def test_it_does_not_resume_onto_a_thin_margin(cap):
+    """Hysteresis. Restarting at the same threshold that stopped us would
+    chatter the compressor on the boundary."""
+    c = cap(min_hz=35.0, min_off_s=600.0)
+    call(c, supply=16.0, limit=16.5, ceiling=35.0, hz=35.0, now=0.0)
+    d = call(c, supply=16.6, limit=16.5, ceiling=35.0, hz=0.0, now=1_000.0,
+             stopped=True)
+    assert d.kind != RESUME and "too thin" in d.reason
+
+
+def test_a_stopped_compressor_with_no_supply_reading_stays_stopped(cap):
+    """No basis to judge a restart is not a reason to restart."""
+    c = cap(min_hz=35.0)
+    d = call(c, supply=None, limit=16.5, ceiling=35.0, hz=0.0, now=9_999.0,
+             stopped=True)
+    assert d.kind != RESUME
