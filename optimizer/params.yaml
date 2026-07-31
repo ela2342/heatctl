@@ -101,6 +101,40 @@ solar:
     - {name: S, azimuth_deg: 196.3, aperture_m2: 6.180}   # brutto 19.62 m^2
     - {name: W, azimuth_deg: 286.3, aperture_m2: 1.588}   # brutto  5.04 m^2
 
+# Hydronics. THE FLOW RATE IS LOAD-BEARING: it converts every measured
+# manifold delta-T into watts, so it sets the scale of every energy figure this
+# project quotes. Until 2026-07-31 it lived only in prose - four mentions in
+# BACKLOG.md, two in DECISIONS.md, two in BUILDING.local.md and one inside a
+# COMMENT in this file - while underpinning all of them. D-031 exists because
+# of it.
+hydronics:
+  # The heat pump's spec sheet REQUIRES 0.16-0.40 l/s (0.58-1.44 m3/h) through
+  # its plate exchanger. That is the machine's permitted range, not this
+  # installation's delivered flow. `dc_pump_speed` telemetry sits at 90-100 %,
+  # which puts us near the top of the band: 1.2-1.44 m3/h (docs/HEATPUMP.md).
+  #
+  # 1.30 is the midpoint of THAT narrowed band. Earlier work used 1.24, taken
+  # from a COP-map derivation, which sits at the very bottom of the plausible
+  # range and therefore UNDERSTATES every energy figure computed before this
+  # date by up to ~15 %.
+  #
+  # Confidence: POOR. The bound is a specification, the position within it is
+  # inferred from a pump-speed percentage, and nothing measures actual flow.
+  # **The MULTICAL 403 on the shopping list is what retires this**, and it is
+  # the single measurement that would most improve every number in this file.
+  #
+  # ⚠️ Do NOT store the derived `m_dot_c` beside this (D-031). Compute it:
+  #     m_dot_c [W/K] = density * specific_heat * flow_m3_h / 3600
+  #   = 998 * 4183 * 1.30 / 3600 = 1508 W/K
+  # so that re-measuring the flow moves every dependent figure by itself.
+  flow_m3_h: 1.30           # m3/h  confidence: POOR - spec bound + pump speed
+  flow_min_m3_h: 0.58       # m3/h  spec sheet, hard minimum for the exchanger
+  flow_max_m3_h: 1.44       # m3/h  spec sheet, hard maximum
+  # Water properties at the ~20 degC this circuit runs at in cooling. Stored
+  # rather than hardcoded so the derivation above has no literals in it.
+  water_density_kg_m3: 998.0
+  water_specific_heat_j_kg_k: 4183.0
+
 # Filter tuning. These are NOT physical parameters - they encode how much we
 # distrust the model against how much we distrust the sensors.
 filter:
