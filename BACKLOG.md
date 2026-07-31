@@ -3913,6 +3913,26 @@ maximize spread, limited only by demand and dew point."*
         3. Only then delete the P04 floor - the payoff, and what breaks the
            `spread_est` -> floor -> setpoint circularity.
 
+      **ALL THREE STAGES SHIPPED 2026-07-31 evening.** Stage 3 removed more
+      than the floor, because the floor was not the only condensation logic
+      living on the setpoint:
+        * the `limit + measured spread` floor (circular - see the 18:00 entry);
+        * the **breach branch**, which jumped the setpoint UPWARD on a measured
+          breach. That is what caused the 2026-07-30 09:14 incident: a 0.1 K
+          breach jumped the setpoint 18 -> 21, parked return water inside the
+          restart dead zone, stopped the compressor and let the house climb 3 K
+          on a 38 degC day;
+        * the **constraint memory** (D-029), whose only writer was that branch -
+          dead code that still looked live.
+      A breach is now answered where it happens: the capacity loop cuts
+      frequency immediately (its first lowering move is never delayed), stops
+      the compressor at the frequency floor, and the valve guard trips behind
+      that. Three responses, none of them the setpoint.
+      Seventeen tests and one whole file guarded the removed mechanisms and
+      went with them, replaced by `tests/test_setpoint_no_condensation.py` -
+      five tests asserting the new invariant, mutation-verified against
+      restoring the floor.
+
       (superseded outline follows)
       **C · Compressor stop as the bottom of the spread actuator.** In WP-S
       above. When the ceiling saturates at minimum frequency and supply is

@@ -244,16 +244,6 @@ class Controller:
                     payload.strip() in ("1", "on", "true"), "mqtt")
             else:
                 await self.hp.write_named(key, float(payload), "mqtt")
-            # Any heat-pump config write may have changed how the machine
-            # behaves, and the setpoint trim's constraint memory reasons about
-            # machine behaviour while only watching the dew point for release.
-            # A plant change it cannot observe must therefore invalidate it -
-            # otherwise the trim holds a grudge about a machine that has been
-            # reconfigured (see SetpointController.forget_constraint).
-            # Excludes the setpoint itself: writing that IS the trim's own
-            # output, not a change to the plant.
-            if key not in ("setpoint_cooling", "setpoint_heating"):
-                self.water_sp.forget_constraint()
         except Exception:
             log.exception("heat pump command failed: %s = %r", key, payload)
 

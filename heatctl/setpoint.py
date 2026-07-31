@@ -114,13 +114,15 @@ class SetpointController:
         # --- constraint memory (2026-07-29) ---
         # How far the supply limit must FALL before a setpoint the condensation
         # guard has already rejected is worth attempting again. See
-        # `_blocked_setpoint` below for why this exists at all.
-        self.retry_margin_c = float(s.get("constraint_retry_margin_c", 0.5))
+        # CONSTRAINT MEMORY REMOVED 2026-07-31 with WP-S change C. It existed
+        # to stop the trim re-proposing a setpoint the condensation guard had
+        # already rejected (D-029). With the condensation floor and the breach
+        # branch both gone from this file, nothing here can be rejected on
+        # condensation grounds and its only writer was the breach branch - it
+        # was dead code that still looked live.
         # The most aggressive cooling setpoint known to breach, and the supply
         # limit that was in force when we learned it. Lower setpoints are
         # strictly harder, so a single pair covers every setpoint below it.
-        self._blocked_setpoint: float | None = None
-        self._blocked_limit: float | None = None
 
         # --- measured leaving/return spread (2026-07-29) ---
         # The clamp below needs to know how far BELOW the setpoint the water
@@ -156,68 +158,6 @@ class SetpointController:
     def spread_estimate(self) -> float | None:
         return self._spread_est
 
-    def _remember_breach(self, setpoint: float, limit: float) -> None:
-        """Record that `setpoint` breached while the limit was `limit`.
-
-        Keeps the LEAST aggressive failure. If 19 degC breaches, 18 certainly
-        would too, so remembering 19 blocks both; remembering 18 instead would
-        leave 19 to be rediscovered the hard way.
-        """
-        if self._blocked_setpoint is None or setpoint > self._blocked_setpoint:
-            self._blocked_setpoint = setpoint
-            self._blocked_limit = limit
-
-    def _is_known_infeasible(self, target: float,
-                             limit: float | None) -> bool:
-        """Would this cooling setpoint just re-run a failure we already had?
-
-        THE FIX FOR THE 2026-07-29 LIMIT CYCLE. That day the trim stepped the
-        setpoint down, the condensation guard shoved it back up six minutes
-        later, and thirty minutes after that the rate limiter expired and it
-        attempted the identical step again - fourteen times, while the house
-        drifted from 0.32 K to 1.25 K off target. The trim was integrating
-        against a saturated actuator and forgetting the saturation between
-        attempts.
-
-        The insight is that a setpoint rejected at a given supply limit is
-        infeasible FOR THAT LIMIT, so a clock cannot make it succeed. Only the
-        constraint moving can. Retry is therefore gated on the limit falling by
-        `retry_margin_c`, not on time passing.
-
-        Fails toward TRYING when the limit is unknown: the measured-breach
-        branch is the real protection, so an extra attempt costs one wasted
-        step, while wrongly blocking would strand the plant at a setpoint it
-        could have improved on.
-        """
-        if self._blocked_setpoint is None or limit is None:
-            return False
-        if self._blocked_limit is not None \
-                and limit <= self._blocked_limit - self.retry_margin_c:
-            # The constraint genuinely relaxed - forget and let it try again.
-            self._blocked_setpoint = None
-            self._blocked_limit = None
-            return False
-        return target <= self._blocked_setpoint
-
-    def forget_constraint(self) -> None:
-        """Discard what we learned about which setpoints breach.
-
-        Call this when the PLANT changes, not when the weather does. The
-        memory reasons about one thing only - "setpoint S breached at supply
-        limit L" - and it watches the dew point for release. It cannot see a
-        change to the machine itself.
-
-        Measured 2026-07-29: clearing `powerful_mode` took the compressor from
-        85-89 Hz bursts to a steady 39-40 Hz, and the leaving/return spread
-        from 4.7-5.8 K to 1.9-2.5 K. Every setpoint the memory had recorded as
-        infeasible was suddenly feasible with ~1.8 K to spare - but the dew
-        point had barely moved, so nothing would have released the block. The
-        plant would have sat needlessly warm holding a grudge about a machine
-        that no longer behaves that way.
-        """
-        self._blocked_setpoint = None
-        self._blocked_limit = None
-
     def step(self, mode: str, deviation: float | None, max_open: float | None,
              current: float | None, dew_point: float | None,
              supply_temp: float | None, supply_limit: float | None,
@@ -228,50 +168,19 @@ class SetpointController:
         if current is None:
             return SetpointDecision(None, "setpoint unknown")
 
-        # Leaving cooling invalidates everything the memory knows: it is all
-        # about the condensation limit, which does not apply in heating.
-        if mode != "cooling":
-            self.forget_constraint()
-
         # --- safety first, and it ignores the cadence ---
-        if (mode == "cooling" and supply_temp is not None
-                and supply_limit is not None and supply_temp < supply_limit
-                and dew_point is not None):
-            # Record BEFORE deciding whether to jump. The breach is real
-            # information about this setpoint whether or not the jump is
-            # actionable, and dropping it when `target <= current` would leave
-            # the trim to rediscover the same failure later.
-            self._remember_breach(current, supply_limit)
-            # RECOVER TO THE FLOOR, NOT TO A FIXED JUMP.
-            #
-            # The floor is already the derived answer to "lowest setpoint whose
-            # supply stays above the limit" - limit + measured spread. Asking
-            # `_clamp` for something below it therefore returns exactly that,
-            # which is the minimum sufficient back-off.
-            #
-            # Measured 2026-07-30 09:14: supply 14.8 against a 14.9 limit - a
-            # breach of ONE TENTH of a kelvin - and the old `dew + 6.0` jump
-            # took the setpoint 18 -> 21. Return water then settles at 21, which
-            # is inside the unit's restart dead zone, so the compressor stopped
-            # entirely and the house climbed 3 K on a 38 degC day. Constraint
-            # memory then correctly refused to retry 20, leaving no way back.
-            # The floor at that moment was 15.4 + 3.2 = 19, two whole steps
-            # lower and still safe.
-            #
-            # `breach_jump_c` survives only as the fallback for when there is no
-            # spread estimate yet, i.e. the first breach after a restart.
-            target = self._clamp(mode, self.cooling_min_c,
-                                 dew_point, supply_limit, running_ceiling)
-            if self._spread_est is None:
-                target = self._clamp(mode, dew_point + self.breach_jump_c,
-                                     dew_point, supply_limit, running_ceiling)
-            if target > current:
-                self._last_change = now
-                return SetpointDecision(
-                    target,
-                    f"supply {supply_temp:.1f} below limit "
-                    f"{supply_limit:.1f} - jumping",
-                    BREACH)
+        # NO BREACH BRANCH. Removed 2026-07-31 with WP-S change C.
+        #
+        # It jumped the SETPOINT upward on a measured breach - condensation
+        # logic living on P04, and the direct cause of the 2026-07-30 09:14
+        # incident where a 0.1 K breach jumped the setpoint 18 -> 21, parked
+        # return water inside the unit's restart dead zone, stopped the
+        # compressor entirely and let the house climb 3 K on a 38 degC day.
+        #
+        # A breach is now answered where it happens: the capacity loop cuts
+        # frequency immediately (its first lowering move is never delayed) and
+        # stops the compressor at the frequency floor, and the valve guard trips
+        # behind that. The setpoint is not part of it.
 
         if self._last_change is None:
             self._last_change = now
@@ -296,19 +205,6 @@ class SetpointController:
             delta = self.step_c if mode == "heating" else -self.step_c
             why = (f"house {deviation:+.2f} K and valves at {max_open:.0f}% - "
                    "not enough capacity")
-            if mode == "cooling":
-                proposed = self._clamp(mode, current + delta, dew_point,
-                                       supply_limit, running_ceiling)
-                if self._is_known_infeasible(proposed, supply_limit):
-                    # Do not burn a 30-minute cycle re-proving this. Report it
-                    # instead: the house wants more, the plant cannot legally
-                    # supply it, and that is an alarm rather than a wait.
-                    return SetpointDecision(
-                        None,
-                        f"{why}, but {proposed:.0f} degC breached at limit "
-                        f"{self._blocked_limit:.1f} and the limit is now "
-                        f"{supply_limit:.1f} - condensation-limited",
-                        BLOCKED)
         elif satisfied and idle:
             # Back off. This is the efficiency half.
             delta = -self.step_c if mode == "heating" else self.step_c
@@ -366,9 +262,24 @@ class SetpointController:
             # limit". Measured 2026-07-29 the spread moved from 5.8 K to 2.0 K
             # within an hour on two register writes; no fixed offset can track
             # that, which is why the earlier attempt to tune one was withdrawn.
-            # THE ONLY COOLING FLOOR. `supply_limit` is already dew point +
-            # margin, so this reads directly as "high enough that the water
-            # leaving the machine lands at or above the limit".
+            # NO CONDENSATION FLOOR. Removed 2026-07-31 with WP-S change C.
+            #
+            # It used to be `supply_limit + measured spread`, and it was
+            # CIRCULAR: spread is a consequence of the control action, so a
+            # brief 73 Hz excursion latched a 3.2 K spread into the estimate,
+            # raised the floor to 19.7, forced the SETPOINT UP from 19 to 20,
+            # and the machine then throttled itself to its 35 Hz minimum. The
+            # controller sabotaged itself through its own success, and making
+            # the capacity loop more aggressive made it worse.
+            #
+            # Condensation is now served entirely inside the capacity loop,
+            # whose actuator runs continuously from full frequency down to OFF
+            # (capacity.py, STOP/RESUME). P04 carries no part of the constraint.
+            #
+            # What protects the slab if the capacity loop is wrong: it acts on
+            # MEASURED supply every cycle, it lowers without a rate limit, and
+            # below `min_hz` it stops the compressor outright while the pump
+            # keeps circulating. The valve guard remains behind that.
             #
             # There is deliberately NO static backstop beside it. `dew_floor_
             # offset_c: 4.0` used to sit here behind a max() and won whenever
@@ -385,8 +296,6 @@ class SetpointController:
             # estimate populates within seconds of the compressor running, and
             # the capacity controller and the valve guard both act on MEASURED
             # supply regardless of what the setpoint asked for.
-            if supply_limit is not None and self._spread_est is not None:
-                lo = max(lo, supply_limit + self._spread_est)
             # NO CAP HERE. A cap at `return water - restart differential` was
             # tried on 2026-07-30 and REVERTED the same hour: it let the setpoint
             # sit low enough that supply fell to 15.3 against a 16.0 limit, and
