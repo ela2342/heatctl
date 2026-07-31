@@ -3691,3 +3691,33 @@ stays on measured supply (D-031, D-032).
      sigma, or one of the two is wrong and that is the finding.
   3. Only then `f_sol`, conditioned on the identified `ua_sa`.
   4. No safety path reads any of it, checked by test.
+
+- [!] **The static cooling fallback is LESS conservative than the live limit.**
+      Found 2026-07-31 while measuring the loop's excursion for `target_margin_c`.
+      `safety.vl_min_cooling_c` is 16.0, while the dew-derived limit that
+      afternoon ran 16.5-16.8. The 5-minute statistics show the limit dipping to
+      exactly 16.0 several times - each one a window after an App restart,
+      before the first `heatctl/env/dew_point` message arrives.
+      **So losing the dew point makes the constraint LOOSER, not tighter.** That
+      is the wrong direction on a knowledge loss, and the same class of fault as
+      the dew point `max()` relaxing when its highest member drops out.
+      It is bounded - `dew_point_unknown` closes owned valves once the value has
+      genuinely aged out (`dew_point_max_age_s`, 900 s), so this is only the gap
+      between start-up and the first message, and the republish runs every
+      120 s. But the gap exists and it is on the permissive side.
+      Options: seed the limit pessimistically at start-up rather than from the
+      static value; raise `vl_min_cooling_c` to something that is genuinely a
+      floor rather than a mid-range guess; or refuse to cool at all until a
+      dew point has been seen once. The third is the most honest and costs a
+      couple of minutes of cooling after a restart.
+
+- [i] **`target_margin_c` should be derived from the limit's drift, not chosen.**
+      Measured 2026-07-31 over an hour of converged operation: supply holds to
+      about +-0.1 K within 5-minute buckets (mostly the 0.1 K quantisation),
+      while the LIMIT moves +-0.2 K underneath it as the dew point drifts.
+      Aiming at margin 0 would therefore sit below the limit roughly half the
+      time - not because the loop is sloppy, but because its target moves.
+      The evidence supports about **0.4** rather than the current 0.6: the
+      limit's own drift plus a quantisation tick. Owner asked the right
+      question ("wouldn't a margin of 0 be on target?"); the answer is no, and
+      the reason is measurable rather than a matter of taste.
