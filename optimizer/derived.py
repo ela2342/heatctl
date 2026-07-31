@@ -14,9 +14,15 @@ itself. It is also how the correlations stay honest: `ua_sa` is computed from
 the same flow sample that `m_dot_c` uses, so their perfect correlation is
 structural rather than something a covariance matrix has to remember.
 
-Bounded parameters are sampled truncated to their bounds. `flow_m3_h` sits ON
-its upper bound (the pump is pinned at 100 %), so a naive Gaussian would put
-half its mass above a physical maximum the exchanger cannot deliver.
+Bounded parameters are sampled truncated to their bounds - `flow_m3_h` can sit
+ON its upper bound, where a naive Gaussian would put half its mass above a flow
+the exchanger physically cannot pass.
+
+**Flow is telemetry, not a constant, and this file learned that the hard way.**
+Two hours after params.yaml recorded the pump as "pinned at 100 %", it was
+observed at 70 %. Anything still trusting the stored value would have overstated
+delivered power by 43 %. Use `flow_from_pump()` with the live `dc_pump_speed`;
+the stored value is a fallback for when that reading is missing.
 """
 from __future__ import annotations
 
@@ -73,18 +79,43 @@ def propagate(fn, params: dict, n: int = N_SAMPLES) -> Uncertain:
 
 # ---------- the derivations themselves ----------
 
-def _inputs(p: dict) -> dict:
-    """The raw parameters every quantity below is built from."""
+def _inputs(p: dict, pump_pct: float | None = None) -> dict:
+    """The raw parameters every quantity below is built from.
+
+    `pump_pct` overrides the stored flow with the live telemetry value, which
+    is the only correct thing to do once the pump modulates - and it does.
+    """
     h, b = p["hydronics"], p["building"]
     idn = b["ua_sa_identification"]
+    flow = h["flow_m3_h"] if pump_pct is None else Param(
+        flow_from_pump(p, pump_pct), sigma=0.05, unit="m3/h",
+        bounds=list(h["flow_m3_h"].bounds), kind="measured",
+        derived_from=["dc_pump_speed"])
     return {
-        "flow_m3_h": h["flow_m3_h"],
+        "flow_m3_h": flow,
         "rho": h["water_density_kg_m3"],
         "cp": h["water_specific_heat_j_kg_k"],
         "manifold_dt_k": idn["manifold_dt_k"],
         "room_mean_c": idn["room_mean_c"],
         "water_mean_c": idn["water_mean_c"],
     }
+
+
+def flow_from_pump(params: dict, pump_pct: float) -> float:
+    """Flow in m3/h from the DC pump's speed telemetry (0x802A, %).
+
+    Proportional, and the spec pins it: `flow_min / flow_max = 0.58/1.44 =
+    40.3 %`, against an F8 "DC Pump Min Speed" default of 40 %. Both endpoints
+    agree with `flow = flow_max * speed/100`.
+
+    Clamped to the exchanger's specified range, because a speed below the
+    pump's own minimum means the reading is wrong, not that the exchanger is
+    being starved - and Er03 (water flow failure) is the machine's business,
+    not ours.
+    """
+    f = params["hydronics"]["flow_m3_h"]
+    lo, hi = f.bounds if isinstance(f, Param) and f.bounds else (0.58, 1.44)
+    return min(hi, max(lo, hi * pump_pct / 100.0))
 
 
 def _mdot_c(v: dict) -> float:

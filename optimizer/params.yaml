@@ -233,10 +233,18 @@ hydronics:
     note: >
       Bounds ARE the installation's delivery at minimum and maximum pump speed
       - the pump is internal to the unit - so dc_pump_speed (0x802A, %) maps
-      onto them directly. Measured at 100 %, i.e. the top of the band. Note the
-      value sits ON the upper bound, which is why bounds and not a symmetric
-      sigma are authoritative here. Should TRACK the live register once the
-      pump modulates; it is pinned only because F7 is at its 100 % default.
+      onto them directly.
+
+      **THE MAPPING IS PROPORTIONAL, and the spec pins it exactly:**
+      0.58 / 1.44 = 40.3 %, and F8 "DC Pump Min Speed" defaults to 40 %. Both
+      endpoints agree with `flow = flow_max * speed/100`. So flow is fully
+      determined by telemetry and was never a constant.
+
+      This `value` is therefore only the fallback used when the pump speed is
+      unknown; `derived.flow_m3_h(params, pump_pct)` is the real answer. Within
+      two hours of this file first claiming the pump was "pinned at 100 %" it
+      was observed at 70 % - i.e. 1.01 m3/h, not 1.44 - which would have
+      overstated delivered power by 40 % had anything trusted the stored value.
   water_density_kg_m3:
     value: 998.0
     unit: kg/m3
