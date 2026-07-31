@@ -3294,3 +3294,41 @@ rate is now observable, so that is answerable from data.
       Arbeitszimmer.** The Shelly H&T rollout is the only thing that changes
       that; there is no cheap intermediate step, and claiming otherwise was the
       error here.
+
+- [x] **Removed the legacy `Climate: Prevent Condensation (With Modbus Fallback)`
+      HA automation, 2026-07-31.** Owner: *"before it confuses us even more."*
+      It had become actively misleading on three counts:
+      1. **It was inert.** Its actions targeted `modbus.write_register` on hub
+         `WSDEV0001`, `climate.set_temperature_of_chilling_mode` and
+         `sensor.control_flags_0` - and that hub is commented out in
+         `configuration.yaml` (line 73), so all three were `unavailable`. The
+         automation was also `off`. Doubly dead, but it read like a safety net.
+      2. **It was built on the misconception `docs/HEATPUMP.md` exists to
+         correct.** Its description calls register 0 bit 0 "the pump-request
+         bit" and claims clearing it "stops cooling circulation". That bit is
+         the unit's **POWER**. When it did work it was switching the whole heat
+         pump off.
+      3. **It was a second writer to the heat pump**, by direct Modbus,
+         bypassing heatctl entirely - the exact single-writer violation
+         CLAUDE.md and config.yaml both warn about, and a read-modify-write
+         race on register 0 at that.
+      Its function is already covered properly: `safety.py` closes owned valves
+      on `dew_point_unknown` in cooling, and `dew_point_max_age_s` ages the
+      value out. `automations.yaml` backed up on the HA host as
+      `automations.yaml.bak-legacy-chiller-20260731` before the delete.
+
+- [!] **Four more dead legacy chiller automations remain, same family.** Found
+      while removing the one above. All are `off` and all target the same
+      commented-out `WSDEV0001` hub, so all are inert:
+      * `Climate: Chilling Setpoint Supervisory Loop` (`1782601857263`) -
+        **worth noting given D-030**: this is a fourth process that once
+        controlled the water setpoint. It is disabled, but it is precisely the
+        kind of hidden competing writer that discussion was about.
+      * `Heat pump: circulation pump request` (`1785095167030`) - named in
+        `docs/HEATPUMP.md` as the automation written to match the wrong bit-0
+        meaning.
+      * `Steuerung der Wasserpumpe in der Waermepumpe (einschalten)` and
+        `(ausschalten)` (`1760279804931`/`...932`).
+      Removing them is cleanup with no functional effect, but it was not asked
+      for and deleting HA config is not trivially reversible, so it is recorded
+      rather than done. The backup above covers all five.
