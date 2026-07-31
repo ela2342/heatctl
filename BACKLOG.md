@@ -3002,10 +3002,23 @@ Prerequisites and cautions:
     a drain at all before commanding anything.
   - Single-writer rule applies to the relay outputs as it does everywhere else.
 
-**Cheaper, available now: publish WHICH room sets the limit.** The reference is
-a max() and heatctl only ever sees the scalar. Publishing the argmax alongside
-it would have turned an eight-hour outage into an obvious one-line diagnosis,
-and it needs no wiring at all.
+**DONE 2026-07-31: publish WHICH room sets the limit.** The reference is a
+max() and heatctl only ever saw the scalar, so it said how cold the water may
+be but never because of whom. Added `sensor.system_dew_point_source` (HA
+template helper, entry `01KYVPHCT3F5JNCP6DX3943WHC`) returning the argmax room
+name, republished to `heatctl/env/dew_point_source` by its own automation.
+
+Two deliberate choices. The publisher is a SEPARATE automation from the dew
+point one rather than a second action inside it: that one is on the safety path
+and a diagnostic addition must not be able to take it down. And the pair list,
+the Magnus constants and the validity filter are duplicated verbatim from the
+reference - **if they ever drift apart this will name the wrong room, which is
+worse than naming none.** Change both together.
+
+Verified at first read: source `Arbeitszimmer`, reference 17.2, Arbeitszimmer's
+own computed dew point 17.18. Gaestebad 14.00, Wohnzimmer 15.35,
+Elternschlafzimmer no data - a 3.2 K spread across the house, still unclear
+hours after the occupancy ended because the fan is still off.
 
 
 ### Also found, not yet fixed: the Wohnzimmer wall unit is sunlit
