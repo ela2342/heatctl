@@ -17,6 +17,7 @@ import sys
 import yaml
 
 from .estimator import Estimator
+from .params import load_params
 from .model import eigen_time_constants_h
 
 log = logging.getLogger("optimizer")
@@ -27,8 +28,7 @@ DEFAULT_PARAMS = os.path.join(os.path.dirname(__file__), "params.yaml")
 def load(config_path: str, params_path: str) -> tuple[dict, dict]:
     with open(config_path) as f:
         cfg = yaml.safe_load(f)
-    with open(params_path) as f:
-        params = yaml.safe_load(f)
+    params = load_params(params_path)
     # Credentials come from the environment, never the file - same rule as
     # layer 1, and the same reason: config.yaml is in the repository.
     # Same environment overrides layer 1 honours, and for the same reason:

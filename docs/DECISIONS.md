@@ -649,3 +649,79 @@ it should not have. Move it to the top level when layer 1 first needs it.
 optimisation. A wrong conductance should cost efficiency, never containment -
 which is the same reason the condensation constraint is enforced on measured
 supply rather than on a predicted one.
+
+## D-032
+
+**Every parameter carries its uncertainty and its provenance, and a parameter
+that was *identified* stores the measurement it came from rather than the
+result.**
+
+*2026-07-31, owner:* "Since we're running a Kalman filter eventually, why not
+keep sigma for all values around, to make our uncertainty explicit?"
+
+Yes — and the same afternoon proved it is more than bookkeeping.
+
+### The schema
+
+Each parameter becomes `{value, unit, sigma | bounds, kind, derived_from,
+note}`. `optimizer/params.py` loads it, and **`Param` subclasses `float`**, so
+every existing reader (`b["ua_ao"]`) kept working untouched while new code reads
+`.sigma`. A parallel "uncertainties" block was rejected: it separates a number
+from its error bar, which is how the two drift apart.
+
+`kind` is not decoration — it says what sort of thing the number is:
+
+| kind | meaning |
+|---|---|
+| `specified` | datasheet or manual. Carries hard **bounds**; a spec limit is not a 1-sigma error bar. |
+| `measured` | measured directly on this installation. |
+| `identified` | inferred from operating data through a model. **Carries correlations.** |
+| `prior` | a guess. Sigma expresses ignorance, not measurement error — honest for a filter, never to be mistaken for evidence. |
+
+### Why a bare `sigma:` would not have been enough
+
+The flow was corrected 1.24 → 1.44 m3/h (+16 %) hours before this was written.
+`ua_sa` had been identified as `Q/(T_room − T_water)` with `Q = m_dot_c·dT`, so
+it moved by *exactly* the same 16 %. Those two are perfectly correlated, and in
+
+    k = ua_sa / (m_dot_c − ua_sa/2)
+
+the error **cancels exactly**. Measured across that correction: `k` moved
+0.000 %, so the constraint-optimal setpoint held at 19.26 ± 0.36 °C — while
+`Q_max`, which carries a bare `m_dot_c`, moved the full 16 % (418 → 486 W/K).
+
+Propagating them as independent would have *overstated* the uncertainty on
+`P04_opt` and *understated* it on `Q_max`. So the file records dependencies,
+not just spreads.
+
+**And the strongest form is to remove the correlation rather than annotate it:
+store the raw measurement and compute the parameter.** `ua_sa` is stored as its
+three identification measurements; `derived.ua_sa()` computes it. The
+correlation is then structural and cannot be forgotten. Mutation-verified: with
+`ua_sa` stored as a constant, `k` moves 16.7 % under the same flow change; with
+it derived, 0.000 %.
+
+### Propagation is Monte Carlo, on purpose
+
+Analytic Jacobians are faster and conventional, but they must be re-derived by
+hand whenever a formula changes, and a stale Jacobian produces a *confidently
+wrong* error bar — worse than none. Sampling re-derives itself, and it is how
+the correlations stay honest: `ua_sa` is computed from the same flow draw that
+`m_dot_c` uses. Fixed seed, because a reproducible error bar beats a fresh one.
+
+Bounded parameters are sampled truncated. `flow_m3_h` sits **on** its upper
+bound — the pump is pinned at 100 % — so an untruncated Gaussian would put half
+its mass above a flow the exchanger cannot physically pass.
+
+### What this buys next
+
+The filter's `q_*`, `r_*` and `p0_*` are currently chosen numbers (D-030's
+audit). They *are* sigmas in disguise: `params.yaml` already explains
+`q_slab_k_per_h` being large by saying its driving input is "derived from an
+assumed pump curve rather than measured" — which is a statement that the flow's
+sigma propagates into the slab equation. Those constants should be **derived**
+from parameter uncertainty rather than tuned, at which point today's flow
+correction would have tightened them by itself.
+
+**Safety still may not depend on any of this** (D-031). Parameters serve
+optimisation; a wrong sigma should cost efficiency, never containment.

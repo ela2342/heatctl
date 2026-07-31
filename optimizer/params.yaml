@@ -18,7 +18,16 @@ building:
   # which is a genuinely good sign for the total even though the SPLIT
   # between fabric and ventilation remains unverified. That split does not
   # matter for a 2-state model; it will matter for per-room work.
-  ua_ao: 267.2          # W/K   confidence: good in total, poor in split
+  ua_ao:
+    value: 267.2
+    unit: W/K
+    sigma: 20.0
+    kind: measured
+    note: >
+      Fabric+bridges 148.83 plus ventilation 118.40 at n=0.7/h. The total is
+      corroborated by a measured whole-house H of ~267 W/K; the SPLIT is not,
+      and the ventilation half is a POOR assumption awaiting a blower door.
+      The split does not matter to a 2-state model and will matter per room.
 
   # Room air -> water. IDENTIFIED FROM OPERATING DATA 2026-07-30, replacing a
   # guess of 1000 that was above a measured upper bound.
@@ -52,39 +61,107 @@ building:
   # parameter in this file. `Q_max`, which carries a bare m_dot_c, scales with
   # it linearly (418 -> 486 W per K). Propagating flow and ua_sa as independent
   # would overstate the uncertainty on one and understate it on the other.
-  ua_sa: 568.0          # W/K   confidence: fair - IDENTIFIED, tied to flow
+  # NOT STORED AS A VALUE. `derived.ua_sa()` computes it from the measurement
+  # below and the flow, so the flow error propagates structurally instead of
+  # being annotated and forgotten (D-032).
+  ua_sa_identification:
+    manifold_dt_k:
+      value: 2.10
+      unit: K
+      sigma: 0.14        # two 0.1 K-quantised PT1000s, class B, differenced
+      kind: measured
+      note: >
+        Manifold return minus supply, 2026-07-31 16:53, plant in steady
+        operation.
+    room_mean_c:
+      value: 25.37
+      unit: degC
+      sigma: 0.8
+      kind: measured
+      note: >
+        Mean over the three instrumented rooms of seven. The sigma is
+        dominated by that coverage, not by sensor error.
+    water_mean_c:
+      value: 19.20
+      unit: degC
+      sigma: 0.15
+      kind: measured
 
   # Slab -> ground. From the as-built floor build-up.
-  ua_sg: 29.0           # W/K   confidence: good
+  ua_sg:
+    value: 29.0
+    unit: W/K
+    sigma: 4.0
+    kind: specified
+    note: From the as-built floor build-up.
 
   # Everything that is not the slab: air, furniture, internal partitions,
   # plaster. Whole-building C is predicted at ~15,300 Wh/K and measured at
   # 15,700-18,300 Wh/K; taking the predicted total less the slab gives this.
   # The partition contribution inside it (~2,000 Wh/K) carries +-20 % on its
   # own because the internal wall run is a geometric estimate, not a take-off.
-  c_air_wh: 6600.0      # Wh/K  confidence: fair
+  c_air_wh:
+    value: 6600.0
+    unit: Wh/K
+    sigma: 1300.0
+    kind: identified
+    derived_from: [c_slab_wh]
+    note: >
+      Predicted whole-building C (~15,300 Wh/K) less the slab. Measured C spans
+      15,700-18,300, hence the wide sigma. The partition term inside it
+      (~2,000 Wh/K) is a geometric estimate carrying +-20 % on its own.
 
   # Floor slab, from as-built layers: 63.7 Wh/(m^2 K) x 136.40 m^2.
-  c_slab_wh: 8691.0     # Wh/K  confidence: good
+  c_slab_wh:
+    value: 8691.0
+    unit: Wh/K
+    sigma: 700.0
+    kind: specified
+    note: As-built layers, 63.7 Wh/(m2 K) x 136.40 m2.
 
   # Split of solar gain between air and floor. Through large windows most of
   # the beam lands on the floor, so the majority goes to the slab. This is a
   # guess with no measurement behind it and is a prime candidate for the
   # identification ladder - it is also the parameter most likely to be
   # responsible for a daytime innovation bias.
-  f_sol: 0.30           # -     confidence: POOR - guess
+  f_sol:
+    value: 0.30
+    unit: "-"
+    sigma: 0.15
+    bounds: [0.0, 1.0]
+    kind: prior
+    note: >
+      A GUESS, and the sigma expresses ignorance rather than measurement error.
+      Prime candidate for the identification ladder and the most likely cause
+      of a daytime innovation bias.
 
   # Internal gains: people, appliances, standing losses. Derived from the
   # household-gain decomposition (see BACKLOG.md) at roughly +-10 W/K
   # equivalent. Treated as a constant here; it plainly is not one, and the
   # diurnal pattern is another candidate for the innovation to expose.
-  q_internal_w: 350.0       # W     confidence: fair on the daily mean
+  q_internal_w:
+    value: 350.0
+    unit: W
+    sigma: 120.0
+    kind: identified
+    note: >
+      From the household-gain decomposition. Fair on the DAILY MEAN and plainly
+      not constant through the day; the diurnal pattern is another thing the
+      innovation should expose.
 
   # Undisturbed ground temperature under the slab. Annual mean air temperature
   # is the standard first approximation; it drifts seasonally by a couple of K
   # under a heated slab and is treated as a constant here because ua_sg is
   # small enough that the resulting error is well under the noise.
-  t_ground: 10.0        # degC  confidence: fair
+  t_ground:
+    value: 10.0
+    unit: degC
+    sigma: 2.0
+    kind: prior
+    note: >
+      Annual mean air temperature, the standard first approximation. Drifts a
+      couple of K seasonally under a heated slab; ua_sg is small enough that
+      the resulting error stays under the noise.
 
 # Per-facade glazing, from the certificate's own area build-ups (which sum
 # exactly to its stated per-orientation totals) and the measured true
@@ -146,13 +223,31 @@ hydronics:
   #     m_dot_c [W/K] = density * specific_heat * flow_m3_h / 3600
   #   = 998 * 4183 * 1.44 / 3600 = 1670 W/K
   # so that re-measuring the flow moves every dependent figure by itself.
-  flow_m3_h: 1.44           # m3/h  = spec max, pump measured at 100 %
-  flow_min_m3_h: 0.58       # m3/h  spec sheet, hard minimum for the exchanger
-  flow_max_m3_h: 1.44       # m3/h  spec sheet, hard maximum
-  # Water properties at the ~20 degC this circuit runs at in cooling. Stored
-  # rather than hardcoded so the derivation above has no literals in it.
-  water_density_kg_m3: 998.0
-  water_specific_heat_j_kg_k: 4183.0
+  flow_m3_h:
+    value: 1.44
+    unit: m3/h
+    bounds: [0.58, 1.44]
+    sigma: 0.07
+    kind: specified
+    derived_from: [dc_pump_speed]
+    note: >
+      Bounds ARE the installation's delivery at minimum and maximum pump speed
+      - the pump is internal to the unit - so dc_pump_speed (0x802A, %) maps
+      onto them directly. Measured at 100 %, i.e. the top of the band. Note the
+      value sits ON the upper bound, which is why bounds and not a symmetric
+      sigma are authoritative here. Should TRACK the live register once the
+      pump modulates; it is pinned only because F7 is at its 100 % default.
+  water_density_kg_m3:
+    value: 998.0
+    unit: kg/m3
+    sigma: 1.0
+    kind: specified
+    note: Water at the ~20 degC this circuit runs at in cooling.
+  water_specific_heat_j_kg_k:
+    value: 4183.0
+    unit: J/(kg K)
+    sigma: 3.0
+    kind: specified
 
 # Filter tuning. These are NOT physical parameters - they encode how much we
 # distrust the model against how much we distrust the sensors.
@@ -186,7 +281,16 @@ filter:
 # accounting nicety"; the MULTICAL 403 on the shopping list is what retires
 # this block.
 heat_input:
-  assumed_cop: 3.35         # -     confidence: POOR - seasonal average, flat
+  assumed_cop:
+    value: 3.35
+    unit: "-"
+    sigma: 1.0
+    kind: prior
+    note: >
+      A flat seasonal average standing in for a COP that varies strongly with
+      supply temperature and outdoor conditions. THE MODEL'S WEAKEST INPUT and
+      the reason q_slab_k_per_h is set as high as it is. The MULTICAL 403
+      retires it.
   # Below this electrical power the pump is treated as off rather than
   # modulating, so standby draw is not integrated into the slab as heat.
   standby_w: 250.0
