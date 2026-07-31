@@ -3836,7 +3836,68 @@ maximize spread, limited only by demand and dew point."*
       P04 until C exists. That floor is currently the only thing stopping a low
       P04 pulling supply below the dew point once the ceiling saturates.
 
-- [ ] **C · Compressor stop as the bottom of the spread actuator.** In WP-S
+- [ ] **C · Compressor stop as the bottom of the spread actuator. DESIGN
+      SETTLED 2026-07-31, not yet implemented.**
+
+      **Mechanism (owner's): write the setpoint OR "OFF" to P04.** There is no
+      writable cooling-disable on this machine - `0x8003`'s cooling enable bit
+      is READ-ONLY and `0x0004` Mode has no off value - and `0x0000` bit 0
+      (unit power) would stop the internal DC pump, which is the only
+      circulation the plant has until the buffer tank lands. Raising P04 above
+      the return temperature stops the compressor on the machine's OWN logic
+      while the unit stays powered, so the pump keeps turning at the 100 % it
+      was pinned to.
+
+      **This is NOT the setpoint-as-last-resort that was rejected earlier.** The
+      distinction, and it is the whole point:
+        - rejected: nudging P04 as a capacity modulator (19 -> 20 to back off a
+          bit) - partial, slow, and it makes P04 carry the condensation
+          constraint;
+        - this: driving P04 to a value that unambiguously means OFF. Not a
+          modulation, a stop - expressed through the only lever that does not
+          also kill the pump.
+
+      **Encoding: P04 = 30 (its maximum).** Not `return + margin`, which is a
+      computed value racing a moving return and would silently restart if
+      return drifted up. 30 is above any cooling return, needs no computation,
+      is the top of P04's documented 7-30 range, and reads as "off" to anyone
+      looking at the register.
+
+      **P04 IS A TRANSPORT, NOT THE SETPOINT.** Owner: *"we do not mess with the
+      setpoint in a way that is visible to anyone."* The logical setpoint and
+      the register value are different things:
+        - `setpoint.py` reads the current setpoint to compute its next move. If
+          it ever reads back 30, the trim, the constraint memory and the
+          reversal guard all reason from a number that is not a setpoint. All
+          setpoint logic must operate on the LOGICAL value.
+        - On restart heatctl reads P04 from the device. Reading 30 must be
+          recognised as the OFF sentinel, not adopted as a setpoint. Safe
+          because nobody would ever command 30 in cooling.
+        - Telemetry publishes `setpoint` and the on/off state SEPARATELY.
+          Never publish 30 as "the setpoint".
+
+      **Caveat that shapes the sequencing:** unlike a valve command, this stop
+      is written to the device's flash and SURVIVES A HEATCTL CRASH. Nothing
+      restores it. For condensation that is the safe direction - a dead
+      controller leaves the plant not cooling - but it is the same shape as the
+      2026-07-31 17:03 outage: the house sits uncooled until a human notices.
+      **Do the liveness alert before C goes live, not after.**
+
+      Cost: two flash writes per stop/start cycle, bounded by `min_off_s`
+      (600 s) to at most ~6/hour, well inside the budget.
+
+      Implementation order, each stage observable before the next is
+      authoritative:
+        1. The abstraction: logical setpoint + `compressor_enabled`, register
+           value derived, telemetry split, restart sentinel handling. OFF
+           reachable by hand only.
+        2. Wire the decision into `capacity.py` as the bottom of its range,
+           with hysteresis and `min_off_s`.
+        3. Only then delete the P04 floor - the payoff, and what breaks the
+           `spread_est` -> floor -> setpoint circularity.
+
+      (superseded outline follows)
+      **C · Compressor stop as the bottom of the spread actuator.** In WP-S
       above. When the ceiling saturates at minimum frequency and supply is
       still too cold, stop the compressor and **keep the pump running** - that
       is how the loop warms back up. Only after C can P04's floor be removed.
