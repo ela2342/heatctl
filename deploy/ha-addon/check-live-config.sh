@@ -34,8 +34,12 @@ echo "repo: $REPO"
 echo "live: ${HOST}:${LIVE}  (mtime $(ssh "$HOST" "date -r ${LIVE} '+%Y-%m-%d %H:%M'" 2>/dev/null || echo unknown))"
 echo
 
-# Comments and blank lines are noise here - only behaviour matters.
-strip() { grep -vE '^\s*#|^\s*$' "$1"; }
+# Only BEHAVIOUR matters here. Strip comment lines, blank lines, AND trailing
+# comments - the last one because otherwise a reworded inline note reads as a
+# difference, and a checker that cries wolf is a checker nobody runs. Values
+# always precede the '#', so nothing real is hidden by this.
+strip() { sed -E 's/[[:space:]]+#.*$//; s/[[:space:]]+$//' "$1" \
+          | grep -vE '^[[:space:]]*#|^[[:space:]]*$'; }
 
 if diff -u <(strip "$TMP") <(strip "$REPO") > "$TMP.diff"; then
     echo "IN SYNC - no behavioural differences."
