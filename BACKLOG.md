@@ -3475,3 +3475,21 @@ rate is now observable, so that is answerable from data.
       opposite.
       Remaining known-legitimate divergence: repo ships `mode: heating` as the
       fresh-install default, live runs `mode: cooling` for the season.
+
+- [!] **Merge `control.mode` and `control.demand.auto_mode` into one parameter,
+      defaulting to `auto`.** Owner, 2026-07-31.
+      Today they are two settings expressing one decision: `mode` takes
+      `heating | cooling | off` (`main.py:202`) and `auto_mode` is a separate
+      boolean that lets the house average pick `mode` instead. Two knobs for one
+      question is how you get a plant in cooling with `auto_mode` half-forgotten
+      in the other direction, and it is also why the repo ships `mode: heating`
+      as a fresh-install default that is simply wrong for half the year.
+      Target: `mode: heating | cooling | off | auto`, default `auto`.
+      **Dependency the implementer must not skip:** merging the config surface
+      does not make `auto` safe. `auto_mode` was switched off on 2026-07-29
+      because it heated the house in July - correct logic, wrong conclusion,
+      because it guesses the season from indoor temperature and only three of
+      seven rooms have an air sensor. The recorded condition for re-enabling is
+      *"only once layer 2's forecast can gate it"*, which lands with WP-S Stage
+      2. So: merge the surface whenever, but `auto` must consult the forecast
+      before it is allowed to be the default in a live plant.
