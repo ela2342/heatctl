@@ -645,7 +645,11 @@ class Controller:
             # valve shut" is unanswerable without it.
             await self.plane.publish(
                 "cooling_supply_limit",
-                f"{self.safety.cooling_supply_limit():.1f}")
+                # None when no dew point is known - publish it as such rather
+                # than inventing a number, which is the whole point of removing
+                # the static fallback.
+                (f"{lim:.1f}" if (lim := self.safety.cooling_supply_limit())
+                 is not None else "unknown"))
         # State side of the HA "number" entities. Retained so HA shows the
         # right value after a restart; retaining STATE is fine, retaining
         # anything under set/ is not (see docs/DESIGN.md 2.2).

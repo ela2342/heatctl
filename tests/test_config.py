@@ -104,11 +104,17 @@ def test_safety_limits_are_ordered_sanely(real_cfg):
     s = real_cfg["safety"]
     assert s["setpoint_min_c"] < s["setpoint_max_c"]
     assert s["frost_protect_c"] < s["setpoint_min_c"]
-    # The two supply-water limits bound the water, NOT the room air, so they
-    # are deliberately not compared against the room setpoint range: a 16 C
-    # supply against a 15 C room target is perfectly ordinary. What must hold
-    # is that they leave a usable window and sit above freezing.
-    assert s["frost_protect_c"] < s["vl_min_cooling_c"] < s["vl_max_heating_c"]
+    # The heating supply limit bounds the WATER, not the room air, so it is
+    # deliberately not compared against the room setpoint range.
+    #
+    # There is no cooling counterpart to check: `vl_min_cooling_c` was removed
+    # on 2026-07-31. The cooling limit is the indoor dew point plus a margin,
+    # so it cannot be a config constant - and the constant that used to be here
+    # sat BELOW the live limit, meaning losing the dew point relaxed the
+    # constraint. Its absence is the invariant now.
+    assert "vl_min_cooling_c" not in s, "the static cooling limit is gone"
+    assert s["frost_protect_c"] < s["vl_max_heating_c"]
+    assert s["dew_point_margin_c"] > 0
     assert s["stale_data_timeout_s"] > 0
     assert 0 <= s["failsafe_valve_pct"] <= 100
 

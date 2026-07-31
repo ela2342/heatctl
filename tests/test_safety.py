@@ -90,7 +90,7 @@ def test_supply_overtemp_in_heating_fails_closed(cfg):
 def test_supply_undertemp_in_cooling_fails_closed(cfg):
     """Condensation guard. Must be 0, NOT the fail-open position."""
     s = Safety(cfg)
-    s.set_dew_point(14.0)                      # limit 16.0
+    s.set_dew_point(16.0)                      # guard trips at 16.0
     pct, reason = s.apply("cooling", state(rl_hk01=20.0, vl_total=15.9),
                           "rl_hk01", 100.0)
     assert (pct, reason) == (0.0, "vl_undertemp")
@@ -145,10 +145,14 @@ def test_healthy_state_passes_control_through_untouched(cfg):
 
 # ---------- dew-point supervision ----------
 
-def test_without_a_dew_point_the_static_limit_applies(cfg):
+def test_without_a_dew_point_there_is_no_limit_at_all(cfg):
     """Layer 1 must work with no broker at all - that is the whole premise."""
     s = Safety(cfg)
-    assert s.cooling_supply_limit() == 16.0
+    # None, not a number. REPLACES a test asserting the static 16.0 fallback,
+    # removed 2026-07-31: that value sat BELOW the live limit on a normal
+    # summer afternoon, so losing the dew point RELAXED the constraint. Callers
+    # must treat None as "do not cool" rather than substituting anything.
+    assert s.cooling_supply_limit() is None
 
 
 def test_a_fresh_dew_point_replaces_the_static_limit(cfg):
@@ -166,12 +170,12 @@ def test_a_fresh_dew_point_replaces_the_static_limit(cfg):
     assert s.cooling_supply_limit() == pytest.approx(17.5)   # tightened
 
 
-def test_a_stale_dew_point_falls_back_to_the_static_limit(cfg):
+def test_a_stale_dew_point_yields_no_limit(cfg):
     s = Safety(cfg)
     now = 10_000.0
     s.set_dew_point(12.7, now=now)
     assert s.cooling_supply_limit(now=now + 899) == pytest.approx(14.7)
-    assert s.cooling_supply_limit(now=now + 901) == 16.0
+    assert s.cooling_supply_limit(now=now + 901) is None
 
 
 def test_the_limit_tracks_the_dew_point_with_no_lower_floor(cfg):
@@ -235,15 +239,19 @@ def test_an_unknown_dew_point_does_not_stop_heating(cfg):
                    "rl_hk01", 60.0) == (60.0, None)
 
 
-def test_requiring_a_dew_point_can_be_switched_off(cfg):
-    """For a deployment with no dew-point source, the static limit is all
-    there is - the behaviour before 2026-07-27."""
-    cfg["safety"]["cooling_requires_dew_point"] = False
+def test_there_is_no_way_to_switch_the_dew_point_requirement_off(cfg):
+    """REPLACES a test that exercised `cooling_requires_dew_point: False`.
+
+    That flag chose between stopping and trusting a made-up static limit; both
+    it and the static limit were removed on 2026-07-31. Without a dew point the
+    condensation limit is unknowable, so cooling stops - there is no setting
+    that says otherwise, and a config carrying the old key must not silently
+    re-enable anything.
+    """
+    cfg["safety"]["cooling_requires_dew_point"] = False      # stale key
     s = Safety(cfg)
     st = state(rl_hk01=20.0, vl_total=25.0)
-    assert s.apply("cooling", st, "rl_hk01", 60.0) == (60.0, None)
-    assert s.apply("cooling", state(rl_hk01=20.0, vl_total=15.9),
-                   "rl_hk01", 60.0) == (0.0, "vl_undertemp")
+    assert s.apply("cooling", st, "rl_hk01", 60.0) == (0.0, "dew_point_unknown")
 
 
 def test_frost_protection_still_outranks_the_dew_point_rule(cfg):
@@ -265,7 +273,7 @@ def test_a_faulted_circuit_sensor_does_not_defeat_the_condensation_guard(cfg):
     is the actively harmful choice.
     """
     s = Safety(cfg)
-    s.set_dew_point(14.0)                      # limit 16.0
+    s.set_dew_point(16.0)                      # guard trips at 16.0
     st = state(vl_total=15.0)                  # supply known bad
     st.faults.add("rl_hk01")                   # and the circuit sensor is dead
     assert s.apply("cooling", st, "rl_hk01", 50.0) == (0.0, "vl_undertemp")
@@ -291,10 +299,10 @@ def test_the_condensation_guard_uses_the_live_limit(cfg):
     s = Safety(cfg)
     st = state(rl_hk01=20.0, vl_total=15.0)
 
-    s.set_dew_point(11.0)                      # limit 13.0 -> 15.0 is fine
+    s.set_dew_point(13.0)                      # trips at 13.0 -> 15.0 is fine
     assert s.apply("cooling", st, "rl_hk01", 60.0) == (60.0, None)
 
-    s.set_dew_point(14.0)                      # limit 16.0 -> 15.0 is not
+    s.set_dew_point(16.0)                      # trips at 16.0 -> 15.0 is not
     assert s.apply("cooling", st, "rl_hk01", 60.0) == (0.0, "vl_undertemp")
 
 
@@ -322,7 +330,7 @@ def test_the_condensation_guard_is_scoped_to_cooling(cfg):
     own mode register, which heatctl now reads.
     """
     s = Safety(cfg)
-    s.set_dew_point(14.0)                      # limit 16.0
+    s.set_dew_point(16.0)                      # guard trips at 16.0
     st = state(rl_hk01=20.0, vl_total=15.0)    # cold supply
     assert s.apply("heating", st, "rl_hk01", 60.0) == (60.0, None)
     assert s.apply("cooling", st, "rl_hk01", 60.0) == (0.0, "vl_undertemp")
@@ -346,9 +354,13 @@ def test_the_condensation_guard_does_not_reopen_on_one_lsb_of_recovery(cfg):
     supply down onto the limit, so the plant parks exactly where a single LSB
     tick in either signal flips every owned valve. The recorded sequence:
 
-        07:32:18  vl 14.4, dew 12.5 -> limit 14.5   -> CLOSE
-        07:32:33  vl 14.4, dew 12.4 -> limit 14.4   -> reopened
-        07:32:45  vl 14.3, dew 12.4 -> limit 14.4   -> CLOSE
+        07:32:18  vl 12.4, dew 12.5 -> trip at 12.5  -> CLOSE
+        07:32:33  vl 12.4, dew 12.4 -> trip at 12.4  -> reopened
+        07:32:45  vl 12.3, dew 12.4 -> trip at 12.4  -> CLOSE
+
+        (Values shifted down 2.0 K on 2026-07-31 when the guard moved from
+        tripping at the control target to tripping at the dew point itself.
+        The incident and the relationships it exercises are unchanged.)
 
     hk02 is a fitted actuator with a 150 s stroke, so being commanded
     100 -> 0 -> 100 -> 0 in 27 s left its true position unknown - the one
@@ -358,11 +370,11 @@ def test_the_condensation_guard_does_not_reopen_on_one_lsb_of_recovery(cfg):
     why this test holds the supply constant and moves the limit.
     """
     s = Safety(cfg)
-    s.set_dew_point(12.5)                                  # limit 14.5
-    st = state(rl_hk01=20.0, vl_total=14.4)
+    s.set_dew_point(12.5)                                  # guard trips at 12.5
+    st = state(rl_hk01=20.0, vl_total=12.4)
     assert s.apply("cooling", st, "rl_hk01", 100.0) == (0.0, "vl_undertemp")
 
-    s.set_dew_point(12.4)                                  # limit 14.4
+    s.set_dew_point(12.4)                                  # guard trips at 12.4
     pct, reason = s.apply("cooling", st, "rl_hk01", 100.0)
     assert reason == "vl_undertemp", "reopened on an LSB tick of the LIMIT"
     assert pct == 0.0
@@ -376,22 +388,22 @@ def test_the_condensation_guard_trips_the_instant_supply_goes_bad(cfg):
     defect it replaced - strictly worse than having no hysteresis at all.
     """
     s = Safety(cfg)
-    s.set_dew_point(12.5)                                  # limit 14.5
-    st = state(rl_hk01=20.0, vl_total=14.49)               # a hair below
+    s.set_dew_point(12.5)                                  # guard trips at 12.5
+    st = state(rl_hk01=20.0, vl_total=12.49)               # a hair below
     assert s.apply("cooling", st, "rl_hk01", 100.0) == (0.0, "vl_undertemp")
 
 
 def test_the_condensation_guard_reopens_once_clear_of_the_margin(cfg):
     """It must actually release - a latch that never clears stops the cooling."""
     s = Safety(cfg)
-    s.set_dew_point(12.5)                                  # limit 14.5
-    assert s.apply("cooling", state(rl_hk01=20.0, vl_total=14.4),
+    s.set_dew_point(12.5)                                  # guard trips at 12.5
+    assert s.apply("cooling", state(rl_hk01=20.0, vl_total=12.4),
                    "rl_hk01", 100.0) == (0.0, "vl_undertemp")
     # Inside the release margin (14.5 + 0.3): still held closed.
-    assert s.apply("cooling", state(rl_hk01=20.0, vl_total=14.7),
+    assert s.apply("cooling", state(rl_hk01=20.0, vl_total=12.7),
                    "rl_hk01", 100.0) == (0.0, "vl_undertemp")
     # Clear of it: control gets its circuit back.
-    assert s.apply("cooling", state(rl_hk01=20.0, vl_total=14.8),
+    assert s.apply("cooling", state(rl_hk01=20.0, vl_total=12.8),
                    "rl_hk01", 100.0) == (100.0, None)
 
 
@@ -403,8 +415,8 @@ def test_an_untripped_guard_does_not_hold_the_margin_against_control(cfg):
     the release margin for every circuit, all the time.
     """
     s = Safety(cfg)
-    s.set_dew_point(12.5)                                  # limit 14.5
-    assert s.apply("cooling", state(rl_hk01=20.0, vl_total=14.6),
+    s.set_dew_point(12.5)                                  # guard trips at 12.5
+    assert s.apply("cooling", state(rl_hk01=20.0, vl_total=12.6),
                    "rl_hk01", 80.0) == (80.0, None)
 
 
@@ -416,11 +428,11 @@ def test_the_trip_latch_does_not_survive_a_mode_change(cfg):
     """
     s = Safety(cfg)
     s.set_dew_point(12.5)
-    assert s.apply("cooling", state(rl_hk01=20.0, vl_total=14.4),
+    assert s.apply("cooling", state(rl_hk01=20.0, vl_total=12.4),
                    "rl_hk01", 100.0) == (0.0, "vl_undertemp")
     s.apply("heating", state(rl_hk01=20.0, vl_total=30.0), "rl_hk01", 50.0)
     # Back to cooling, supply inside the old release margin but above the limit.
-    assert s.apply("cooling", state(rl_hk01=20.0, vl_total=14.6),
+    assert s.apply("cooling", state(rl_hk01=20.0, vl_total=12.6),
                    "rl_hk01", 100.0) == (100.0, None)
 
 
@@ -436,12 +448,12 @@ def test_the_release_margin_is_not_applied_once_the_guard_has_cleared(cfg):
     which is exactly the class of bug that does not announce itself.
     """
     s = Safety(cfg)
-    s.set_dew_point(12.5)                                  # limit 14.5
-    assert s.apply("cooling", state(rl_hk01=20.0, vl_total=14.4),
+    s.set_dew_point(12.5)                                  # guard trips at 12.5
+    assert s.apply("cooling", state(rl_hk01=20.0, vl_total=12.4),
                    "rl_hk01", 100.0) == (0.0, "vl_undertemp")
     # Recover clear of the margin - this must clear the latch.
     assert s.apply("cooling", state(rl_hk01=20.0, vl_total=14.9),
                    "rl_hk01", 100.0) == (100.0, None)
     # Now back INSIDE the margin but above the limit. Safe, so control keeps it.
-    assert s.apply("cooling", state(rl_hk01=20.0, vl_total=14.6),
+    assert s.apply("cooling", state(rl_hk01=20.0, vl_total=12.6),
                    "rl_hk01", 100.0) == (100.0, None)

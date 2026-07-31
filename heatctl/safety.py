@@ -17,19 +17,21 @@ class Safety:
         self.setpoint_min = s["setpoint_min_c"]
         self.setpoint_max = s["setpoint_max_c"]
         self.vl_max_heating = s["vl_max_heating_c"]
-        self.vl_min_cooling = s["vl_min_cooling_c"]
         self.frost_c = s["frost_protect_c"]
         self.stale_timeout = s["stale_data_timeout_s"]
         self.failsafe_pct = s["failsafe_valve_pct"]
 
-        # Dew-point supervision. `vl_min_cooling_c` alone is a fixed guess at
-        # a limit that is physically not fixed at all - it depends on indoor
-        # humidity. Measured 2026-07-27: a 12.7 degC dew point against a 16.0
-        # degC static limit shut circuits that were in no danger whatever.
-        self.dew_margin = s.get("dew_point_margin_c", 2.0)
+        # Dew-point supervision. THERE IS NO STATIC FALLBACK, and there is no
+        # flag to re-enable one. The condensation limit is the indoor dew point
+        # plus a margin; without a dew point we do not know it, so we do not
+        # cool. A number invented to stand in for it is not a floor, it is a
+        # guess wearing a floor's clothes - `vl_min_cooling_c: 16.0` was BELOW
+        # the live limit on 2026-07-31 (16.5-16.8), so losing the dew point
+        # made the constraint LOOSER. Removed 2026-07-31 on the owner's
+        # instruction, along with `cooling_requires_dew_point`, which existed
+        # only to choose between stopping and trusting that guess.
+        self.dew_margin = s.get("dew_point_margin_c", 1.0)
         self.dew_max_age = s.get("dew_point_max_age_s", 900)
-        self.cooling_requires_dew_point = s.get("cooling_requires_dew_point",
-                                                True)
         # ASYMMETRIC hysteresis on the condensation guard. Trip immediately,
         # release only `release_margin` above the limit. See apply().
         self.dew_release_margin = s.get("dew_point_release_margin_c", 0.3)
@@ -87,22 +89,20 @@ class Safety:
         would still have been clamped to 16.0, holding circuits shut with 4.6
         K of headroom to spare.
 
-        Without a fresh reading this returns the static `vl_min_cooling_c`,
-        but note that is only reached when `cooling_requires_dew_point` is
-        off. That static value deserves suspicion: it arrived undocumented in
-        the initial commit and it is NOT conservative - a 26 degC room at 60 %
-        RH has a dew point of 17.6 degC, well above it. It looks like a safe
-        floor and is not one, which is why the default is now to stop cooling
-        rather than trust it.
+        **Returns None when the dew point is unknown**, and callers must treat
+        that as "do not cool" rather than substituting anything. There is no
+        static fallback: the limit depends on indoor humidity, so a fixed
+        number cannot express it, and the one that used to live here (16.0) sat
+        BELOW the live limit on a normal summer afternoon - losing the dew
+        point relaxed the constraint instead of tightening it.
         """
         now = time.monotonic() if now is None else now
         if not self.dew_point_known(now):
             if self._dew_logged is not None:
-                log.warning("dew point stale or absent, falling back to the "
-                            "static cooling supply limit %.1f degC",
-                            self.vl_min_cooling)
+                log.warning("dew point stale or absent - no cooling limit can "
+                            "be computed, so cooling stops")
                 self._dew_logged = None
-            return self.vl_min_cooling
+            return None
         limit = self._dew + self.dew_margin
         if self._dew_logged is None or abs(self._dew - self._dew_logged) >= 0.5:
             log.info("cooling supply limit %.1f degC (dew point %.1f + %.1f)",
@@ -128,7 +128,7 @@ class Safety:
           no longer applies because the measurement says it is not. These
           stay at 0 % on purpose - do not "make everything fail open".
         * FAIL CLOSED IN COOLING when the dew point is unknown, if
-          `cooling_requires_dew_point`. Condensation is the one limit we
+          a dew point. Condensation is the one limit we
           cannot bound without a measurement, and the damage is wet floors
           rather than a warm screed the slab mass absorbs. See
           cooling_supply_limit() for why a static number is not a safe
@@ -170,10 +170,20 @@ class Safety:
             # honest fix is to detect a disagreement and alarm, not to run a
             # condensation guard in heating where a lukewarm start-up supply
             # plus humid air would block the house warming up.
-            if self.cooling_requires_dew_point and not self.dew_point_known():
+            if not self.dew_point_known():
                 return 0.0, "dew_point_unknown"
             if vl is not None:
-                limit = self.cooling_supply_limit()
+                # THE GUARD TRIPS AT THE DEW POINT, not at the control target
+                # (owner, 2026-07-31: "Trip at 0, target 1K"). These are two
+                # different jobs and stacking them cost a whole margin:
+                #   control target = dew + dew_point_margin_c   (how badly we
+                #                    know the dew point)
+                #   guard trip     = dew                        (the physical
+                #                    boundary, a genuine last resort)
+                # Previously the guard tripped at the target, so the controller
+                # could not aim there without sitting on the trip threshold -
+                # which is what `capacity.target_margin_c` was really buying.
+                limit = self._dew
                 # ASYMMETRIC BY DESIGN. Trip the instant supply goes below the
                 # limit; release only once it is `release_margin` clear of it.
                 #
