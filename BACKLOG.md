@@ -3778,3 +3778,55 @@ stays on measured supply (D-031, D-032).
       Simplest fix: an HA automation on `binary_sensor.heatctl_*` going
       unavailable, or the Supervisor's own App watchdog. Do this before the
       next structural change.
+
+## WP-S implementation status — the three changes, 2026-07-31
+
+Written down because they were discussed at length, agreed in principle, and
+then existed only in conversation. The owner's framing: *"maximize flow,
+maximize spread, limited only by demand and dew point."*
+
+- [ ] **A · Pin the pump at maximum flow.** NOT DONE. The unit runs its own
+      DeltaT loop (F4 = AUTO, F10 = 2 K) which throttles flow when we throttle
+      the compressor, cancelling the throttling - observed at 70 % while
+      Arbeitszimmer was nowhere near setpoint, recovering to 90 % once the
+      ceiling rose again.
+      Mechanism: set **F8 `pump_min_speed_pct` = 100** so min = max = 100 and
+      the loop has no room. One register write, reversible, keeps AUTO mode and
+      its protections. **Do NOT switch to manual (F4 = 2) without setting F6
+      first** - `pump_manual_speed_pct` is 30 %, so manual would drop flow, not
+      pin it.
+      Write it through `heatctl/hp/set/pump_min_speed_pct`, which already has
+      range checking, the write budget and single-writer ownership. Not through
+      an ad-hoc script.
+      Note F8 currently reads **10 %**, not the 40 % default - which is also why
+      the `flow = flow_max * speed/100` model is less well-founded than it
+      looked (that derivation leaned on 0.58/1.44 = 40.3 % matching the
+      default). The MULTICAL 403 settles it.
+
+- [ ] **B · Stop the setpoint trim walking P04 down for capacity.** NOT DONE.
+      Today: house warm + valves open -> step P04 down. That does not add
+      cooling, because output is set by the frequency ceiling - and it is what
+      walked past the useful point at 13:27, costing ~430 W.
+      Target rule: **P04 lowers only when P04 is actually the binding
+      constraint** - the machine reaching setpoint and stopping while demand is
+      unmet. Otherwise leave it. Its remaining job is to rise when the house is
+      satisfied (COP).
+      **Ordering constraint:** B keeps the `limit + measured spread` floor on
+      P04 until C exists. That floor is currently the only thing stopping a low
+      P04 pulling supply below the dew point once the ceiling saturates.
+
+- [ ] **C · Compressor stop as the bottom of the spread actuator.** In WP-S
+      above. When the ceiling saturates at minimum frequency and supply is
+      still too cold, stop the compressor and **keep the pump running** - that
+      is how the loop warms back up. Only after C can P04's floor be removed.
+      Needs the experiment: which register actually stops it (R32 to zero, the
+      power bit, or the mode register) and what each costs in flash.
+
+- [!] **Renaming an MQTT-discovered entity does not change its entity_id.** HA
+      keys on `unique_id`, so the discovery `name` change made on 2026-07-31 to
+      tidy `sensor.heatctl_hp_writes_in_the_last_hour` into
+      `..._hp_writes_last_hour` was a **no-op** - the original id persists and
+      the commit that "fixed" it changed nothing. To actually rename, either
+      change the `unique_id` (creating a new entity and orphaning the old) or
+      rename in the entity registry. Worth knowing before anyone tidies another
+      one and believes it worked.
