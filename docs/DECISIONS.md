@@ -590,3 +590,62 @@ the decision to where the model lives, not to keep refining the if-statements.
    identified dynamics — and says which in a comment. "Chosen" is not a
    provenance.
 4. A new guard is a signal to re-open this entry, not to add a constant.
+
+## D-031
+
+**No derived constant is ever written as a literal. Every system parameter
+lives in one place, with its derivation. Derived quantities are computed from
+those parameters at runtime, never stored.**
+
+*2026-07-31, owner:* "I want to never, ever see an `x*0.41` in the code
+somewhere. ALL constants derived from some parameter need to explicitly derive
+from this parameter, and all system parameters must be in one centralized and
+neat place, with explanation of derivation."
+
+This sharpens D-030 rule 3 ("every constant is a device limit, a measured
+quantity, or derived from identified dynamics — and says which") into something
+checkable: a number in the code is a *parameter* or it is a *bug*.
+
+### Why it matters here specifically
+
+The same day this was stated, a derivation produced `k = UA/(mc − UA/2) = 0.41`
+and `Q_max = 418·(T_room − limit)`. Both are attractive to paste into code and
+both would have been wrong within hours: `UA = 490` was identified once, over
+3 rooms of 7, lumping the slab with a fan coil that has since been taken out of
+the condensation limit. A stored `0.41` would have survived that change
+silently. A computed `k` would not.
+
+`optimizer/model.eigen_time_constants_h()` is the pattern to copy — it derives
+the coupled modes from `BuildingParams` every call, so re-identifying `ua_sa`
+moved the lead time automatically and nothing had to be remembered.
+
+### Audit at the time of writing
+
+The code is **clean** — no `1438`, no `0.41`, no `0.074`, no flow literal
+anywhere in `heatctl/` or `optimizer/`. This is preventive.
+
+It did expose one real gap: **the hydronic flow rate is declared nowhere.**
+1.24 m3/h appears 4x in BACKLOG.md, 2x in this file, 2x in BUILDING.local.md
+and once inside a *comment* in params.yaml — while underpinning every energy
+figure quoted today, including `m_dot_c = 1438 W/K`. It is prose. Fix that
+before anything computes with it.
+
+### Where parameters live
+
+Two files, and the split is by KIND, not by layer:
+
+- **`config.yaml` — the installation and the policy.** Register map, room and
+  circuit topology, safety limits. What the hardware IS and what is FORBIDDEN.
+  Layer 1's truth, and the only file its safety path may depend on.
+- **`params.yaml` — the physics.** Everything measured or surveyed about the
+  building and the plant: conductances, capacities, flow, glazing, COP map,
+  with provenance and a confidence level on each. Read by BOTH layers. Reading
+  a shared file is not a runtime dependency on layer 2.
+
+It currently sits at `optimizer/params.yaml`, which implies layer-2 ownership
+it should not have. Move it to the top level when layer 1 first needs it.
+
+**Safety must never depend on `params.yaml` being right.** Parameters serve
+optimisation. A wrong conductance should cost efficiency, never containment -
+which is the same reason the condensation constraint is enforced on measured
+supply rather than on a predicted one.
