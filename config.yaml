@@ -383,11 +383,19 @@ control:
   # immediate. Every write wears the unit's flash, hence minutes not seconds.
   capacity:
     enabled: true
-    target_margin_c: 1.0    # hold the supply this far above the limit
-    deadband_c: 0.4
-    step_hz: 5.0
+    # Owner, 2026-07-31: "By measuring at the manifold with 0.1 degree
+    # precision, and by controlling max compressor power much more fine grained
+    # than the coarse step point, we have much better control that make the
+    # 1.5K headroom we are currently seeing seem excessive." Correct on both
+    # counts, and this should have moved when it was said.
+    target_margin_c: 0.6    # hold the supply this far above the limit
+    deadband_c: 0.25
+    # 5 Hz was ~0.37 K of supply movement per step at the measured ~0.074 K/Hz -
+    # coarse enough that it was itself a reason to keep a wide margin. 2 Hz is
+    # ~0.15 K, comfortably finer than the margin it has to respect.
+    step_hz: 2.0
     raise_interval_s: 600   # lowering ignores this
-    min_hz: 35.0
+    min_hz: 30.0   # the device's own floor; 35 left 5 Hz of range unused
     max_hz: 90.0
     # Raising the ceiling only helps if the ceiling is what limits the machine.
     at_ceiling_hz: 3.0
