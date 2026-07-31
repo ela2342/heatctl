@@ -2909,17 +2909,35 @@ its name to be the outdoor weather station and removed - "restoring documented
 intent". The reference fell 17.1 -> 15.7, the limit fell with it, and the
 compressor started, which looked like a clean confirmation. It was not.
 
+**The compressor start was a coincidence, and the timestamps prove it:**
+
+    09:47:13   compressor 0 -> 14 -> 50 Hz       <- started on its OWN
+    10:07:38   limit 18.2 -> 16.7                <- the change lands
+    10:07:43   setpoint 21.0 -> 20.0             <- the only real effect
+    10:12:05   supply bottoms at 18.7
+    10:13:38   limit back to 18.1                <- revert
+
+The machine restarted twenty minutes BEFORE the change, when return water
+crossed the 2 K dead zone as the day warmed - which had been predicted in this
+very session at 09:05 ("should restart around 10:00") and then not connected to
+the evidence an hour later. Exposure was six minutes; supply bottomed at 18.7
+against a true limit of 18.2 and an actual dew point of 17.1, so it never went
+below the true limit and no condensation risk was realised.
+
 WH32-245 is the **Arbeitszimmer** sensor. `config.yaml` uses that exact topic as
 the room's `room_temp_topic`. Hourly means from the same night settle it:
 
     WH32-245   26.4 26.4 25.8 25.3 25.3 25.4 25.5 25.7   <- does not swing
     WH65B-210  22.1 18.9 17.4 17.3 19.5 20.9 22.4 24.2   <- genuinely outdoor
 
-A sensor that does not follow the diurnal swing is indoors. With the wrong
-version live the plant drove supply toward a limit 1.4 K too low, and the
-capacity controller was actively raising frequency to push it further; measured
-margin at revert was 0.70 K against a 1.0 K target. Reverted within the hour, no
-breach.
+A sensor that does not follow the diurnal swing is indoors. And it did not need
+deriving from data at all: `config.yaml` REGISTERS that topic as
+Arbeitszimmer's `room_temp_topic`, and `docs/BUILDING.local.md` carries a
+floor-by-floor room table. Both were in the repository the whole time.
+
+With the wrong version live the plant drove supply toward a limit 1.4 K too low
+and the capacity controller was actively raising frequency to push it further;
+measured margin at revert was 0.70 K against a 1.0 K target.
 
 **The lesson is not "check sensor names".** The wrong version produced exactly
 the effect that had been predicted for it - dewref down, compressor starts - and
@@ -2927,35 +2945,68 @@ that agreement was taken as confirmation. It confirmed nothing: the prediction
 followed from removing ANY high-reading member of a max(), whatever it measured.
 The identity of the sensor was never tested, only its effect. The check that
 settled it - does this sensor track the outdoor diurnal swing - costs one
-history query and should have run BEFORE the change, not after a user asked an
-unrelated question about which floor a room was on.
+history query - and was not even necessary, because the repository already
+recorded the answer.
 
-**The real finding: Arbeitszimmer sets the condensation limit for the whole
-plant, legitimately.** Its dew point runs ~2.5 K above the ground floor (17.1 vs
-14.5 Gaestebad, 15.7 Wohnzimmer). It is the only OG room, coupled to the
-Wohnzimmer by the open Luftraum so warm moist air collects there, and it holds
-the FAN COIL - a cold surface in a moving airstream, the most condensation-prone
-component in the system. It is the room that most needs the protection.
+**Both errors that day had one cause: inferring a fact from a name while ground
+truth sat unread.** "Elternschlafzimmer" was asserted to be upstairs because
+bedrooms usually are; BUILDING.local.md says EG. "fineoffset_wh32_245" was
+assumed outdoor because Fine Offset make weather stations; config.yaml
+registers it to Arbeitszimmer. The owner's question about the first is what
+surfaced the second. **When ground truth exists - floor plans, the register
+map, config.yaml, an entity registry - read it. A name is a hypothesis.**
 
-So the overnight idling was not a bug. The chain is sound:
+**THE ROOT CAUSE WAS OCCUPANCY, AND IT WAS NOT DISCOVERABLE FROM THE DATA.**
+Owner, 2026-07-31: somebody slept in Arbeitszimmer that night and switched the
+fan coil's fan off. That is the whole explanation, and the numbers agree - a
+sleeping adult emits roughly 40 g/h of moisture, so eight hours in that ~81 m3
+room is ~320 g into ~97 kg of air, about 3 g/kg of humidity ratio. AZ at 17.1
+degC dew point sits near 12.2 g/kg against the ground floor's ~10.2. Occupancy
+alone accounts for the entire 2.6 K gap. With the fan off there was neither
+circulation to disperse the moisture nor a cold coil surface to condense it back
+out.
 
-    AZ dew 17.1 -> floor 17.1 + dew_floor_offset_c 4.0 = 21.1 -> setpoint ~21
-    -> restart needs return >= 23.0 -> return sat at 22.4 -> idle
+So Arbeitszimmer's dew point was a TRANSIENT, not a property of the room, and
+the earlier text here claiming it "legitimately carries the highest dew point
+because warm moist air collects via the Luftraum" was a plausible-sounding
+story fitted to one night's data. The Luftraum coupling is real (BUILDING.local
+.md) but it is not what happened here.
 
-**Real levers, in order of value.** None of them is the dew point reference:
-  (a) `safety.restart_dead_zone` / P01 at **2 K is the direct cause** of the
-      0.6 K shortfall. The owner proposed dropping it to 1 K on 2026-07-30.
-      This costs no condensation margin whatsoever and should be first.
-  (b) `dew_floor_offset_c: 4.0` is a coarse backstop and the single largest
-      term in the floor. The spread-based estimate this file already describes
-      would replace it with something measured.
-  (c) **Dehumidify Arbeitszimmer.** Every 1 K off its dew point is 1 K of supply
-      depression for the entire plant, worth ~1.4 kW at this flow.
-  (d) Ventilation is NOT free on a humid day: outdoor dew point was 18.7 against
-      14.5-17.1 indoors, so opening windows IMPORTS moisture and raises the
-      plant's own condensation floor. Measured: Wohnzimmer 14.43 -> 15.69 within
-      an hour of opening. Cooling by ventilation and cooling by the slab are in
-      direct conflict when the outdoor dew point is above the indoor one.
+**The systemic finding, which is the part worth keeping.** One person sleeping
+in one room with one fan switched off raised that room's dew point ~2.6 K, which
+raised the condensation floor for the ENTIRE plant, which held the water
+setpoint above the compressor's restart dead zone, which stopped cooling for the
+whole house on the night before a 33 degC day:
+
+    person + fan off -> AZ dew 17.1 -> floor 17.1 + dew_floor_offset_c 4.0
+    = 21.1 -> setpoint ~21 -> restart needs return >= 23.0 -> return sat at
+    22.4 -> plant idle 01:00-09:47
+
+The dew point reference is a `max()`, so by design the most humid room governs
+everywhere. That is correct for condensation safety and has a nasty consequence:
+**any single room can veto cooling for the house, and nothing currently notices
+which room is doing it or why.** The plant published `water_setpoint_saturated =
+on` all night and no-one could tell from that which room was binding.
+
+**Open: put the fan coil's fan under control.** DEFERRED - needs a cable pulled
+(owner, 2026-07-31), so not a same-day job. The coil has three 230 V speed
+inputs and is currently hardwired, and there are spare 750-517 relay outputs on
+the WAGO. Running the fan when its own room is the binding constraint both
+disperses the moisture and condenses it out on the coil, which is the only
+actuator in the house that can lower a room's dew point. Today the room that
+limits the plant is something heatctl can be blocked by but cannot act on.
+Prerequisites and cautions:
+  - The cable run. Not started.
+  - Interlock: never run the fan with the coil below the room dew point unless
+    the condensate path is known good - check whether this unit has a tray and
+    a drain at all before commanding anything.
+  - Single-writer rule applies to the relay outputs as it does everywhere else.
+
+**Cheaper, available now: publish WHICH room sets the limit.** The reference is
+a max() and heatctl only ever sees the scalar. Publishing the argmax alongside
+it would have turned an eight-hour outage into an obvious one-line diagnosis,
+and it needs no wiring at all.
+
 
 ### Also found, not yet fixed: the Wohnzimmer wall unit is sunlit
 
