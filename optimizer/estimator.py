@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 
 import aiomqtt
 
+from . import derived
 from .kalman import KalmanFilter, eye
 from .model import (N_INPUTS, U_GROUND, U_HEAT, U_INTERNAL, U_OUTDOOR,
                     U_SOLAR, BuildingParams, discretise, heat_demand_w,
@@ -57,11 +58,20 @@ class Estimator:
         self.params = params
         b = params["building"]
         # ua_sa is DERIVED from its identification measurement and the flow,
-        # not stored (D-032). The flow error then propagates structurally into
-        # everything downstream instead of being annotated and forgotten.
+        # not stored (D-032), so the flow error propagates structurally instead
+        # of being annotated and forgotten.
+        #
+        # The stored fallback is kept on purpose and is not dead code: the same
+        # partial-migration rule the loader follows. A synthetic config in a
+        # test, or a params file not yet converted, gives a plain `ua_sa` and
+        # must still load - a schema change that forces a big-bang rewrite of a
+        # safety-adjacent file is one that gets rushed.
+        if "ua_sa_identification" in b:
+            ua_sa = derived.ua_sa(params).value
+        else:
+            ua_sa = b["ua_sa"]
         self.bp = BuildingParams(
-            ua_ao=b["ua_ao"], ua_sa=derived.ua_sa(params).value,
-            ua_sg=b["ua_sg"],
+            ua_ao=b["ua_ao"], ua_sa=ua_sa, ua_sg=b["ua_sg"],
             c_air_wh=b["c_air_wh"], c_slab_wh=b["c_slab_wh"],
             f_sol=b["f_sol"])
         self.t_ground = b["t_ground"]
