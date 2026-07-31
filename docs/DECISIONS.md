@@ -529,10 +529,24 @@ while the machine is off. The constant was guarding against nothing. It was
 simply over-conservative: it assumes 3 K of spread where the plant currently
 produces ~2.2 K.
 
-`dew_floor_offset_c` is now a start-up fallback only, reached when no spread has
-ever been measured or the limit is missing. The `max()` is gone, and
-`tests/test_setpoint_floor.py` pins both directions — a narrow measured spread
-must relax the floor below the prior, a wide one must raise it above.
+**`dew_floor_offset_c` is REMOVED.** Not demoted — removed, from
+`heatctl/setpoint.py` and from `config.yaml`. It was first kept behind a
+`max()`, then kept as a "start-up fallback", and the owner had to ask a fourth
+time: *"DID I TELL YOU TO USE + 4 AS A STARTUP BACKUP, OR DID I TELL YOU TO JUST
+KILL IT?"* Both retentions were the same softening of the same instruction.
+
+The only cooling floor is now `supply_limit + measured spread`. Before any
+spread has been measured there is **no** floor beyond `cooling_min_c`, and that
+is deliberate: the trim moves 1 K per 30 min so the setpoint cannot travel far,
+the spread estimate populates within seconds of the compressor running, and both
+the capacity controller and the valve guard act on MEASURED supply regardless of
+what the setpoint asked for. A dew point alone is not a floor on P04, because
+P04 targets RETURN water and the gap to leaving water is the machine's spread —
+dynamic, and to be measured rather than assumed.
+
+`tests/test_setpoint_floor.py` and four retargeted tests in
+`tests/test_setpoint.py` pin this, mutation-verified: reinstating
+`lo = max(lo, dew_point + 4.0)` fails six of them.
 
 **The owner had objected three times** that the dew point handling was too
 conservative ("dew + 4 sounds like a lot of buffer"; "1 K of safety for the dew

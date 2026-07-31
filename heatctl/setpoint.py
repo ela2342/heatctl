@@ -100,7 +100,6 @@ class SetpointController:
         # Heuristic floor on the cooling setpoint, relative to dew point, and
         # the jump target on an actual measured breach. Both inherited from
         # the HA supervisory loop this replaces.
-        self.dew_floor_offset_c = float(s.get("dew_floor_offset_c", 4.0))
         self.breach_jump_c = float(s.get("breach_jump_c", 6.0))
 
         # None, not 0.0. With 0.0 the first cycle after EVERY restart sees
@@ -367,9 +366,26 @@ class SetpointController:
             # limit". Measured 2026-07-29 the spread moved from 5.8 K to 2.0 K
             # within an hour on two register writes; no fixed offset can track
             # that, which is why the earlier attempt to tune one was withdrawn.
-            have_measured_floor = (supply_limit is not None
-                                   and self._spread_est is not None)
-            if have_measured_floor:
+            # THE ONLY COOLING FLOOR. `supply_limit` is already dew point +
+            # margin, so this reads directly as "high enough that the water
+            # leaving the machine lands at or above the limit".
+            #
+            # There is deliberately NO static backstop beside it. `dew_floor_
+            # offset_c: 4.0` used to sit here behind a max() and won whenever
+            # the measured spread was under 3 K - which is the regime silent
+            # mode and the frequency ceiling exist to produce, so the measured
+            # mechanism was dead exactly when it had something to say. It was
+            # then briefly kept as a "start-up fallback", which was a softened
+            # version of an instruction to remove it. The owner asked three
+            # times. It is gone (D-030, 2026-07-31).
+            #
+            # Before any spread has been measured the cooling floor is just
+            # `cooling_min_c`. That is acceptable and not an oversight: the trim
+            # moves 1 K per 30 min so the setpoint cannot travel far, the spread
+            # estimate populates within seconds of the compressor running, and
+            # the capacity controller and the valve guard both act on MEASURED
+            # supply regardless of what the setpoint asked for.
+            if supply_limit is not None and self._spread_est is not None:
                 lo = max(lo, supply_limit + self._spread_est)
             # NO CAP HERE. A cap at `return water - restart differential` was
             # tried on 2026-07-30 and REVERTED the same hour: it let the setpoint
@@ -390,38 +406,13 @@ class SetpointController:
             # measured 4.5 K spread the minimum safe setpoint is 20.5 while the
             # maximum runnable one is 19.6. No setpoint satisfies both. Reducing
             # the SPREAD is the only exit; see BACKLOG.
-            elif dew_point is not None:
-                # FALLBACK ONLY - reached solely when the spread has never been
-                # measured or the limit is missing, i.e. start-up. It is NOT a
-                # second opinion on a floor we can compute.
-                #
-                # **This used to be a `max()` against the measured floor and
-                # that was a defect** (D-030, fixed 2026-07-31). Since
-                # `supply_limit = dew_point + margin` and margin is 1.0, the
-                # constant won whenever the measured spread was below 3.0 K -
-                # and driving the spread down is exactly what silent mode and
-                # the frequency ceiling exist to do. So the better the capacity
-                # controller worked, the more completely this constant overrode
-                # the measured mechanism, which became dead code precisely when
-                # it had something to say. Measured 2026-07-31 11:17: derived
-                # floor 20.4, this constant 21.2, this constant binding, while
-                # the true margin was a healthy 1.2 K.
-                #
-                # The comment it replaced claimed it was "kept BELOW the dynamic
-                # floor by max() so it can only ever tighten". That was simply
-                # false, and it went unchallenged through three separate owner
-                # objections that the dew point handling was too conservative.
-                #
-                # Do not restore the max(). If this value is ever binding while
-                # a spread estimate exists, that is the bug, not the safety.
-                lo = max(lo, dew_point + self.dew_floor_offset_c)
         else:
             lo, hi = self.heating_min_c, self.heating_max_c
         # Round the VALUE, but round the BOUNDS outward. A lower bound that
         # rounds DOWN is not a lower bound: `round(max(18.2, ...))` returns 18
         # and hands back up to 0.5 K of the margin the bound exists to hold.
-        # Small here, because this floor is only a coarse backstop - but it is
-        # wrong regardless of how much it happens to matter today.
+        # Small in effect, but wrong regardless of how much it happens to
+        # matter on any given day.
         lo_i, hi_i = math.ceil(lo), math.floor(hi)
         if lo_i > hi_i:
             # Dew point demands a setpoint above our chosen operating band. In

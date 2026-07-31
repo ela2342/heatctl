@@ -28,7 +28,7 @@ def sp(cfg):
             "saturated_pct": 85.0, "idle_pct": 30.0, "deviation_band_c": 0.3,
             "cooling_min_c": 14.0, "cooling_max_c": 25.0,
             "heating_min_c": 20.0, "heating_max_c": 40.0,
-            "dew_floor_offset_c": 4.0, "breach_jump_c": 6.0, **over,
+            "breach_jump_c": 6.0, **over,
         }
         c = SetpointController(cfg)
         if primed:
@@ -135,12 +135,29 @@ def test_no_breach_when_the_supply_is_above_the_limit(sp):
 
 # ---------- clamps ----------
 
-def test_the_dew_point_floors_the_cooling_setpoint(sp):
-    """Heuristic, not a guarantee - P04 targets RETURN water. The measured
-    branch above is the real protection."""
+def test_the_measured_floor_stops_the_cooling_setpoint(sp):
+    """RETARGETED: this used to exercise the static `dew + 4` floor, which is
+    gone (D-030). The surviving mechanism is `supply_limit + measured spread`.
+
+    limit 16.0 plus a measured 3.0 K spread means water leaving the machine
+    lands at the limit when the setpoint is 19, so 19 is the lowest safe value.
+    """
     c = sp()
+    c.observe_spread(3.0)
+    d = call(c, mode="cooling", dev=-2.0, open_pct=95.0, current=19.0,
+             dew=15.0, limit=16.0, supply=19.0)
+    assert d.target is None or d.target >= 19
+
+
+def test_without_a_measured_spread_the_dew_point_alone_floors_nothing(sp):
+    """The counterpart, and the point of removing the static offset: a dew
+    point on its own is NOT a floor on P04, because P04 targets RETURN water
+    and the gap to leaving water is the machine's spread - which is dynamic and
+    must be measured, not assumed."""
+    c = sp()
+    assert c.spread_estimate is None
     d = call(c, mode="cooling", dev=-2.0, open_pct=95.0, current=19.0, dew=15.0)
-    assert d.target is None or d.target >= 19    # floor is 15+4 = 19
+    assert d.target is not None and d.target < 19
 
 
 def test_operating_bounds_are_respected(sp):
@@ -344,7 +361,10 @@ def test_the_dew_floor_binding_also_reports_demand_unmet(sp):
     the other as a quiet hold would make the alarm depend on an implementation
     detail."""
     c = sp()
-    # dew 14.1 -> floor 18.1 -> ceil 19, so 19 cannot be trimmed below.
+    # limit 16.1 + a measured 2.9 K spread -> floor 19.0, so 19 cannot be
+    # trimmed below. (This used to rely on the static dew+4 floor, removed in
+    # D-030; the reporting behaviour under test is unchanged.)
+    c.observe_spread(2.9)
     d = call(c, current=19.0, dev=-1.0, open_pct=100.0, dew=14.1, limit=16.1,
              supply=19.0, now=5_000.0)
     assert d.target is None
@@ -436,14 +456,24 @@ def test_an_idle_compressor_does_not_erase_the_floor(sp):
     assert c.spread_estimate == before
 
 
-def test_the_static_offset_survives_as_a_backstop_before_any_measurement(sp):
-    """Start-up, and any moment the limit is unknown: there is no estimate yet,
-    so the old constant must still hold the line rather than leaving no floor
-    at all."""
+def test_there_is_no_static_floor_before_any_measurement(sp):
+    """REPLACES a test asserting the opposite. The static `dew_floor_offset_c`
+    backstop is GONE, not demoted (D-030, owner's instruction, 2026-07-31).
+
+    Before any spread is measured the cooling floor is just `cooling_min_c`.
+    That is deliberate: the trim moves 1 K per 30 min so the setpoint cannot
+    travel far, the spread estimate populates within seconds of the compressor
+    running, and the capacity controller and valve guard both act on MEASURED
+    supply regardless of what the setpoint asked for.
+
+    Mutation-verified: reinstating `lo = max(lo, dew_point + 4.0)` makes this
+    return 16 and the assertion fails.
+    """
     c = sp()
     assert c.spread_estimate is None
+    assert not hasattr(c, "dew_floor_offset_c")
     floor = c._clamp("cooling", 5.0, dew_point=12.0, supply_limit=14.0)
-    assert floor >= 12.0 + c.dew_floor_offset_c
+    assert floor == c.cooling_min_c
 
 
 def test_a_narrow_measured_spread_relaxes_the_floor_below_the_static_prior(sp):
@@ -453,7 +483,7 @@ def test_a_narrow_measured_spread_relaxes_the_floor_below_the_static_prior(sp):
     relax the floor below the static backstop - the two are belt and braces,
     not alternatives." That pinned the defect rather than a requirement. Since
     `supply_limit = dew_point + margin`, the static prior won whenever the
-    measured spread fell below `dew_floor_offset_c - margin` (3.0 K at the
+    measured spread fell below the static offset less the margin (3.0 K at the
     shipped values) - and narrowing the spread is precisely what silent mode
     and the frequency ceiling exist to achieve. The measured mechanism was
     therefore dead exactly when it had something to say, and this test was
@@ -468,7 +498,6 @@ def test_a_narrow_measured_spread_relaxes_the_floor_below_the_static_prior(sp):
         c.observe_spread(1.0)                       # very narrow
     floor = c._clamp("cooling", 5.0, dew_point=12.0, supply_limit=14.0)
     assert floor == 15.0
-    assert floor < 12.0 + c.dew_floor_offset_c
 
 
 def test_the_spread_estimate_is_bounded(sp):

@@ -2,8 +2,10 @@
 
 Regression tests for D-030. The constant `dew_floor_offset_c` was combined with
 the measured floor by `max()`, so it won whenever the measured spread was below
-3.0 K - which is the regime silent mode and the frequency ceiling are designed
-to produce. It is now a start-up fallback only.
+3.0 K - the regime silent mode and the frequency ceiling are designed to
+produce. It has been REMOVED, not demoted: the owner asked three times, and
+"keep it as a start-up fallback" was the second softening of the same
+instruction.
 """
 from __future__ import annotations
 
@@ -15,7 +17,7 @@ from heatctl.setpoint import SetpointController
 def _ctl(**over):
     s = {"interval_s": 1800, "step_c": 1.0, "cooling_min_c": 15.0,
          "cooling_max_c": 25.0, "heating_min_c": 20.0, "heating_max_c": 40.0,
-         "dew_floor_offset_c": 4.0, "saturated_pct": 85.0, "idle_pct": 30.0,
+         "saturated_pct": 85.0, "idle_pct": 30.0,
          "deviation_band_c": 0.3}
     s.update(over)
     return SetpointController({"control": {"water_setpoint": s}})
@@ -47,17 +49,23 @@ class TestFloorUsesMeasuredSpread:
         c.observe_spread(4.5)
         assert c._clamp("cooling", 15.0, dew_point=17.2, supply_limit=18.2) == 23.0
 
-    def test_the_constant_is_used_when_no_spread_has_been_measured(self):
-        """Start-up: nothing measured yet, so the conservative prior applies."""
+    def test_no_floor_at_all_before_a_spread_is_measured(self):
+        """The constant is GONE, not demoted to a start-up prior.
+
+        The owner asked three times for `dew + 4` to be removed; it was first
+        kept behind a max(), then kept as a "start-up fallback", which was the
+        same softening a second time. Neither survives.
+        """
         c = _ctl()
         assert c.spread_estimate is None
-        assert c._clamp("cooling", 15.0, dew_point=17.2, supply_limit=18.2) == 22.0
+        assert c._clamp("cooling", 15.0, dew_point=17.2, supply_limit=18.2) == 15.0
 
-    def test_the_constant_is_used_when_the_limit_is_missing(self):
-        """A measured spread is useless without a limit to add it to."""
+    def test_no_floor_when_the_limit_is_missing(self):
+        """A measured spread is useless without a limit to add it to - and with
+        no limit there is nothing to derive a floor FROM, so there isn't one."""
         c = _ctl()
         c.observe_spread(2.17)
-        assert c._clamp("cooling", 15.0, dew_point=17.2, supply_limit=None) == 22.0
+        assert c._clamp("cooling", 15.0, dew_point=17.2, supply_limit=None) == 15.0
 
     def test_the_estimate_holds_while_the_compressor_is_off(self):
         """`None` means not running and must NOT decay the estimate.
