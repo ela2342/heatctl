@@ -3772,7 +3772,24 @@ stays on measured supply (D-031, D-032).
       checksum that the upload actually arrived**, reports config drift and
       makes you acknowledge it, waits for `started`, and greps the log for a
       traceback before declaring success. Use it instead of hand-chaining.
-      **Still missing: nothing watches whether heatctl is alive.** The App has
+      **DONE 2026-07-31: liveness now watched, two ways.**
+        * `automation.heatctl_alert_when_the_control_loop_stops` - fires when
+          `sensor.heatctl_supply_total` has been `unavailable` for 2 minutes,
+          and again on recovery. heatctl publishes an MQTT last-will on
+          `heatctl/status` which every discovered entity carries as its
+          `availability_topic`, so a crash, a hang or a lost broker connection
+          all surface. The 2-minute delay is deliberate: deploys take 30-90 s
+          and an alert that cries wolf on every deploy gets muted, which would
+          reproduce the failure it exists to catch. Notifies the phone AND
+          raises a persistent notification, so it is still visible if the phone
+          was not.
+        * Supervisor App **watchdog enabled** (`watchdog: true`), so a
+          transient crash restarts itself rather than only being reported.
+      This is a prerequisite for WP-S change C, not a nicety: that compressor
+      stop lives in the pump's flash and survives heatctl crashing, so a dead
+      controller would leave the plant stopped indefinitely.
+
+      (original text) **Nothing watches whether heatctl is alive.** The App has
       `watchdog: false` and there is no alert on the control loop stopping. A
       30-minute silent outage should not be possible to discover by accident.
       Simplest fix: an HA automation on `binary_sensor.heatctl_*` going
