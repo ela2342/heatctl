@@ -3174,3 +3174,31 @@ legitimate control changes are meant to be rare (a mode change, a setpoint
 trim). If it trips without a runaway, the budget is wrong for how the plant
 actually runs and should be re-derived rather than silently raised - the write
 rate is now observable, so that is answerable from data.
+
+- [!] **Two documents assert a coupler watchdog behaviour the hardware does not
+      have.** Raised 2026-07-31 while explaining the safety chain, and recorded
+      here because it was nearly lost in conversation.
+      `docs/DESIGN.md` Layer 0 says the WAGO Modbus watchdog fallback "must
+      drive the analog outputs to FULL SCALE - valves are fail-open by design",
+      and the `safety.py` policy docstring reasons from the same premise
+      ("with the coupler's Modbus watchdog fallback set to full scale").
+      `docs/HARDWARE.md` records the opposite as **verified twice on hardware**:
+      the 750-352 sets physical outputs to ZERO on timeout and it is *not
+      configurable*. With NC actuators that CLOSES valves.
+      So the outermost failsafe fails in the opposite direction to heatctl's own
+      fail-open policy. That is defensible for a genuinely dead controller - and
+      may well be the right behaviour - but **two documents and a code comment
+      currently assert something untrue**, which is how a future change gets
+      reasoned into existence on a false premise. Decide which behaviour is
+      wanted, then make the documents agree with the hardware.
+      Note this interacts with the 750-8212 swap: a PFC200 runs its own program
+      and neither behaviour comes along for free.
+
+- [!] **Two telemetry sensors publish one quantity, and one of them is dead.**
+      2026-07-31. `sensor.heatctl_water_sp_spread_est` reads `unknown` while
+      `sensor.heatctl_spread_estimate_floor_input` reads the live value (2.20 at
+      the time). The floor consumes the latter. Harmless today, but it cost time
+      during the D-030 diagnosis and is exactly the sort of thing that misleads
+      at 03:00 - one of them should go, and the survivor should be the one the
+      control path actually reads. Fold into WP-S Stage 1, which is already
+      about publishing the constraint properly.
