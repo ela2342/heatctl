@@ -56,10 +56,19 @@ say "config drift"
 "$ROOT/deploy/ha-addon/check-live-config.sh" "$HOST" || {
     echo
     echo "^^ Repo and running config differ. If this deploy's CODE requires a"
-    echo "   config change, apply it BEFORE rebuilding or the App will start"
-    echo "   with new code against old config (or the reverse)." >&2
-    read -r -p "Continue anyway? [y/N] " ans
-    [ "$ans" = "y" ] || exit 1
+    echo "   config change, apply it BEFORE rebuilding, or the App starts with"
+    echo "   new code against old config (or the reverse) - which is exactly"
+    echo "   the 2026-07-31 17:03 outage." >&2
+    # NOT an interactive prompt. A `read` here hung the very first real run of
+    # this script for ten minutes with the new code on disk and the old image
+    # still serving - a deploy tool that can block forever is worse than the
+    # hand-chaining it replaced. Drift is REPORTED and the deploy proceeds;
+    # set DEPLOY_STRICT=1 to make it fatal instead.
+    if [ "${DEPLOY_STRICT:-0}" = "1" ]; then
+        echo "DEPLOY_STRICT=1 - refusing to continue." >&2
+        exit 1
+    fi
+    echo "   (continuing; set DEPLOY_STRICT=1 to make drift fatal)"
 }
 
 say "rebuild"
