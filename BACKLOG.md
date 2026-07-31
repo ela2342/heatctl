@@ -3135,3 +3135,42 @@ the measured ~0.074 K/Hz and wants to be smaller; `interval_s: 1800` and
 
 The floor-circuit cascade (`docs/DESIGN.md` 4) is separately designed and is not
 touched here. This work package is only about who decides the water temperature.
+
+## The heat pump write budget warns instead of gating (2026-07-31)
+
+Owner's call: *"make this an error state we can see, but DO NOT DROP WRITES...
+Being unable to correct plant deviations can hurt us more than a soft limit
+like flash writes."*
+
+`write_budget_per_hour: 30` was a gate. Past it, `write_register` refused,
+logged, and returned False - so heatctl silently stopped being able to actuate
+the heat pump, and the only trace was a log line nobody was reading. The
+asymmetry was backwards: flash wear is a soft cost accumulating over years,
+while an uncorrectable plant deviation is a hard cost happening now (a cold
+house, or cold water reaching the slab).
+
+Now:
+  - Over `write_budget_per_hour` -> **user-visible alarm, write proceeds.**
+    Publishes `hp/write_budget_exceeded` and `hp/writes_last_hour`, discovered
+    into HA as a `problem`-class binary sensor plus a diagnostic count.
+  - Over `write_hard_limit_per_hour` (default 10x = 300) -> refuses, logs
+    CRITICAL, publishes `hp/write_hard_limit_hit`. At that rate no legitimate
+    control is happening.
+  - The alarm clears when the rolling-hour rate falls back, because a latched
+    alarm that never clears is one nobody trusts.
+
+No-op writes are still dropped before the bus - that one is free, it costs a
+packet and saves a flash cycle.
+
+**Two tests had to be retargeted, and both had passed against the old
+requirement**: `test_the_flash_budget_stops_a_runaway_loop` asserted the gate at
+5 writes, and now asserts all 20 get through with the alarm raised; a new
+`test_the_hard_limit_does_stop_a_runaway_loop` covers the gate that remains.
+Full coverage in `tests/test_heatpump_write_budget.py`, mutation-verified
+against restoring the soft gate.
+
+**Watch for:** the alarm firing in normal operation. The budget is 30/h and
+legitimate control changes are meant to be rare (a mode change, a setpoint
+trim). If it trips without a runaway, the budget is wrong for how the plant
+actually runs and should be re-derived rather than silently raised - the write
+rate is now observable, so that is answerable from data.

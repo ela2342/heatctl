@@ -180,15 +180,37 @@ async def test_writes_are_refused_when_disabled(hp):
     assert c.writes == []
 
 
-async def test_the_flash_budget_stops_a_runaway_loop(hp, caplog):
-    """If something starts oscillating, the budget must fail loudly rather
-    than quietly grinding the flash away."""
+async def test_going_over_the_flash_budget_warns_but_keeps_writing(hp, caplog):
+    """RETARGETED 2026-07-31. This test used to assert that the budget GATED
+    writes at 5 and it passed - against a requirement the owner has since
+    reversed: "Being unable to correct plant deviations can hurt us more than
+    a soft limit like flash writes."
+
+    A refused write means an uncorrected plant deviation - a cold house, or
+    cold water in the slab - happening now, against flash wear that accumulates
+    over years. So the budget warns and the write proceeds; only the hard limit
+    at 10x refuses (see tests/test_heatpump_write_budget.py).
+    """
     h, c, _ = hp(write_budget_per_hour=5)
     for i in range(20):
         h.config[0x0090] = 0          # force every write to be a real change
         await h.write_register(0x0090, 19, "runaway")
-    assert len(c.writes) == 5
-    assert any("flash-wear budget" in r.getMessage() for r in caplog.records)
+    assert len(c.writes) == 20        # every one of them got through
+    assert any("WRITE BUDGET EXCEEDED" in r.getMessage() for r in caplog.records)
+
+
+async def test_the_hard_limit_does_stop_a_runaway_loop(hp, caplog):
+    """The gate still exists, an order of magnitude up.
+
+    A loop writing this fast is not doing control, and continuing would grind
+    the flash away without correcting anything.
+    """
+    h, c, _ = hp(write_budget_per_hour=5, write_hard_limit_per_hour=50)
+    for i in range(200):
+        h.config[0x0090] = 0
+        await h.write_register(0x0090, 19, "runaway")
+    assert len(c.writes) == 50
+    assert any("past the hard limit" in r.getMessage() for r in caplog.records)
 
 
 async def test_named_writes_validate_the_documented_range(hp):

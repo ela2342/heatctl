@@ -123,7 +123,17 @@ heatpump:
   # to reconcile every cycle would destroy the controller, not just waste
   # bandwidth - the budget exists to make that fail loudly instead.
   allow_writes: true
+  # WARNING THRESHOLD, NOT A GATE (owner, 2026-07-31). Going over this raises a
+  # user-visible alarm - `binary_sensor.heatctl_hp_write_budget_exceeded`, a
+  # `problem` class entity - and the write STILL HAPPENS. Flash wear is a soft
+  # cost accumulating over years; a plant deviation heatctl cannot correct is a
+  # hard cost happening now. Dropping writes silently traded the second for the
+  # first, in the wrong direction and where nobody could see it.
   write_budget_per_hour: 30
+  # The real gate, 10x up. At this rate nothing legitimate is happening - it is
+  # a control loop that has lost its mind - so refusing is the lesser harm.
+  # Reaching it also publishes hp/write_hard_limit_hit.
+  write_hard_limit_per_hour: 300
 
 # --- WAGO node inputs ----------------------------------------------------
 # Process image: input registers 0-11 = 750-652 (RS485, unused),

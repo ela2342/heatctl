@@ -17,11 +17,19 @@ What is exposed:
 
 Three properties that are not negotiable, each for a hardware reason:
 
-**Writes wear flash.** The manual states the unit flashes its memory chip on
-every 06H/10H and warns against doing it often. So a write that would not
-change the stored value is dropped before it reaches the bus, and a budget
-caps writes per hour. A "reconcile every cycle" loop would destroy this device,
-not merely waste bandwidth.
+**Writes wear flash, but wear is not the worst failure.** The manual states the
+unit flashes its memory chip on every 06H/10H and warns against doing it often,
+so a write that would not change the stored value is dropped before it reaches
+the bus - that one is free, it costs a packet and saves a flash cycle.
+
+The RATE limit is deliberately not a gate (owner, 2026-07-31). Exceeding
+`write_budget_per_hour` raises a user-visible alarm and **the write still
+happens**; only `write_hard_limit_per_hour`, ten times higher, actually refuses.
+Flash wear is a soft cost accumulating over years, while a plant deviation
+heatctl cannot correct is a hard cost happening now - a cold house, or cold
+water in the slab. Dropping writes silently traded the second for the first, in
+the wrong direction, somewhere nobody would look. A "reconcile every cycle" loop
+would still destroy this device, which is what the hard limit is for.
 
 **All bus access is serialised behind one lock with a minimum gap.** Reads and
 writes share the 200 ms budget; nothing here may issue a transaction without
@@ -39,6 +47,7 @@ control panel and we want to know when someone has.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import time
@@ -65,7 +74,20 @@ class HeatPump:
         self.allow_writes = bool(h.get("allow_writes", False))
         # Flash-wear budget. Deliberately small: legitimate control changes are
         # rare events (a mode change, a setpoint trim), not a stream.
+        #
+        # **THIS IS A WARNING THRESHOLD, NOT A GATE** (owner, 2026-07-31).
+        # Exceeding it raises a user-visible error and keeps writing. Flash
+        # wear is a soft, cumulative cost measured in years; being unable to
+        # correct a plant deviation is a hard cost measured in a cold house or
+        # a wet slab. Silently dropping writes traded the second for the first,
+        # in the wrong direction and invisibly.
         self.write_budget_per_hour = int(h.get("write_budget_per_hour", 30))
+        # The actual gate, an order of magnitude up. At this rate nothing
+        # legitimate is happening - it is a control loop that has lost its
+        # mind - and refusing is the lesser harm.
+        self.write_hard_limit_per_hour = int(
+            h.get("write_hard_limit_per_hour", 10 * self.write_budget_per_hour))
+        self._budget_alarm = False
 
         self.plane = plane
         self.client: AsyncModbusTcpClient | None = None
@@ -131,10 +153,55 @@ class HeatPump:
 
     # ---------- writes ----------
 
-    def _budget_ok(self) -> bool:
+    def writes_last_hour(self) -> int:
         now = time.monotonic()
         self._writes = [t for t in self._writes if now - t < 3600]
-        return len(self._writes) < self.write_budget_per_hour
+        return len(self._writes)
+
+    async def _check_budget(self, addr: int) -> bool:
+        """Report on the write rate. Returns False ONLY at the hard limit.
+
+        Two thresholds, and the difference is the whole point:
+
+        - `write_budget_per_hour` is a **warning**. Over it, this raises a
+          user-visible alarm and returns True anyway, so the write proceeds.
+          A controller that cannot actuate is a worse failure than a
+          controller that wears a flash cell, and the wear is cumulative over
+          years while the deviation is happening now.
+        - `write_hard_limit_per_hour` is the **gate**, 10x higher. At that rate
+          no legitimate control is occurring - it is a loop that has lost its
+          mind - and continuing would be destructive without being useful.
+
+        The alarm publishes rather than only logging, because the failure this
+        exists to catch is a runaway loop, and a runaway loop at 03:00 that
+        only writes to a log file is a failure nobody sees until the device
+        stops accepting writes permanently.
+        """
+        n = self.writes_last_hour()
+        over = n >= self.write_budget_per_hour
+        if over != self._budget_alarm:
+            self._budget_alarm = over
+            if over:
+                log.error("HEAT PUMP WRITE BUDGET EXCEEDED: %d writes in the "
+                          "last hour against a budget of %d. Writes CONTINUE "
+                          "up to the hard limit of %d - find the loop.",
+                          n, self.write_budget_per_hour,
+                          self.write_hard_limit_per_hour)
+            else:
+                log.warning("heat pump write rate back within budget (%d/h)", n)
+            with contextlib.suppress(Exception):
+                await self.plane.publish("hp/write_budget_exceeded",
+                                         "1" if over else "0")
+        with contextlib.suppress(Exception):
+            await self.plane.publish("hp/writes_last_hour", str(n))
+        if n >= self.write_hard_limit_per_hour:
+            log.critical("write to 0x%04X REFUSED: %d writes in the last hour "
+                         "is past the hard limit of %d. Something is looping.",
+                         addr, n, self.write_hard_limit_per_hour)
+            with contextlib.suppress(Exception):
+                await self.plane.publish("hp/write_hard_limit_hit", "1")
+            return False
+        return True
 
     async def write_register(self, addr: int, raw: int, why: str) -> bool:
         """Write one register. Returns True if the device was actually written.
@@ -150,10 +217,7 @@ class HeatPump:
         if current == raw:
             log.debug("write to 0x%04X skipped, already %d", addr, raw)
             return False
-        if not self._budget_ok():
-            log.error("write to 0x%04X REFUSED: %d writes in the last hour "
-                      "exceeds the flash-wear budget. Something is looping.",
-                      addr, len(self._writes))
+        if not await self._check_budget(addr):
             return False
         if not await self._connect():
             return False
@@ -404,6 +468,24 @@ class HeatPump:
         await self.plane.discover("sensor", "hp_mode_name", {
             "name": "Heat pump mode",
             "state_topic": f"{self.plane.base}/hp/mode_name",
+        })
+        # WRITE RATE. Discovered as a `problem` so it surfaces as an actual
+        # alarm rather than a number nobody reads. The budget no longer gates
+        # writes (owner, 2026-07-31: an uncorrectable plant deviation beats
+        # flash wear), so this indicator IS the protection - if it is not
+        # visible, the runaway loop it exists to catch has nothing stopping it
+        # short of the hard limit.
+        await self.plane.discover("binary_sensor", "hp_write_budget_exceeded", {
+            "name": "HP write budget exceeded",
+            "state_topic": f"{self.plane.base}/hp/write_budget_exceeded",
+            "payload_on": "1", "payload_off": "0",
+            "device_class": "problem",
+        })
+        await self.plane.discover("sensor", "hp_writes_last_hour", {
+            "name": "HP writes in the last hour",
+            "state_topic": f"{self.plane.base}/hp/writes_last_hour",
+            "state_class": "measurement",
+            "entity_category": "diagnostic",
         })
 
         # --- CONTROLS ---
