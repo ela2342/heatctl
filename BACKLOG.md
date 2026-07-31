@@ -3202,3 +3202,20 @@ rate is now observable, so that is answerable from data.
       at 03:00 - one of them should go, and the survivor should be the one the
       control path actually reads. Fold into WP-S Stage 1, which is already
       about publishing the constraint properly.
+
+- [x] **Elternschlafzimmer removed from both dew point templates, 2026-07-31.**
+      Owner: *"broken in the same way all other rooms are - I am not sure why it
+      appears as special."* Correct, and it corrects me: I had called restoring
+      that sensor "the cheapest real improvement available" and described the
+      room as upstairs. Both wrong. It is EG, and there is **no sensor there at
+      all** - Controme reports a hardcoded 10 degC placeholder for it exactly as
+      it does for Bad and both Kinderzimmer (docs/HA_INTEGRATION.md), so the
+      pair could never contribute a dew point.
+      Removed from `sensor.system_dew_point_reference` and
+      `sensor.system_dew_point_source` in step, because listing a pair that can
+      never report implies coverage the house does not have - which is worse
+      than showing three rooms honestly.
+      **Real dew point coverage is 3 of 7 rooms: Gaestebad, Wohnzimmer,
+      Arbeitszimmer.** The Shelly H&T rollout is the only thing that changes
+      that; there is no cheap intermediate step, and claiming otherwise was the
+      error here.
