@@ -231,6 +231,56 @@ class HeatPump:
         self.config[addr] = raw
         return True
 
+    # ---------- P04 as a transport: the setpoint, or OFF -------------------
+    #
+    # This machine has no writable "disable cooling". `0x8003`'s cooling-enable
+    # bit is READ-ONLY, `0x0004` Mode has no off value, and `0x0000` bit 0 is
+    # unit power - which stops the internal DC pump, the only circulation the
+    # plant has until the buffer tank lands. Stopping the compressor while
+    # water keeps moving therefore has exactly one lever: put P04 above the
+    # return temperature and let the machine stop on its own logic.
+    #
+    # **P04 is a transport, not the setpoint** (owner, 2026-07-31: "we do not
+    # mess with the setpoint in a way that is visible to anyone"). It carries
+    # either the setpoint or OFF. Nothing outside this pair of methods should
+    # ever see the sentinel - `setpoint.py` reasons from the current setpoint
+    # to compute its next move, and a 30 read back as "the setpoint" would
+    # poison the trim, the constraint memory and the reversal guard alike.
+    COOLING_OFF_C = 30.0
+
+    def cooling_setpoint(self) -> float | None:
+        """The LOGICAL cooling setpoint. None means OFF is currently written.
+
+        30 is safe as a sentinel: it is the top of P04's documented 7-30 range
+        and is above any conceivable cooling return temperature, so nobody
+        would ever command it as a real setpoint.
+        """
+        raw = self.config.get(0x0090)
+        if raw is None:
+            return None
+        value = float(raw)
+        return None if value >= self.COOLING_OFF_C else value
+
+    def cooling_is_off(self) -> bool:
+        raw = self.config.get(0x0090)
+        return raw is not None and float(raw) >= self.COOLING_OFF_C
+
+    async def set_cooling(self, setpoint: float | None, why: str) -> bool:
+        """Write the setpoint, or None for OFF.
+
+        OFF is not a modulation - it is a stop, expressed through the only
+        lever that does not also kill the pump. Do not use this to back the
+        machine off "a bit"; that is what the frequency ceiling is for.
+        """
+        if setpoint is None:
+            return await self.write_named("setpoint_cooling",
+                                          self.COOLING_OFF_C, f"OFF: {why}")
+        if setpoint >= self.COOLING_OFF_C:
+            log.error("refusing setpoint %.1f - that is the OFF sentinel, and "
+                      "a real setpoint must never collide with it", setpoint)
+            return False
+        return await self.write_named("setpoint_cooling", setpoint, why)
+
     async def write_named(self, name: str, value: float, why: str) -> bool:
         reg = next((r for r in hm.WRITABLE if r.name == name), None)
         if reg is None:

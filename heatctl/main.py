@@ -158,6 +158,10 @@ class Controller:
             if reset:
                 pid.reset()
         c = self.cfg["control"]
+        # Default water setpoint, used to clear a stale OFF sentinel left by a
+        # controller that died while the compressor was stopped.
+        self.default_cooling_sp = float(c["return_temp_setpoint_cooling_c"])
+        self._off_checked = False
         self.return_sp = (c["return_temp_setpoint_heating_c"]
                           if mode == "heating"
                           else c["return_temp_setpoint_cooling_c"])
@@ -434,6 +438,7 @@ class Controller:
                 await self.plane.publish(f"override/{valve}", reason)
 
         await self._hold_source_power()
+        await self._clear_stale_cooling_off()
         await self._trim_water_setpoint(state, now)
         await self._trim_capacity(state, now)
 
@@ -499,6 +504,33 @@ class Controller:
             return          # nothing read yet; set_power would refuse anyway
         await self.hp.set_power(d.source_request, d.reason)
 
+    async def _clear_stale_cooling_off(self) -> None:
+        """Undo an OFF left written by a controller that died while stopped.
+
+        The stop is written to the pump's FLASH, so unlike a valve command it
+        survives heatctl crashing - and nothing else would ever restore it. For
+        condensation that is the safe direction, but it is how a house sits
+        uncooled until a human notices, which is exactly the 2026-07-31 17:03
+        outage shape.
+
+        Restart == safe state, and the safe state on a CLEAN start is normal
+        control: clear the sentinel and let the capacity loop re-assert OFF
+        within a cycle if the condition that caused it still holds. Runs once,
+        after the first config read.
+        """
+        if self._off_checked or not self.hp._config_seen:
+            return
+        self._off_checked = True
+        if self.mode != "cooling" or not self.hp.cooling_is_off():
+            return
+        log.warning("P04 was left at the OFF sentinel by a previous run - "
+                    "restoring %.0f degC. If the stop is still warranted the "
+                    "capacity loop will re-assert it within a cycle.",
+                    self.default_cooling_sp)
+        self.log_event("cooling_off_cleared", "stale OFF sentinel on start-up")
+        await self.hp.set_cooling(self.default_cooling_sp,
+                                  "clearing a stale OFF from a previous run")
+
     async def _trim_water_setpoint(self, state, now: float) -> None:
         """Move the heat pump's water setpoint to match the house's demand.
 
@@ -511,7 +543,22 @@ class Controller:
         d = self._last_demand
         reg = "setpoint_cooling" if self.mode == "cooling" else "setpoint_heating"
         addr = 0x0090 if self.mode == "cooling" else 0x0091
-        current = self.hp.config.get(addr)
+        if self.mode == "cooling":
+            # THE LOGICAL SETPOINT, never the raw register. P04 carries either
+            # the setpoint or the OFF sentinel, and the trim computes its next
+            # move FROM the current value - so handing it the sentinel would
+            # poison the trim, the constraint memory and the reversal guard at
+            # once. See HeatPump.set_cooling.
+            if self.hp.cooling_is_off():
+                # Deliberately stopped. The trim has nothing to say about a
+                # machine that is not running; restarting it is the capacity
+                # loop's decision, not this one's.
+                await self.plane.publish("water_sp/reason",
+                                         "compressor commanded OFF")
+                return
+            current = self.hp.cooling_setpoint()
+        else:
+            current = self.hp.config.get(addr)
         # The MANIFOLD supply sensor, same one Safety.apply reads, and for the
         # same reason: condensation is about the water reaching the slab. It is
         # also a PT1000 at 0.1 K against the heat pump register's 0.5 K, so the
@@ -570,7 +617,10 @@ class Controller:
                  reg, current, decision.target, decision.reason)
         self.log_event("water_setpoint",
                        f"{reg} {current} -> {decision.target:.0f}: {decision.reason}")
-        await self.hp.write_named(reg, decision.target, decision.reason)
+        if self.mode == "cooling":
+            await self.hp.set_cooling(decision.target, decision.reason)
+        else:
+            await self.hp.write_named(reg, decision.target, decision.reason)
 
     def _max_owned_opening(self) -> float | None:
         """Highest commanded opening across circuits that can actually throttle.
