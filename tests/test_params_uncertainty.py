@@ -23,7 +23,13 @@ class TestParamBehavesAsANumber:
         ua = p["building"]["ua_ao"]
         assert isinstance(ua, float)
         assert ua * 2 == pytest.approx(534.4)
-        assert ua.sigma == 20.0 and ua.kind == "measured"
+        # RETARGETED 2026-08-01: kind was "measured". The owner confirmed the
+        # 267.2 figure comes from the BUILDING PERMIT CALCULATION, and a design
+        # calculation cannot corroborate itself - so it is a `prior`. The point
+        # of this test is that Param still behaves as a float for existing
+        # readers, which is unaffected; the kind is asserted only so a silent
+        # provenance change cannot slip through unnoticed.
+        assert ua.sigma == 20.0 and ua.kind == "prior"
 
     def test_plain_scalars_still_load_so_migration_can_be_partial(self):
         """A schema change that forces a big-bang rewrite of a safety-adjacent

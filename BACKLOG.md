@@ -3491,6 +3491,157 @@ against. The loop is what needs fixing.
       draw scales with speed, so `dc_pump_speed` should scale that share rather
       than switch it.
 
+### MEASURED 2026-08-01 — 19 % of the heat pump's dT never reaches the manifold
+
+Owner asked whether the ~0.7 K loss between heat pump and manifold explains the
+COP shortfall. It does not, but it is real and it is asymmetric in a way that
+matters. Five days, 10-minute means, cooling:
+
+```
+                                    all samples   cooling hard (n=253)
+HP dT (return - leaving)              +1.747 K        +2.896 K
+manifold dT (rl_total - vl_total)     +1.616 K        +2.338 K
+supply-side gain  HP -> manifold      -0.489 K        +0.031 K
+return-side gain  manifold -> HP      +0.620 K        +0.527 K
+
+manifold dT / HP dT = 0.807 while cooling
+```
+
+**The loss sits entirely on the RETURN run.** While cooling, the supply side is
+clean (+0.03 K) and the return gains +0.53 K. That asymmetry is backwards for a
+pure thermal loss: the supply pipe carries the COLDEST water and should gain
+MORE from cabinet air, not less. So this is either an uninsulated return run or
+a calibration offset between the two sensor sets.
+
+**During idle, BOTH manifold sensors read ~0.5 K below the heat pump's pair**
+(-0.489 and -0.620). A thermal loss cannot make the supply read colder
+downstream, so at least part of this is a systematic offset between the WAGO
+PT1000s and the unit's internal sensors.
+
+**Consequences.**
+- **System COP and machine COP differ by ~19 %.** The COP figure above uses the
+  HP's own dT, which is correct for the MACHINE. Anything sizing what reaches
+  the slab must use the manifold dT and is 19 % smaller.
+- It does NOT explain the factor of two. Using manifold dT instead would move
+  the COP from 1.69 to ~1.37 - the wrong direction.
+- It is a second, independent reason to distrust absolute dT figures, alongside
+  the COP result. Two sensor pairs that should agree closely do not.
+
+- [ ] **Check whether the return run is insulated**, and cross-calibrate the two
+      sensor sets at a settled no-flow point. The idle offset (~0.5 K on both
+      manifold sensors) is measurable in minutes and separates calibration from
+      pipe loss - which the operating data alone cannot.
+
+### 2026-08-01 — measured COP is 1.69, and that number indicts the manifold dT
+
+`assumed_cop: 3.35 +- 1.0` is a prior and `params.yaml` calls it "THE MODEL'S
+WEAKEST INPUT". It looked like the cheapest win available: every input needed to
+MEASURE it is already in the archive, so this should have been arithmetic rather
+than identification.
+
+**METHOD.** Hourly, 2025-10..2026-02, compressor-running hours only:
+
+    P_el = 198*I + 200 W          D-027, R2 0.994 over 129 days, I = 0x8025
+    flow = 1.44 * pump_pct/100    params.yaml + derived.flow_from_pump
+    Q    = rho*cp*flow*(VL - RL)  rho 998, cp 4183 (specified)
+    COP  = sum(Q) / sum(P_el)     ENERGY-weighted, not a mean of ratios
+
+Filters: compressor frequency >= 5 Hz, current >= 0.5 A, pump >= 5 %, VL-RL >
+0.05 K, and VL/RL > 0.05 (the unit reports 0 when off, which is not 0 degC).
+835 usable hours.
+
+Energy weighting is the right estimator here and the algebra was checked: in an
+hour at 50 % duty, `Q` and `P` dilute consistently, because the 200 W standby
+floor and the zero compressor current cancel correctly. Cycling is NOT the
+explanation for what follows.
+
+**RESULT: COP = 1.69.** Against an assumed 3.35 - a factor of two.
+
+```
+VL band    n    COP     Q W    P W   dT K    Toa        Toa band   n   COP
+ 0-26     45   1.35    1423   1051   1.35    5.0        -20-0    165  1.20
+26-30    312   1.67    2026   1216   2.10    6.1          0-4    164  1.27
+30-34    322   1.86    2596   1394   2.66    5.9          4-8    147  1.79
+34-38    111   1.50    2300   1537   2.67    4.9         8-12    258  2.18
+38-60     45   1.46    2615   1787   3.15    3.9        12-30     87  1.77
+```
+
+**The SHAPE is right and the LEVEL is not.** COP rises with outdoor temperature
+exactly as it must (1.20 below 0 degC to 2.18 at 8-12), so the data are not
+noise - but 1.69 at VL ~30 degC and +6 degC outdoor is not a plausible level for
+this machine.
+
+**What it is NOT.** Flow cannot close the gap: reaching 3.35 needs 2.85 m3/h at
+100 % pump against a specified maximum of 1.44. Cycling cannot, per the
+estimator argument above.
+
+**What it probably IS: the manifold dT reads about 2 K low.** At 1.35 kW
+electrical and COP ~3.1 the required dT is ~4.9 K; we measure 2.41 K mean. A 2 K
+systematic offset between two independently calibrated sensors is ordinary,
+especially with `leaving_water` quantised at 0.5 K against `return_water` at
+0.1 K (heatpump_map records the differing scales as a known trap).
+
+**WHY THIS MATTERS BEYOND THE COP, and it is the important part.** `ua_sa` is
+identified from `ua_sa_identification.manifold_dt_k = 2.1 +- 0.14 K` - the SAME
+measurement, and the five-month mean of 2.41 K is consistent with it. If that dT
+is systematically low then `ua_sa` is low, `q_max` is low, and the
+condensation-limited delivery ceiling is UNDERSTATED. Every figure quoted from
+`derived.q_max()` (2.8-3.4 kW on a humid day) inherits the same suspicion, and
+that ceiling is what the hourly forecast is meant to be rebuilt on.
+
+So this is not a heat-pump efficiency question. It is a question about whether
+the plant's single most reused measurement is biased.
+
+- [!] **Get an independent heat measurement (the MULTICAL 403 already named in
+      params.yaml).** It resolves the COP level, the dT offset and `ua_sa` in
+      one instrument, and until then anything derived from manifold dT carries
+      an unquantified systematic. Do NOT "fix" `assumed_cop` to 1.69 - that
+      would bake a suspected sensor bias into the model as physics.
+- [ ] **Cheap interim check: swap or cross-calibrate the VL/RL sensor pair.**
+      Running them briefly at the same point (no flow, thermally settled) shows
+      the offset directly and costs nothing but time.
+- [ ] **The COP SHAPE is usable now even though the level is not.** COP(Toa, VL)
+      = k * f(Toa, VL) with f measured above and k unknown (~2). If the level is
+      pinned later, the shape does not need re-deriving.
+
+**THE ELECTRICAL SIDE IS VALIDATED, so the discrepancy is thermal.** Owner,
+2026-08-01: phase A carries more than the heat pump, so its ABSOLUTE level is
+not a proxy for heat-pump power - but the DELTA when the compressor starts is,
+and that is what established the unit's own current register as 230 V mains
+current (D-027, 0.92 A per reported A). `P_el = 198*I + 200` can therefore be
+used directly and is not the thing in doubt.
+
+Attempting to re-derive that step ratio here found almost no transitions to
+measure: **2084 five-minute samples across 15 days of January contain
+essentially no compressor start/stop events.** That is itself worth recording -
+in winter this machine MODULATES continuously rather than cycling, which is why
+the anti-short-cycle reasoning that dominates summer operation has no
+counterpart in the winter data.
+
+With the electrical half sound and flow bounded by the pump's specification,
+the factor of two has nowhere left to sit except the thermal measurement.
+
+- [ ] **D-027's 200 W intercept has unsound provenance - the magnitude may be
+      right by luck.** Owner, 2026-08-01: *"I think even is the compressor
+      current, it does not measure pump current. That 200W offset is a mistake."*
+      D-027 explains the intercept as "fan + circulation pump + electronics",
+      but it comes from a regression against the utility meter, and phase A
+      carries household load. Measured over 6 weeks at 5-minute resolution:
+      with the compressor OFF and the pump running, phase A already sits at a
+      MEDIAN 3.08 A (~709 W) with sd 3.28 A. Any intercept fitted against that
+      series absorbs household baseline, so the regression cannot attribute
+      200 W to the unit's auxiliaries.
+      The magnitude is not absurd on physical grounds - a fan plus a DC
+      circulator at ~57 % plausibly draws 70-190 W - so this is a PROVENANCE
+      defect rather than a demonstrated error, which is exactly the class
+      D-031/D-032 exist to catch.
+      **The decisive test could not be run: the pump never stops** (6 samples
+      out of 2062 - it is in "always open" mode), so the pump-only step on
+      phase A is unmeasurable from the archive. It needs a clamp meter on the
+      unit, or a deliberate period with the pump commanded off.
+      Effect on the COP above: dropping the intercept moves 1.69 -> 1.99, so it
+      does NOT resolve the factor of two either way.
+
 ### 2026-08-01 — the moisture balance does NOT identify `n`. It identifies `G/n`.
 
 Attempted because `n` (air change rate) is the worst parameter in the set -
@@ -3612,6 +3763,31 @@ rl_10           9.50                     1.14
 
 **Every circuit collapses to within ~1 K of cabinet air when flow stops.** The
 mechanism is exactly what D-009 asserts, on all ten circuits, measured.
+
+**CAVEAT THAT LIMITS THE SETTLING RESULT - the historic sensors are not the
+present ones** (owner, 2026-08-01). The circuit returns above are Controme
+DS18B20 probes on the 1-wire bus that died with the Floor Gateway; today's are
+WAGO PT1000s the owner fitted, and the owner notes those are INSULATED. So:
+
+  * The PHYSICS transfers - a stagnant circuit's water reaches cabinet
+    temperature, and that is a property of the plant, not of the instrument.
+  * The TIME CONSTANT does not. The 2-3 hour recovery is a property of those
+    probes and their mounting. The present sensors could be faster or slower,
+    and their insulation makes slower plausible.
+  * **ABSOLUTE accuracy runs the OTHER way** (owner, 2026-08-01): DS18B20 is
+    digital and factory-calibrated, with no analog chain to drift, while the
+    PT1000s pass through wiring and the 750-463's ADC. So the HISTORIC values
+    are the more trustworthy in absolute terms, and it is the PRESENT chain
+    that wants calibrating. That bears directly on the ~0.5 K offsets measured
+    between the manifold pair and the heat pump's own sensors, and on
+    `ua_sa_identification` - whose manifold dT was taken on the PT1000 chain,
+    not on the DS18B20s.
+
+So "settle_s is 20x too short" is an indictment supported by the old sensors and
+NOT yet confirmed on the new ones. Re-measure on the current hardware before
+choosing a number - which is a further argument for replacing the timer with the
+`|rl - ambient|` test, since that criterion does not depend on the sensor's time
+constant at all.
 
 **The recovery is what indicts `rl_gating.settle_s: 300`.** Fraction of the
 eventual reading achieved after flow restarts:

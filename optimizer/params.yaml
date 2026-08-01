@@ -22,11 +22,20 @@ building:
     value: 267.2
     unit: W/K
     sigma: 20.0
-    kind: measured
+    kind: prior
     note: >
-      Fabric+bridges 148.83 plus ventilation 118.40 at n=0.7/h. The total is
-      corroborated by a measured whole-house H of ~267 W/K; the SPLIT is not,
-      and the ventilation half is a POOR assumption awaiting a blower door.
+      Fabric+bridges 148.83 plus ventilation 118.40 at n=0.7/h. KIND CORRECTED
+      2026-08-01 from `measured` to `prior`: the note used to say the total is
+      "corroborated by a measured whole-house H of ~267 W/K", but the owner
+      confirms 267 comes straight from the BUILDING PERMIT CALCULATION. A design
+      calculation is not a measurement and cannot corroborate itself.
+      The evidence points LOWER. D-028's winter fit gives H = 216 +- 18 W/K, and
+      the 2026-08-01 moisture work independently implies n ~ 0.39-0.58 rather
+      than 0.7; at n = 0.40 the ventilation term falls to 67.7 and the total to
+      216.5 W/K - agreeing with D-028 to better than 1 W/K. Three routes
+      converge on ~216, none of them on 267.
+      Not changed to 216 here because the moisture-derived n rests on a PRIOR
+      for household moisture production, not a measurement. See BACKLOG.
       The split does not matter to a 2-state model and will matter per room.
 
   # Room air -> water. IDENTIFIED FROM OPERATING DATA 2026-07-30, replacing a
