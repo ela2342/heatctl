@@ -3491,6 +3491,170 @@ against. The loop is what needs fixing.
       draw scales with speed, so `dc_pump_speed` should scale that share rather
       than switch it.
 
+### 2026-08-01 — the moisture balance does NOT identify `n`. It identifies `G/n`.
+
+Attempted because `n` (air change rate) is the worst parameter in the set -
+`docs/DESIGN.md` calls it *"poor - assumed, never measured"* at 0.7 h-1, and
+D-028 could only infer ~0.40 without separating it from the fabric term's 18 %
+thermal-bridge default, concluding *"only a blower-door test separates them"*.
+Moisture looked like the way round that: it does not interact with the fabric
+at all, so a moisture-derived `n` would un-confound the thermal fit.
+
+**METHOD.** Single-zone moisture balance on the indoor air:
+
+    dW/dt = n*(W_out - W) + G/(rho*V)
+
+Over a fixed step the exact solution is `W[k+1] = W_ss + (W[k]-W_ss)*exp(-n*dt)`,
+which rearranges to
+
+    dW = a*(W_out - W) + b,     a = 1 - exp(-n*dt),  b = a*G/(n*rho*V)
+
+**linear in (a, b)** - so this is ordinary least squares with real standard
+errors, not a numerical optimiser with a convergence story. `n` and `G` come
+back out by inverting the two definitions.
+
+Data: the InfluxDB archive 2025-10..2026-02, hourly (see the memory note for
+access). Indoor `W` from each room's RH and air temperature via Magnus, then
+averaged over the rooms with >=2 reporting. Outdoor `W` from the Open-Meteo
+ERA5 archive rather than the local station, because the local outdoor humidity
+sensor covers only 28 % of hours and sits stuck at a constant for one four-month
+stretch. Air mass from the surveyed heated volume.
+
+**RESULT 1 - THE DYNAMIC FIT FAILS, AND IT IS NOT A CODING ERROR.**
+
+```
+subset                        N     n /h   tau h     R2
+all hours                  2857    0.042   23.86   0.026
+|dW_out/dt| > 0.3           186    0.047   21.15   0.040
+night 00-05 UTC             521    0.083   12.00   0.049
+```
+
+`n` of 0.04-0.08 h-1 is a time constant of 12-24 HOURS for a house that should
+sit near 1.5-5 h. R2 never exceeds 0.05. Restricting to the hours that should
+carry the most information - fast outdoor changes, or nights when moisture
+generation is quietest - moves it a factor of two and no further.
+
+**Diagnosis.** The estimate FALLS as the step grows (0.041 at 1 h, 0.016 at 6 h),
+which is the signature of attenuation rather than noise. The cause is that
+**the house sits near moisture steady state**: `G` continuously replenishes what
+ventilation removes, so `dW ~= 0` for most hours and the balance carries almost
+no dynamic information. What variance `dW` does have is dominated by `G` itself
+- showers, cooking, occupancy - which is unmeasured, time-varying, and
+uncorrelated with the regressor. Hourly averaging smooths what little transient
+remains, and `W` appearing on both sides adds errors-in-variables on top.
+
+**A large mean gradient is not the same as informative dynamics.** That was the
+mistake going in: the +1.4 g/kg indoor-outdoor gap was read as "well
+conditioned", when it is exactly the steady state that makes `n` unidentifiable.
+
+**RESULT 2 - THE STEADY STATE IS WELL DETERMINED, AND CONSTRAINS THE PAIR.**
+
+    <W_in - W_out> = 1.442 +- 0.018 g/kg   (sd 0.99, n = 3002)
+    => G = n * 0.861 kg/h
+
+```
+   n /h   G kg/day   plausibility for a household of this size (8-15 kg/day)
+   0.30       6.2    low
+   0.40       8.3    plausible
+   0.50      10.3    plausible
+   0.70      14.5    plausible, upper end
+   1.00      20.7    implausible
+```
+
+So the data bound the PAIR, not either alone. Taking 8-12 kg/day as the
+defensible range gives **n ~ 0.39-0.58 h-1** - consistent with D-028's ~0.40 and
+sitting below the assumed 0.70, but note this is inference from a PRIOR on
+moisture production, not a measurement. It must not be written into params.yaml
+as though it were identified.
+
+**WHAT WOULD ACTUALLY CLOSE IT: a CO2 decay test.** CO2 is the standard tracer
+for air change rate precisely because it avoids everything that broke this:
+occupants stop generating it when they leave, so the decay is a clean
+first-order relaxation with a known zero input, and one overnight decay in a
+closed room gives `n` directly. It is far cheaper than the blower door D-028
+asked for, and it measures the OPERATIONAL air change rate rather than envelope
+tightness at 50 Pa - which is the quantity the model actually wants.
+
+- [ ] **Get a CO2 sensor and run an overnight decay.** Needs no permanent
+      install. With `n` measured, `G` follows from the steady-state relation
+      above at no extra cost, and D-028's fabric/ventilation ambiguity resolves
+      as a side effect.
+- [ ] **Do not fit `n` from moisture again without an independent `G`.** The
+      failure above is structural, not a tuning problem; a better optimiser on
+      the same data returns the same wrong answer with tighter error bars.
+
+### MEASURED 2026-08-01: D-009 confirmed, and `settle_s` is ~20x too short
+
+First INDEPENDENT evidence for the return-sensor gating rule. D-009 was decided
+on a physical argument plus one incident; this is five months of pre-heatctl
+history (2025-10..2026-02, hourly, from the InfluxDB archive - see the memory
+note for how to reach it) agreeing with it.
+
+Method: classify each hour as flowing (manifold flow-return spread > 0.5 K and
+supply > 5 K above cabinet air) or stagnant (spread < 0.15 K and supply within
+2 K of cabinet), then compare each circuit return against the cabinet air
+sensor that existed in that era (`rl_12`, which is manifold ambient and NOT a
+circuit - owner).
+
+```
+circuit   |rl - ambient| FLOWING   |rl - ambient| STAGNANT
+rl_1            8.85 K                   1.13 K
+rl_2            9.70                     1.20
+rl_3            4.60                     1.03
+rl_4            4.69                     1.01
+rl_5            5.37                     0.95
+rl_6            6.13                     1.33
+rl_7            5.45                     1.03
+rl_8            9.25                     1.21
+rl_9            7.98                     1.14
+rl_10           9.50                     1.14
+```
+
+**Every circuit collapses to within ~1 K of cabinet air when flow stops.** The
+mechanism is exactly what D-009 asserts, on all ten circuits, measured.
+
+**The recovery is what indicts `rl_gating.settle_s: 300`.** Fraction of the
+eventual reading achieved after flow restarts:
+
+```
+ h    rl_1  rl_2  rl_3  rl_4  rl_5  rl_6  rl_7  rl_8  rl_9 rl_10  median
+ 0    0.57  0.61 -0.01  0.03  0.24  0.46 -0.02  0.59  0.42  0.63   0.44
+ 1    0.81  0.95  0.52  0.48  0.67  0.73  0.39  0.82  0.78  0.86   0.76
+ 2    0.96  0.92  0.84  0.70  0.84  0.84  0.64  0.92  0.91  0.95   0.88
+ 3    0.99  1.00  1.01  0.83  0.93  0.91  0.86  0.97  0.96  0.99   0.96
+```
+
+90 % takes **2-3 hours**; `settle_s` is 300 s. At five minutes the PID is fed a
+value roughly half cabinet temperature. The bias direction is "closer to room
+temperature than the truth", which makes circuits OVER-open in both modes -
+safe for flow, wasteful, and it corrupts room control.
+
+**Mechanism, owner 2026-08-01: the sensors are insulated.** So a large part of
+this is the SENSOR's own first-order lag, not water failing to arrive. That
+does not change the 20x error, but it changes the remedy: the reading is a
+lagged truth rather than noise, so it is characterisable and could be
+compensated rather than merely waited out.
+
+- [ ] **Replace the `settle_s` timer with a direct `|rl - ambient|` test.**
+      Three cabinet-air sensors are now fitted (inputs 12/15/16, see
+      config.yaml) so the reference exists and survives one failing. A direct
+      test measures the condition the gate cares about instead of a proxy, and
+      it needs no per-circuit constants - which matters because:
+      **the circuits differ by ~2.5x** (at h=1: rl_7 0.39 vs rl_2 0.95, and
+      3/4/7 show nothing at all in the first hour). One global constant is
+      either far too short for the slow circuits or wasteful for the fast ones.
+      **Do NOT hard-code per-circuit values from the table above** - the owner
+      has since swapped valves around, so the per-circuit IDENTITIES do not
+      transfer. Only the distribution does.
+
+- [ ] **Verify the three cabinet sensors during OPERATION before trusting them.**
+      Checked 2026-08-01 while the plant was idle: 22.60 / 22.00 / 22.00 against
+      circuits at 20.8-21.5. Consistent, but the whole manifold spanned 1.8 K at
+      the time, so any three sensors would have looked agreeable. The
+      discriminating test is a running plant, where circuits must pull AWAY from
+      cabinet air and these three must not. Input 12 also read 0.6 K above the
+      other two - placement or offset, unresolved.
+
 - [!] **heatctl cannot tell that a command it issued did not take effect.**
       Observed 2026-08-01 16:26, and it is a whole missing feedback path rather
       than a bug in one loop.
