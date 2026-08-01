@@ -316,6 +316,51 @@ class Estimator:
             })
         return out
 
+    def hourly_forecast(self, target_air: float, ceiling_w: float,
+                        hours: int = 48) -> list[dict]:
+        """The per-hour series `load_forecast` computes and then throws away.
+
+        Owner, 2026-08-01: *"it would make sense to have a prediction hour by
+        hour for the forecast window instead of a lump sum, so we can start
+        pre-cooling (or pre-heating) at the right moment."*
+
+        `load_forecast` already evaluates every hour and immediately collapses
+        the result into calendar-day totals, so "4 hours over ceiling tomorrow"
+        cannot be turned into WHICH four hours. That is the difference between
+        an energy figure and something you can act on: the same 15 kWh spread
+        evenly is a different plan from the same 15 kWh at 16:00.
+
+        THIS IS A SERIES, NOT A SCHEDULE, and the distinction is the same one
+        `demand_forecast` makes: it says what is coming and when, not when to
+        start. Turning it into a start time needs the trajectory simulation in
+        WP-H. What it buys now is that the shape is visible at all - to a human
+        reading the dashboard, and to the planner when it exists.
+
+        `deficit_w` is signed the way the rest of this module signs load:
+        positive means the hour needs more cooling than `ceiling_w` can supply.
+        """
+        if not self.weather or not self.weather.points:
+            return []
+        out = []
+        for pt in self.weather.points[:hours]:
+            load = net_load_w(self.bp, target_air, pt.temperature,
+                              self.t_ground, q_sol=self.solar_w(pt),
+                              q_int=self.q_int)
+            out.append({
+                "t": pt.time,
+                "load_w": round(load, 0),
+                "outdoor_c": round(pt.temperature, 1),
+                # Outdoor dew point, UNCORRECTED and for planning only - the
+                # condensation guard uses the measured INDOOR maximum and must
+                # never see this (see weather.py). Carried because the delivery
+                # ceiling is condensation-limited, not source-limited, and this
+                # is the only forward-looking humidity signal available.
+                "dew_point_c": (None if pt.dew_point != pt.dew_point
+                                else round(pt.dew_point, 1)),
+                "deficit_w": round(max(0.0, load - ceiling_w), 0),
+            })
+        return out
+
     def setpoint_delta(self, target_air: float, ceiling_w: float,
                        hours: int = 24) -> float:
         """Signed pre-conditioning delta in K: `active = dial + delta`.
@@ -485,6 +530,14 @@ class Estimator:
                         log.info("load forecast: %s", summary)
                         self._last_load_summary = summary
                     await self._publish("load_forecast", json.dumps(days))
+                    # The hour-by-hour series behind those totals. Published
+                    # separately rather than folded into `load_forecast` so the
+                    # daily aggregates keep their shape for anything already
+                    # reading them.
+                    await self._publish(
+                        "forecast_hourly",
+                        json.dumps(self.hourly_forecast(
+                            target, opt.get("delivery_ceiling_w", 5700.0))))
                     t = days[0]
                     await self._publish("today/peak_kw", str(t["peak_kw"]))
                     await self._publish("today/cooling_kwh",

@@ -91,6 +91,10 @@ class _Pt:
         self.time = time
         self.temperature = temperature
         self.cloud_cover = 100.0        # kill the solar term: this is about time
+        # Planning-only outdoor dew point (weather.py keeps it uncorrected and
+        # bars it from the condensation guard). NaN stands for "the API did not
+        # return dew_point_2m", which hourly_forecast must survive.
+        self.dew_point = float("nan")
         self.shortwave_wm2 = 0.0
         self.direct_wm2 = 0.0
         self.diffuse_wm2 = 0.0
@@ -218,3 +222,52 @@ class TestLeadTime:
         est = _estimator(monkeypatch, [21.0] * 24)
         assert est.setpoint_delta(target_air=23.0,
                                   ceiling_w=SYNTH_CEILING_W) == 0.0
+
+
+def test_hourly_forecast_locates_the_deficit_in_time(monkeypatch):
+    """Owner, 2026-08-01: a lump sum cannot say WHEN to start.
+
+    `load_forecast` evaluated every hour and collapsed it to calendar-day
+    totals, so "4 hours over ceiling tomorrow" could not be turned into which
+    four hours - and the same energy spread evenly is a different plan from the
+    same energy landing at 16:00.
+
+    Asserts the series is hourly, aligned with the forecast, and that the
+    deficit lands on the hours actually over the ceiling - not merely that some
+    numbers came out.
+    """
+    hot, mild = 38.0, NEUTRAL_C
+    est = _estimator(monkeypatch, [mild] * 8 + [hot] * 4 + [mild] * 12)
+    series = est.hourly_forecast(target_air=23.0, ceiling_w=SYNTH_CEILING_W,
+                                 hours=24)
+
+    assert len(series) == 24, "not one entry per forecast hour"
+    assert [r["t"] for r in series] == [p.time for p in est.weather.points[:24]]
+
+    over = [r for r in series if r["deficit_w"] > 0]
+    assert over, "test is vacuous - no hour exceeds the ceiling"
+    # The deficit must sit on the HOT hours, which is the whole point of a
+    # series over a total.
+    assert all(8 <= series.index(r) < 12 for r in over)
+    for r in series:
+        assert r["deficit_w"] == round(max(0.0, r["load_w"]
+                                           - SYNTH_CEILING_W), 0)
+
+
+def test_hourly_deficit_reconciles_with_the_daily_total(monkeypatch):
+    """The series and the aggregate must not tell different stories.
+
+    They are computed by separate methods over the same hours. If they ever
+    disagree, a dashboard and a planner reading one each would be acting on
+    different plans - and nothing would say which was wrong.
+    """
+    hot, mild = 38.0, NEUTRAL_C
+    est = _estimator(monkeypatch, [mild] * 8 + [hot] * 4 + [mild] * 12)
+    series = est.hourly_forecast(23.0, SYNTH_CEILING_W, hours=24)
+    days = est.load_forecast(23.0, SYNTH_CEILING_W, hours=24)
+
+    for d in days:
+        hours = [r for r in series if r["t"][:10] == d["day"]]
+        assert sum(1 for r in hours if r["deficit_w"] > 0) == d["hours_over"]
+        store_kwh = sum(r["deficit_w"] for r in hours) / 1000.0
+        assert abs(store_kwh - d["store_kwh"]) < 0.15, d["day"]
