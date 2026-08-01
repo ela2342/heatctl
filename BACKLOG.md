@@ -160,6 +160,48 @@ bidirectional capability the plant needs.
       less to the filter than one that updates every few seconds. Do not
       assume mains helps here just because it enables Modbus.
 
+### 2026-08-01 — the flow floor is COMMAND-SIDE and cannot see a stuck valve
+
+Sharpens the case for a real flow measurement above, with evidence.
+
+`Demand.enforce_flow_floor` reasons entirely about percentages heatctl asked
+for. It has no measurement, so it cannot distinguish "commanded 100 % and
+flowing" from "commanded 100 % and spring-closed". On the night of 2026-07-31
+all ten actuators sat shut on an undersized 24 V supply (see the new section in
+`docs/HARDWARE.md`) while the proxy would have computed a comfortable 100 %
+open and actual flow was **zero**.
+
+Worse, neither setting of the `fitted` flag models that state:
+
+- `fitted: false` treats the circuit as permanently open pipe worth 100 %
+- `fitted: true` trusts the commanded percentage
+
+Both therefore over-report flow when an actuator is fitted but not moving.
+
+**So Er03 — the heat pump's own flow switch — is currently the only real
+protection against zero-flow operation.** That is a hardware interlock doing
+safety work that the controller believes it is doing, which is exactly the kind
+of quiet delegation worth writing down. Until a flow sensor exists, do not
+strengthen any claim about `min_open_pct` beyond "it stops heatctl throttling
+itself into a fault", and never treat it as evidence that flow exists.
+
+### 2026-08-01 — actuator travel times vary widely; D-017 assumes they do not
+
+Owner, fitting the last eight: *"it seems not all of the valves react at the
+same speed... the rest varies wildly too"*, singling out circuit 9. The
+datasheet nominal is 150 s full stroke.
+
+`distribution.py` normalises the whole demand set (D-017) on the assumption
+that a commanded percentage maps to a comparable opening across circuits. That
+holds in steady state — the APV variants self-calibrate their travel — but not
+during transients, where circuits with different travel times reach different
+actual openings from the same normalised command. With a 1 s control loop and
+150 s+ strokes, the plant spends a lot of time in that transient.
+
+Unblocked by nothing; needs measurement. The per-channel sweep
+(`tools/commission_valves.py`) already records enough to estimate per-circuit
+response times as a by-product.
+
 ### CORRECTION 2026-07-29 — take qp 3.5 / DN25, not qp 1.5 / DN15
 
 Owner: "Certainly DN25? Pump outlet to manifold input is all DN25." Correct,
@@ -497,10 +539,14 @@ target with nothing to stop it but the absolute clamp.
 
 - [ ] **A lead-time-aware delta is the missing piece.** It should ramp the offset
       in ahead of a forecast peak on the timescale the building actually
-      responds — and per the eigenvalues above, that is the 3.4 h air/slab mode
-      for delivery, not the 8 h figure used in the reasoning so far. The correct
-      lead time is therefore SHORTER than assumed, which is the opposite of what
-      was expected.
+      responds — the FAST coupled mode, not the slow one, so the correct lead
+      time is SHORTER than the 8 h originally assumed.
+      **Do not quote the number here.** It is `eigen_time_constants_h(bp)[1]`
+      and it moves with `ua_sa`: this entry said 3.4 h, `estimator.py` said 8 h,
+      and the code derived 5.62 h at the same time (2026-08-01). Three prose
+      copies of one derived quantity, all disagreeing — the exact failure
+      D-031/D-032 exist to prevent. `estimator.setpoint_delta` already does this
+      correctly, taking `2 × τ_fast` as its lead horizon from the function.
 - [ ] Validating `ua_sa` would make the fast mode trustworthy. It is the single
       parameter that governs when stored energy arrives, and it is the one guess
       in the set.
@@ -3360,6 +3406,146 @@ trim). If it trips without a runaway, the budget is wrong for how the plant
 actually runs and should be re-derived rather than silently raised - the write
 rate is now observable, so that is answerable from data.
 
+### ANSWERED 2026-08-01: it tripped, and the budget is NOT the thing that is wrong
+
+The alarm fired at 13:13 in ordinary operation, exactly as anticipated above.
+Answering it from data, as that paragraph asks:
+
+**Every write was `0x00F1`.** 24 of 24 in the log window - the capacity loop,
+nothing else. Observed ceiling sequence, one move per minute or two:
+
+```
+41 -> 39 -> 36 -> 32 -> 30 -> 32 -> 39 -> 44 -> 47 -> 49 -> 44 -> 42 -> 40
+```
+
+A full sweep to the 30 Hz floor, back up to 49, and down again. A limit cycle,
+not a runaway.
+
+**Mechanism: the deadband is on the INPUT, not the OUTPUT.** `deadband_c` is
+0.25 K of *margin*; there is no minimum step on the *actuator*. A margin error
+of 0.3 K - barely outside the deadband - computes as
+`loop_gain * err / supply_k_per_hz = 0.5 * 0.3 / 0.074 ~= 2 Hz`, and that 2 Hz
+goes to flash. With `lower_settle_s` 60 and `raise_interval_s` 120 the ceiling
+is 60 lowers + 30 raises per hour, so the budget can be exhausted by noise
+alone whenever the plant cannot settle.
+
+It could not settle because it was pinned against the condensation limit all
+day - cooling into open windows while the incoming air raised the dew point, so
+the constraint moved as fast as the loop chased it.
+
+**Note the gain is one we do not trust:** `supply_k_per_hz: 0.074` is recorded
+elsewhere as having poor provenance. So these 2 Hz corrections are computed
+from an untrusted constant, which makes chasing them doubly pointless.
+
+**So do NOT re-derive the budget upward.** That would hide a real limit cycle
+behind a bigger number, which is the failure mode the paragraph above warns
+against. The loop is what needs fixing.
+
+- [ ] **Asymmetric minimum step on the capacity actuator.**
+      * **Lowering: unchanged.** It is the safety direction, its first move is
+        deliberately never delayed, and a genuine breach produces a large step
+        anyway - a minimum-step rule would not block it.
+      * **Raising: require a minimum step** (~4-5 Hz) before writing. Raises are
+        discretionary; suppressing 2 Hz nibbles costs only a little unused
+        headroom.
+      Roughly half the observed moves are raises, so this should take ~30/h to
+      ~15-20/h without touching the safety path.
+      **The test must assert the DIRECTION asymmetry**, not merely that a
+      threshold exists - applying it to both directions is the easy mistake and
+      would delay a condensation response, which is strictly worse than the
+      flash wear it saves.
+
+- [ ] **The `P_el` intercept is applied unconditionally, and its constituents
+      can be off.** Owner, 2026-08-01: *"Where are 200W power estimate coming
+      from with the compressor turned off?"*
+
+      D-027 is not wrong and this does not reopen it. `P_el = 198*I + 200 W`
+      (R2 0.994 over 129 days) and the 200 W is fan + circulation pump +
+      electronics, which switch with UNIT POWER rather than with the
+      compressor - event-based fits return an intercept near zero precisely
+      because those are already running when the compressor starts. Checked at
+      16:35 the same day and it was CORRECT: unit on, `water_pump` on,
+      `dc_pump_speed` 100 %, compressor 0 A, estimate 200 W. Real load.
+
+      **The gap is the word "unconditionally".** `main.py` adds the intercept
+      whenever that code runs, i.e. whenever the unit is energised - but there
+      are states where the auxiliaries are NOT running. Measured at 14:20 that
+      day, after the capacity loop stopped the compressor and Er03 latched,
+      `binary_sensor.heatctl_water_pump` read **off**. Compressor stopped, pump
+      stopped, and the estimate still reported 200 W when the true draw was
+      electronics only.
+
+      **Why the calibration did not catch it:** D-027 fitted 129 days of WINTER
+      data, where the unit is rarely sitting powered-but-idle for hours. A
+      summer day on a condensation-limited plant is exactly that regime - on
+      2026-08-01 the plant was faulted or idle for several hours, so roughly
+      1.2 kWh was attributed to a machine doing nothing.
+
+      This is energy accounting, not control - but the optimizer's COP and
+      consumption figures rest on it, and the error is one-sided (always over).
+
+      Fix is cheap because the inputs are already read and published: gate the
+      intercept on `water_pump` (`0x8006` bit 0) and `dc_pump_speed` instead of
+      on "this code is running". Splitting the 200 W into its pump and
+      electronics parts needs a measurement - the pump is a DC circulator whose
+      draw scales with speed, so `dc_pump_speed` should scale that share rather
+      than switch it.
+
+- [!] **heatctl cannot tell that a command it issued did not take effect.**
+      Observed 2026-08-01 16:26, and it is a whole missing feedback path rather
+      than a bug in one loop.
+
+      ```
+      16:26:00  compressor RESUME at 20 degC: margin +4.30 K recovered - restarting
+      ```
+
+      heatctl wrote P04 = 20 and logged a restart. The compressor did not start:
+      `er03_water_flow` was latched, frequency stayed 0, and the water pump
+      stayed off. **The controller believed the plant was running for as long as
+      nobody looked at the fault entity.**
+
+      The gap is that every heat-pump command is OPEN LOOP. `cooling_is_off()`
+      reports what heatctl last WROTE to P04, not what the machine is doing -
+      the same category error as reading the coupler's output mirror and calling
+      it a valve position (see the PSU section in docs/HARDWARE.md). The unit
+      publishes everything needed to close the loop: compressor status is
+      `0x8004` bit 0, frequency is a register we already read every cycle.
+
+      Why it matters beyond the one event:
+
+      * **Er03 LATCHES.** It needs a person at the unit, so this divergence does
+        not self-heal - it persists until someone notices. On 2026-08-01 the
+        controller sat in "resumed" for over two hours.
+      * **The capacity loop keeps working a dead actuator.** It computes margins
+        and steps a frequency ceiling for a compressor that cannot run, spending
+        flash writes against a budget that was already tripping that day.
+      * **A future planner would size the day against capacity that does not
+        exist.** WP-H hands out setpoint requests assuming the source can
+        deliver; nothing tells it the source is faulted.
+
+      Fix: after commanding a state change, verify it within a bounded time and
+      alarm if it did not happen. "Commanded RESUME, compressor still at 0 Hz
+      after N s" is the operator-visible fact, and it should also stop the
+      capacity loop re-commanding into a latched fault rather than burning
+      writes. Note the alarm must be on the DIVERGENCE, not on the fault - the
+      fault is already published; what is missing is that heatctl's own model
+      disagrees with the plant.
+
+      Cheap partial: while `hp/fault_any` is set, do not spend writes on the
+      frequency ceiling. That does not close the loop but removes the worst
+      consequence.
+
+- [ ] **The budget alarm has no hysteresis and flaps on the threshold.**
+      Observed the same afternoon: EXCEEDED at 13:37 (30/h), "back within
+      budget" at 13:41 (29/h), and it will keep crossing while the rate sits on
+      the limit. Raise-and-clear at the same number turns a real signal into a
+      stream nobody reads - the same "cries wolf" failure `deploy.sh` documents
+      for its own start-up check. Clear at a distinctly lower rate than it
+      raises (or require the lower rate to hold for a few minutes). Cheap, and
+      it should land with the loop fix above rather than instead of it: the
+      flapping is a symptom of the rate parking exactly on the budget, which
+      the minimum-step change is what actually cures.
+
 - [!] **Two documents assert a coupler watchdog behaviour the hardware does not
       have.** Raised 2026-07-31 while explaining the safety chain, and recorded
       here because it was nearly lost in conversation.
@@ -3710,6 +3896,42 @@ stays on measured supply (D-031, D-032).
       floor rather than a mid-range guess; or refuse to cool at all until a
       dew point has been seen once. The third is the most honest and costs a
       couple of minutes of cooling after a restart.
+
+      **UPDATE 2026-08-01 - the permissive gap above is GONE, and what replaced
+      it is worse.** The static fallback this entry worries about was removed on
+      2026-07-31, so there is no longer a loose limit at start-up. Instead
+      `Safety.apply` hits `return 0.0, "dew_point_unknown"` and **closes every
+      owned valve** until the first dew-point message arrives. Measured on the
+      15:33 restart, the first run with safety overrides actually logged:
+
+      ```
+      15:33:28  SAFETY OVERRIDE dew_point_unknown on 10 circuit(s): [all ten]
+      15:34:01  safety override dew_point_unknown cleared (was active for 33 s)
+      ```
+
+      **33 seconds of a fully shut manifold on every restart.** With the pump
+      turning that is a flow collapse, which is Er03 - and Er03 **latches** and
+      needs a human at the unit. heatctl was restarted four times that day and
+      Er03 appeared three times; this is the most likely link for at least the
+      morning occurrences, better than any of the theories entertained at the
+      time.
+
+      Two things make it a design fault rather than a tuning question:
+
+      * **It inverts D-003.** Lost knowledge is supposed to fail OPEN. This
+        fails CLOSED on lost knowledge, and unlike every other fail-closed path
+        the consequence is not recoverable without a person.
+      * **The valves are the wrong actuator for it.** "I have not been told the
+        dew point" is not a measured danger to the screed; it is an argument for
+        not MAKING cold water. That is a source-side action. Closing valves
+        cannot stop the compressor and can only starve the pump.
+
+      So the entry's own third option is right - refuse to cool until a dew
+      point has been seen once - but it must be implemented source-side, and
+      valve position must be left alone.
+
+      Found only because safety overrides were finally logged the same day; the
+      behaviour had been invisible in both the log and HA.
 
 - [!] **DECIDED: collapse the two cooling margins into one.** Owner,
       2026-07-31: *"I am fine with collapsing all of that to one single number.

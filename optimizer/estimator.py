@@ -280,8 +280,16 @@ class Estimator:
         The `store_kwh` figure is the day's energy that arrives faster than the
         ceiling can remove it, and therefore has to come out of building mass.
         Divided by the thermal capacity it gives the pre-charge in kelvin -
-        which, with an 8 h slab time constant, has to be in place the night
-        before or not at all.
+        which has to be in place roughly one fast time constant before the
+        deficit, or not at all.
+
+        DO NOT WRITE THAT CONSTANT HERE AS A NUMBER. It is `eigen_time_constants_h(
+        self.bp)[1]`, it moves with `ua_sa`, and by 2026-08-01 three different
+        hand-written values were in circulation for it - "8 h" in this
+        docstring, "3.4 h" in BACKLOG, and the 5.62 h the code actually derives
+        at the current parameters. Whichever is quoted in prose goes stale the
+        next time a parameter is re-measured, silently, which is exactly what
+        D-031/D-032 and `optimizer/derived.py` exist to prevent.
         """
         if not self.weather or not self.weather.points:
             return []
