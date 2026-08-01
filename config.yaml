@@ -152,11 +152,30 @@ sensors:
     - {index: 9,  name: rl_hk09, label: "Return circuit 9"}
     - {index: 10, name: rl_hk10, label: "Return circuit 10"}
     - {index: 11, name: rl_hk11, label: "Return circuit 11"}
-    - {index: 12, name: rl_hk12, label: "Return circuit 12", enabled: false}
+    # MANIFOLD CABINET AIR, three of them - NOT circuit returns (owner,
+    # 2026-08-01: "I've fitted sensors for RL12 plus the two unused inputs
+    # (15 and 16). All should be ambient cabinet temp."). Input 12 was
+    # previously mislabelled "Return circuit 12" and disabled; 15/16 were
+    # "Reserve".
+    #
+    # WHY THIS MATTERS RATHER THAN BEING COSMETIC. D-009 says a circuit with no
+    # flow stops measuring its circuit and starts measuring this cabinet, and
+    # `rl_gate.py` currently detects that with a TIMER (`settle_s`). Measured
+    # against five months of pre-heatctl history (2025-10..2026-02), every
+    # circuit collapsed from 4.6-9.7 K above cabinet air to within ~1 K of it
+    # when flow stopped, and took 2-3 HOURS to recover afterwards - against a
+    # `settle_s` of 300 s. A direct cabinet reading lets the gate test the
+    # condition it actually cares about instead of a proxy for it.
+    #
+    # THREE of them, so the reference survives one failing and a median can
+    # reject an outlier. They are not interchangeable with each other blindly:
+    # on 2026-08-01 input 12 read 0.6 K above 15 and 16, which may be placement
+    # (higher in the cabinet) or offset - do not assume they agree, check.
+    - {index: 12, name: amb_manifold_12, label: "Manifold cabinet air 12"}
     - {index: 13, name: vl_total, label: "Supply total"}
     - {index: 14, name: rl_total, label: "Return total"}
-    - {index: 15, name: reserve_15, label: "Reserve 15", enabled: false}
-    - {index: 16, name: reserve_16, label: "Reserve 16", enabled: false}
+    - {index: 15, name: amb_manifold_15, label: "Manifold cabinet air 15"}
+    - {index: 16, name: amb_manifold_16, label: "Manifold cabinet air 16"}
 
 # --- WAGO node outputs ---------------------------------------------------
 # Holding registers 0-11 = 750-652, 12-19 = 2x 750-559 (0-10V, 0..32767)
