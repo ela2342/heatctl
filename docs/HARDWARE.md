@@ -339,6 +339,38 @@ So a freshly fitted actuator is open regardless of what heatctl commands, until
 it has self-calibrated. Expect that during build-out rather than treating it as
 a fault.
 
+### The 24 V supply must be sized for the WHOLE manifold (2026-08-01)
+
+Fitting the last eight actuators brought the manifold to ten, and **all ten
+then sat spring-closed while the 750-559 outputs correctly presented 10 V.**
+The owner measured the combined draw at **over 0.8 A** — more than the 24 V DC
+supply could deliver, so every actuator stayed below its holding threshold.
+Replacing the supply fixed it.
+
+Three things make this worth writing down:
+
+- **It was latent from the day the supply was specced, and could only appear on
+  the day the last actuator went on.** Until then eight of ten circuits were
+  open pipe with no actuator at all, so the plant had never once drawn
+  full-manifold load. Size for all twelve channels plus inrush, not for the
+  count currently fitted.
+- **The failure is common-mode, so it mimics a software bug.** Ten independent
+  devices failing identically reads as a mapping or control error; it was a
+  single shared supply. When every channel fails the same way, suspect what
+  they share before suspecting the logic.
+- **No amount of register inspection can see it.** The coupler's output mirror
+  at `0x0200 + reg` returns the value heatctl wrote, not the actuator's state,
+  so the read-back showed a confident 100 % on all ten while nothing moved.
+  There is no position feedback on these channels — see the sweep in
+  `tools/commission_valves.py`, which exists because this class of fault needs
+  a physical test.
+
+The datasheet table above does not give a per-actuator current, which is why
+this was easy to miss. Note also that **observed travel times vary widely
+between units** despite the 150 s nominal stroke — enough that a commissioning
+measurement window sized for the nominal figure will read a slow actuator as no
+response at all.
+
 **Preconditions for any thermal method.** It needs contrast between VL and the
 slab - if VL is near slab temperature there is no signal at all, which is
 exactly the state a well-tuned system sits in. Heating season is far easier
