@@ -87,13 +87,55 @@ def test_supply_overtemp_in_heating_fails_closed(cfg):
     assert (pct, reason) == (0.0, "vl_overtemp")
 
 
-def test_supply_undertemp_in_cooling_fails_closed(cfg):
-    """Condensation guard. Must be 0, NOT the fail-open position."""
+def test_supply_undertemp_in_cooling_fails_closed_after_the_dwell(cfg):
+    """Condensation guard. Must be 0, NOT the fail-open position.
+
+    RETARGETED 2026-08-01, and it passed against the old requirement. It
+    asserted an INSTANT trip, which is what the guard did - and firing on a
+    single 0.1 K quantisation tick starved the pump into a latched Er03 that
+    needed a person at the unit. Owner's call: a few minutes below dew point
+    harms nothing, a latched fault does.
+
+    THE DIRECTION IS THE PART THAT MUST NOT CHANGE. When this fires it closes.
+    Delaying a fail-closed guard is a decision; converting it to fail-open
+    would be a defect, so that is asserted explicitly below.
+    """
     s = Safety(cfg)
-    s.set_dew_point(16.0)                      # guard trips at 16.0
-    pct, reason = s.apply("cooling", state(rl_hk01=20.0, vl_total=15.9),
-                          "rl_hk01", 100.0)
+    s.set_dew_point(16.0, now=0.0)             # guard trips at 16.0
+    st = state(rl_hk01=20.0, vl_total=15.9)
+
+    assert s.apply("cooling", st, "rl_hk01", 100.0, now=0.0) == (100.0, None)
+    assert s.apply("cooling", st, "rl_hk01", 100.0,
+                   now=s.undertemp_dwell_s - 1.0) == (100.0, None)
+
+    pct, reason = s.apply("cooling", st, "rl_hk01", 100.0,
+                          now=s.undertemp_dwell_s + 1.0)
     assert (pct, reason) == (0.0, "vl_undertemp")
+    assert pct != s.failsafe_pct, "must fail CLOSED, not open"
+
+
+def test_a_brief_undertemp_excursion_never_trips(cfg):
+    """The defect the dwell exists for: one tick of noise cost a plant outage.
+
+    D-023 records a trip from supply (14.5 -> 14.4) released 16 s later by the
+    DEW POINT moving instead (12.5 -> 12.4), supply unchanged. Against a 150 s
+    actuator stroke the valve never reached either commanded position, and the
+    closure starved the pump into Er03. An excursion shorter than the dwell
+    must leave the valve exactly where control put it.
+    """
+    s = Safety(cfg)
+    s.set_dew_point(16.0, now=0.0)
+    below = state(rl_hk01=20.0, vl_total=15.9)
+    clear = state(rl_hk01=20.0, vl_total=17.0)
+
+    assert s.apply("cooling", below, "rl_hk01", 80.0, now=0.0) == (80.0, None)
+    assert s.apply("cooling", below, "rl_hk01", 80.0, now=16.0) == (80.0, None)
+    assert s.apply("cooling", clear, "rl_hk01", 80.0, now=17.0) == (80.0, None)
+
+    # And the timer must have RESET - otherwise a series of brief excursions
+    # would accumulate into a trip that no single one earned.
+    assert s.apply("cooling", below, "rl_hk01", 80.0,
+                   now=17.0 + s.undertemp_dwell_s - 1.0) == (80.0, None)
 
 
 def test_supply_limits_are_mode_specific(cfg):
@@ -215,10 +257,24 @@ def test_cooling_stops_when_the_dew_point_is_unknown(cfg):
     This also covers the case the HA-side automation cannot: if the dew point
     is missing because Home Assistant died, its source-side pump shutdown died
     with it and this is the only protection left.
+
+    RETARGETED 2026-08-01: the refusal moved from the VALVES to the SOURCE.
+    heatctl now commands the compressor OFF itself over Modbus while the dew
+    point is unknown (see `Controller._trim_capacity`), which does not depend
+    on Home Assistant either - so the concern in the paragraph above is still
+    answered, by an actuator that can actually stop cold water being made.
+
+    Closing valves could never do that: it cannot stop the compressor, and it
+    starved the pump into a latched Er03 on every restart, because the dew
+    point arrives over MQTT ~30 s after start-up. Measured 2026-08-01.
+
+    So at THIS layer the assertion is now the opposite: valve position is left
+    exactly as control proposed. The source-side half is asserted in
+    tests/test_controller.py.
     """
     s = Safety(cfg)
     st = state(rl_hk01=20.0, vl_total=25.0)    # supply nowhere near dew point
-    assert s.apply("cooling", st, "rl_hk01", 60.0) == (0.0, "dew_point_unknown")
+    assert s.apply("cooling", st, "rl_hk01", 60.0) == (60.0, None)
 
 
 def test_a_stale_dew_point_also_stops_cooling(cfg):
@@ -229,7 +285,12 @@ def test_a_stale_dew_point_also_stops_cooling(cfg):
     s.set_dew_point(11.0)
     assert s.apply("cooling", st, "rl_hk01", 60.0) == (60.0, None)
     s._dew_ts -= cfg["safety"]["dew_point_max_age_s"] + 1
-    assert s.apply("cooling", st, "rl_hk01", 60.0) == (0.0, "dew_point_unknown")
+    # RETARGETED 2026-08-01 with the rest of the dew-point-unknown handling:
+    # staleness still reads as absent, but "absent" now stops the SOURCE rather
+    # than the valves. Asserted here only that the valves are not touched; the
+    # compressor-off half lives in tests/test_controller.py.
+    assert s.apply("cooling", st, "rl_hk01", 60.0) == (60.0, None)
+    assert not s.dew_point_known()
 
 
 def test_an_unknown_dew_point_does_not_stop_heating(cfg):
@@ -251,7 +312,12 @@ def test_there_is_no_way_to_switch_the_dew_point_requirement_off(cfg):
     cfg["safety"]["cooling_requires_dew_point"] = False      # stale key
     s = Safety(cfg)
     st = state(rl_hk01=20.0, vl_total=25.0)
-    assert s.apply("cooling", st, "rl_hk01", 60.0) == (0.0, "dew_point_unknown")
+    # RETARGETED 2026-08-01: the refusal moved to the SOURCE, so what must be
+    # unfalsifiable here is that the dew point is still reported as UNKNOWN
+    # whatever stale keys a config carries - that is the signal main.py acts
+    # on to command the compressor off. The valves are deliberately untouched.
+    assert not s.dew_point_known()
+    assert s.apply("cooling", st, "rl_hk01", 60.0) == (60.0, None)
 
 
 def test_frost_protection_still_outranks_the_dew_point_rule(cfg):
@@ -273,10 +339,15 @@ def test_a_faulted_circuit_sensor_does_not_defeat_the_condensation_guard(cfg):
     is the actively harmful choice.
     """
     s = Safety(cfg)
-    s.set_dew_point(16.0)                      # guard trips at 16.0
+    s.set_dew_point(16.0, now=0.0)             # guard trips at 16.0
     st = state(vl_total=15.0)                  # supply known bad
     st.faults.add("rl_hk01")                   # and the circuit sensor is dead
-    assert s.apply("cooling", st, "rl_hk01", 50.0) == (0.0, "vl_undertemp")
+    # The ORDER is what this test is about, and it is unchanged. The dwell
+    # (2026-08-01) only decides WHEN the condensation guard fires; once it
+    # does, it must still outrank fail-open.
+    s.apply("cooling", st, "rl_hk01", 50.0, now=0.0)
+    assert s.apply("cooling", st, "rl_hk01", 50.0,
+                   now=s.undertemp_dwell_s + 1.0) == (0.0, "vl_undertemp")
 
 
 def test_a_faulted_circuit_sensor_does_not_defeat_screed_protection(cfg):
@@ -299,11 +370,13 @@ def test_the_condensation_guard_uses_the_live_limit(cfg):
     s = Safety(cfg)
     st = state(rl_hk01=20.0, vl_total=15.0)
 
-    s.set_dew_point(13.0)                      # trips at 13.0 -> 15.0 is fine
-    assert s.apply("cooling", st, "rl_hk01", 60.0) == (60.0, None)
+    s.set_dew_point(13.0, now=0.0)             # trips at 13.0 -> 15.0 is fine
+    assert s.apply("cooling", st, "rl_hk01", 60.0, now=0.0) == (60.0, None)
 
-    s.set_dew_point(16.0)                      # trips at 16.0 -> 15.0 is not
-    assert s.apply("cooling", st, "rl_hk01", 60.0) == (0.0, "vl_undertemp")
+    s.set_dew_point(16.0, now=1.0)             # trips at 16.0 -> 15.0 is not
+    s.apply("cooling", st, "rl_hk01", 60.0, now=1.0)          # starts the dwell
+    assert s.apply("cooling", st, "rl_hk01", 60.0,
+                   now=1.0 + s.undertemp_dwell_s + 1.0) == (0.0, "vl_undertemp")
 
 
 def test_a_missing_dew_point_does_not_stop_heating(cfg):
@@ -330,10 +403,12 @@ def test_the_condensation_guard_is_scoped_to_cooling(cfg):
     own mode register, which heatctl now reads.
     """
     s = Safety(cfg)
-    s.set_dew_point(16.0)                      # guard trips at 16.0
+    s.set_dew_point(16.0, now=0.0)             # guard trips at 16.0
     st = state(rl_hk01=20.0, vl_total=15.0)    # cold supply
-    assert s.apply("heating", st, "rl_hk01", 60.0) == (60.0, None)
-    assert s.apply("cooling", st, "rl_hk01", 60.0) == (0.0, "vl_undertemp")
+    assert s.apply("heating", st, "rl_hk01", 60.0, now=0.0) == (60.0, None)
+    s.apply("cooling", st, "rl_hk01", 60.0, now=0.0)          # starts the dwell
+    assert s.apply("cooling", st, "rl_hk01", 60.0,
+                   now=s.undertemp_dwell_s + 1.0) == (0.0, "vl_undertemp")
 
 
 def test_heating_still_runs_without_any_dew_point(cfg):
@@ -370,6 +445,11 @@ def test_the_condensation_guard_does_not_reopen_on_one_lsb_of_recovery(cfg):
     why this test holds the supply constant and moves the limit.
     """
     s = Safety(cfg)
+    # Dwell neutralised: this test isolates the RELEASE hysteresis, which is
+    # orthogonal to the 2026-08-01 trip dwell. The dwell has its own tests;
+    # mixing them here would make a hysteresis regression look like a
+    # timing one.
+    s.undertemp_dwell_s = 0.0
     s.set_dew_point(12.5)                                  # guard trips at 12.5
     st = state(rl_hk01=20.0, vl_total=12.4)
     assert s.apply("cooling", st, "rl_hk01", 100.0) == (0.0, "vl_undertemp")
@@ -380,22 +460,37 @@ def test_the_condensation_guard_does_not_reopen_on_one_lsb_of_recovery(cfg):
     assert pct == 0.0
 
 
-def test_the_condensation_guard_trips_the_instant_supply_goes_bad(cfg):
+def test_the_release_margin_never_delays_the_trip_beyond_the_dwell(cfg):
     """The hysteresis must be asymmetric: it may only ever delay REOPENING.
 
-    Closing is the protective direction. If a future change makes the band
-    symmetric, the trip is deferred and the guard becomes slower than the
-    defect it replaced - strictly worse than having no hysteresis at all.
+    RETARGETED 2026-08-01. This was `..._trips_the_instant_supply_goes_bad`,
+    and the instant trip is exactly what the owner had removed - firing on one
+    0.1 K tick starved the pump into a latched Er03. So the old assertion is
+    gone deliberately.
+
+    THE INVARIANT IT GUARDED IS NOT. The release margin must still never push
+    the trip out past the dwell. The dwell is a bounded, deliberate delay; the
+    release margin acting on the closing direction would be an unbounded and
+    accidental one, and that is the mistake worth catching. A symmetric band
+    would make the guard slower than the defect it replaced.
     """
     s = Safety(cfg)
-    s.set_dew_point(12.5)                                  # guard trips at 12.5
+    s.set_dew_point(12.5, now=0.0)                         # guard trips at 12.5
     st = state(rl_hk01=20.0, vl_total=12.49)               # a hair below
-    assert s.apply("cooling", st, "rl_hk01", 100.0) == (0.0, "vl_undertemp")
+    s.apply("cooling", st, "rl_hk01", 100.0, now=0.0)      # starts the dwell
+    # One tick past the dwell and not a second later.
+    assert s.apply("cooling", st, "rl_hk01", 100.0,
+                   now=s.undertemp_dwell_s + 0.01) == (0.0, "vl_undertemp")
 
 
 def test_the_condensation_guard_reopens_once_clear_of_the_margin(cfg):
     """It must actually release - a latch that never clears stops the cooling."""
     s = Safety(cfg)
+    # Dwell neutralised: this test isolates the RELEASE hysteresis, which is
+    # orthogonal to the 2026-08-01 trip dwell. The dwell has its own tests;
+    # mixing them here would make a hysteresis regression look like a
+    # timing one.
+    s.undertemp_dwell_s = 0.0
     s.set_dew_point(12.5)                                  # guard trips at 12.5
     assert s.apply("cooling", state(rl_hk01=20.0, vl_total=12.4),
                    "rl_hk01", 100.0) == (0.0, "vl_undertemp")
@@ -427,6 +522,11 @@ def test_the_trip_latch_does_not_survive_a_mode_change(cfg):
     at the start of the next one, before any supply measurement justified it.
     """
     s = Safety(cfg)
+    # Dwell neutralised: this test isolates the RELEASE hysteresis, which is
+    # orthogonal to the 2026-08-01 trip dwell. The dwell has its own tests;
+    # mixing them here would make a hysteresis regression look like a
+    # timing one.
+    s.undertemp_dwell_s = 0.0
     s.set_dew_point(12.5)
     assert s.apply("cooling", state(rl_hk01=20.0, vl_total=12.4),
                    "rl_hk01", 100.0) == (0.0, "vl_undertemp")
@@ -448,6 +548,11 @@ def test_the_release_margin_is_not_applied_once_the_guard_has_cleared(cfg):
     which is exactly the class of bug that does not announce itself.
     """
     s = Safety(cfg)
+    # Dwell neutralised: this test isolates the RELEASE hysteresis, which is
+    # orthogonal to the 2026-08-01 trip dwell. The dwell has its own tests;
+    # mixing them here would make a hysteresis regression look like a
+    # timing one.
+    s.undertemp_dwell_s = 0.0
     s.set_dew_point(12.5)                                  # guard trips at 12.5
     assert s.apply("cooling", state(rl_hk01=20.0, vl_total=12.4),
                    "rl_hk01", 100.0) == (0.0, "vl_undertemp")

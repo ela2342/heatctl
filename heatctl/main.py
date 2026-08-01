@@ -140,6 +140,14 @@ class Controller:
         self._failsafe_reason: str | None = None
         self._failsafe_since = 0.0
         self._failsafe_logged = 0.0
+        # Flow-floor log throttling - same reason, see step(). None means the
+        # floor is not currently binding, which is what distinguishes a fresh
+        # transition from a continuing one.
+        self._flow_floor_since: float | None = None
+        self._flow_floor_logged = 0.0
+        # Safety-override log throttling, keyed by reason - see _log_overrides().
+        self._override_since: dict[str, float] = {}
+        self._override_logged: dict[str, float] = {}
 
     def _apply_mode(self, mode: str, reset: bool = True) -> None:
         """Apply a mode to BOTH the PID direction and the return setpoint.
@@ -258,6 +266,18 @@ class Controller:
         mode without lifting it would have been a high-pressure trip.
         """
         if not self.capacity.enabled or not self.hp.allow_writes:
+            return
+        # NO DEW POINT -> DO NOT MAKE COLD WATER. This is the source-side half
+        # of the change on 2026-08-01; `Safety.apply` used to answer an unknown
+        # dew point by slamming every valve shut, which starved the pump into a
+        # latched Er03 on every restart and could not stop the compressor
+        # anyway. Refusing at the source is the action that actually addresses
+        # the risk: no cold water is made, and valve position is left alone.
+        if self.mode == "cooling" and not self.safety.dew_point_known():
+            if not self.hp.cooling_is_off():
+                await self.hp.set_cooling(
+                    None, "dew point unknown - refusing to cool")
+            await self.plane.publish("capacity/reason", "dew point unknown")
             return
         flags1 = self.hp.config.get(0x0001)
         fan_cap = self.hp.config.get(hpm.by_name("silent_max_fan_cooling").addr)
@@ -442,18 +462,48 @@ class Controller:
             commanded, raised = self.demand.enforce_flow_floor(commanded)
             if raised is not None:
                 self._flow_floor_pct = raised
-                log.info("flow floor: valves raised to %.0f%% mean", raised)
+                # Log the TRANSITION, then at most once a minute. This fires
+                # every cycle whenever the floor binds continuously, which is
+                # the normal state once min_open_pct is set above what
+                # distribution wants - on 2026-08-01 it was 96 of the last 100
+                # lines in the container's log ring, having flushed the rest
+                # out. That is the same defect `write_all_valves` and
+                # `failsafe()` already carry throttles for: a persistent,
+                # fully predictable condition must cost one line, not one line
+                # per second, or it destroys the evidence for whatever happens
+                # next.
+                now = time.monotonic()
+                if (self._flow_floor_since is None
+                        or now - self._flow_floor_logged > 60):
+                    if self._flow_floor_since is None:
+                        self._flow_floor_since = now
+                        log.info("flow floor: valves raised to %.0f%% mean",
+                                 raised)
+                    else:
+                        log.info("flow floor: valves raised to %.0f%% mean "
+                                 "(still, since %.0f s)", raised,
+                                 now - self._flow_floor_since)
+                    self._flow_floor_logged = now
+            else:
+                if self._flow_floor_since is not None:
+                    log.info("flow floor released (was binding for %.0f s)",
+                             time.monotonic() - self._flow_floor_since)
+                self._flow_floor_since = None
 
+        overrides: dict[str, list[str]] = {}
         for valve, (_, sensor) in demands.items():
             proposed = commanded[valve]
-            pct, reason = self.safety.apply(self.mode, state, sensor, proposed)
+            pct, reason = self.safety.apply(self.mode, state, sensor, proposed,
+                                            now)
             await self.io.write_valve(valve, pct)
                 # Record what the plant actually received, not what control
                 # asked for - safety may have overridden it, and real flow is
                 # what decides whether RL will mean anything.
             self.rl_gate.record_command(valve, pct, now)
             if reason:
+                overrides.setdefault(reason, []).append(valve)
                 await self.plane.publish(f"override/{valve}", reason)
+        self._log_overrides(overrides, now)
 
         await self._hold_source_power()
         await self._clear_stale_cooling_off()
@@ -669,6 +719,43 @@ class Controller:
         if self.hp.allow_writes:
             await self.hp.sync_mode(self.mode)
         await self.plane.publish("hp/mode_agrees", "0" if disagree else "1")
+
+    def _log_overrides(self, overrides: dict[str, list[str]], now: float) -> None:
+        """Make safety overrides visible in the log. They were not, at all.
+
+        WHY THIS EXISTS. `Safety.apply` returns a reason, `step()` published it
+        to `override/<valve>`, and nothing ever logged it. Worse, the publish is
+        conditional on there BEING a reason, so an override that ends leaves the
+        last value sitting on the topic - and no HA entity was discovered for it
+        either. The single most consequential thing heatctl does - forcing a
+        circuit shut because supply reached the dew point - was invisible in the
+        log AND unobservable in Home Assistant.
+
+        That cost a real diagnosis on 2026-08-01: the plant tripped Er03 for the
+        third time that day, the likely chain being dew-point trip -> valves shut
+        -> flow collapse -> flow interlock, and it could not be confirmed or
+        refuted because the first link left no trace.
+
+        Aggregated BY REASON, not per valve: one dew-point trip across ten
+        circuits is one fact. Throttled to a transition plus one line a minute,
+        for the reason `failsafe()` documents - a persistent, fully predictable
+        condition must not flush the log ring that holds its own cause.
+        """
+        for reason, valves in sorted(overrides.items()):
+            if reason not in self._override_since:
+                self._override_since[reason] = now
+                self._override_logged[reason] = now
+                log.warning("SAFETY OVERRIDE %s on %d circuit(s): %s", reason,
+                            len(valves), ", ".join(sorted(valves)))
+            elif now - self._override_logged.get(reason, 0.0) > 60:
+                self._override_logged[reason] = now
+                log.warning("SAFETY OVERRIDE %s (still, since %.0f s) on "
+                            "%d circuit(s)", reason,
+                            now - self._override_since[reason], len(valves))
+        for reason in [r for r in self._override_since if r not in overrides]:
+            log.info("safety override %s cleared (was active for %.0f s)",
+                     reason, now - self._override_since.pop(reason))
+            self._override_logged.pop(reason, None)
 
     async def failsafe(self, reason: str) -> None:
         # Log the transition, then only once a minute. A failsafe that persists

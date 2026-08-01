@@ -166,6 +166,10 @@ async def test_safety_overrides_the_control_output(controller):
         room_temps={"gaestebad": 28.0},          # maximum cooling demand
         dew_point=14.0,                          # limit 16.0
     )
+    # Dwell neutralised: this test is about the override PROPAGATING, not
+    # about when it fires. The 2026-08-01 trip dwell has its own tests in
+    # test_safety.py; leaving it in would make these depend on wall time.
+    ctl.safety.undertemp_dwell_s = 0.0
     ctl.io.touch(time.monotonic())
     await ctl.step(1.0)
     assert ctl.io.last_write["valve_hk01"] == 0.0
@@ -223,13 +227,25 @@ async def test_an_unmeasured_circuit_fails_open(controller):
 
 async def test_the_gate_records_what_safety_wrote_not_what_control_proposed(
         controller):
-    """Safety changes real flow, so it must drive the validity clock too."""
+    """Safety changes real flow, so it must drive the validity clock too.
+
+    RETARGETED 2026-08-01: this used to reach 0 % via `dew_point_unknown`,
+    because it passed no dew point at all. That path was removed - an unknown
+    dew point now stops the SOURCE and leaves valves alone - so the test was
+    silently exercising a rule that no longer exists. Given a real dew point it
+    trips on `vl_undertemp` instead, which is the same question it meant to ask.
+    """
     ctl = controller(
         control={"mode": "cooling"},
         temps={"rl_hk01": 24.0, "rl_hk02": 24.0, "rl_hk03": 24.0,
                "vl_total": 12.0},              # condensation guard -> force 0
         room_temps={"gaestebad": 28.0},        # control wants 100 %
+        dew_point=14.0,                        # guard trips at 14.0
     )
+    # Dwell neutralised: this test is about the override PROPAGATING, not
+    # about when it fires. The 2026-08-01 trip dwell has its own tests in
+    # test_safety.py; leaving it in would make these depend on wall time.
+    ctl.safety.undertemp_dwell_s = 0.0
     ctl.io.touch(time.monotonic())
     await ctl.step(1.0)
     assert ctl.io.last_write["valve_hk01"] == 0.0
@@ -274,6 +290,134 @@ async def test_failsafe_is_logged_once_not_once_per_cycle(controller, caplog):
             await ctl.step(1.0)
     lines = [r for r in caplog.records if "FAILSAFE" in r.getMessage()]
     assert len(lines) == 1, f"{len(lines)} failsafe lines for 50 cycles"
+
+
+async def test_an_unknown_dew_point_stops_the_source_not_the_valves(controller):
+    """The 2026-08-01 replacement for `dew_point_unknown` closing valves.
+
+    The old rule shut every owned valve until the first dew-point message
+    arrived over MQTT - measured at 33 s on EVERY restart, which starves the
+    pump into a latched Er03 that needs a person at the unit. It also inverted
+    D-003 by failing CLOSED on lost knowledge.
+
+    The refusal now happens where it can actually work: no dew point means no
+    cold water is MADE. Closing valves never could stop the compressor.
+
+    BOTH halves are asserted. Checking only that the compressor stops would
+    pass just as happily if the valve slam were still there, which is the
+    regression this exists to catch.
+
+    The real HeatPump is kept and only the two methods under test are replaced;
+    an earlier version of this used a stub object and simply grew a new
+    attribute every time `step()` reached further into it.
+    """
+    ctl = controller(
+        control={"mode": "cooling"},
+        temps={"rl_hk01": 24.0, "rl_hk02": 24.0, "rl_hk03": 24.0,
+               "vl_total": 25.0},              # supply nowhere near any limit
+        room_temps={"gaestebad": 28.0},        # control wants cooling
+        dew_point=None,                        # ...and we have no dew point
+    )
+    ctl.io.touch(time.monotonic())
+    ctl.capacity.enabled = True
+    ctl.hp.allow_writes = True
+
+    calls: list[tuple[float | None, str]] = []
+
+    async def _record(setpoint, why):
+        calls.append((setpoint, why))
+        return True
+
+    ctl.hp.set_cooling = _record
+    ctl.hp.cooling_is_off = lambda: False
+
+    await ctl.step(1.0)
+
+    assert calls, "compressor was not commanded off - source side did nothing"
+    assert calls[0][0] is None, "must write the OFF sentinel, not a setpoint"
+    assert all(p > 0.0 for p in ctl.io.last_write.values()), \
+        "valves were shut on an unknown dew point - that is the removed rule"
+
+
+async def test_safety_overrides_are_logged_once_not_once_per_cycle(controller,
+                                                                  caplog):
+    """Real defect, 2026-08-01: safety overrides were not logged AT ALL.
+
+    `Safety.apply` returned a reason, `step()` published it to
+    `override/<valve>`, and nothing logged it - nor was any HA entity ever
+    discovered for those topics. So the most consequential action heatctl
+    takes, forcing circuits shut because supply reached the dew point, was
+    invisible in both places an operator would look.
+
+    It cost a diagnosis the same day: the plant tripped Er03 three times, the
+    suspected chain being dew-point trip -> valves shut -> flow collapse ->
+    flow interlock, and the first link could be neither confirmed nor refuted.
+
+    One line per REASON, not per valve - a dew-point trip hits every circuit at
+    once and that is one fact, not ten.
+    """
+    ctl = controller(
+        temps={"rl_hk01": 24.0, "rl_hk02": 24.0, "rl_hk03": 24.0,
+               "vl_total": 15.0},          # supply well under the dew point
+        dew_point=20.0,
+        control={"mode": "cooling"},
+    )
+    # Dwell neutralised: this test is about the override PROPAGATING, not
+    # about when it fires. The 2026-08-01 trip dwell has its own tests in
+    # test_safety.py; leaving it in would make these depend on wall time.
+    ctl.safety.undertemp_dwell_s = 0.0
+    ctl.io.touch(time.monotonic())
+
+    with caplog.at_level("INFO", logger="heatctl"):
+        for _ in range(50):
+            ctl.io.touch(time.monotonic())
+            await ctl.step(1.0)
+
+    overridden = [v for v, p in ctl.io.last_write.items() if p == 0.0]
+    assert overridden, "no circuit was overridden - test is vacuous"
+    lines = [r for r in caplog.records
+             if "SAFETY OVERRIDE" in r.getMessage()]
+    assert len(lines) == 1, f"{len(lines)} override lines for 50 cycles"
+    assert "vl_undertemp" in lines[0].getMessage()
+
+
+async def test_flow_floor_is_logged_once_not_once_per_cycle(controller, caplog):
+    """Real defect, 2026-08-01: a continuously binding flow floor flooded the log.
+
+    Raising `min_open_pct` 40 -> 55 to stop heatctl throttling itself into the
+    heat pump's Er03 made the floor bind on EVERY cycle. The log line had always
+    been unthrottled; it had simply never been reachable, because with eight
+    circuits marked unfitted `need` came out negative and the floor could not
+    fire. Within minutes 96 of the last 100 lines in the container's log ring
+    were this one message, which is the same evidence-destroying flood that
+    `failsafe()` and `write_all_valves` already carry throttles for.
+
+    The assertion on `_flow_floor_pct` is load-bearing: without it this test
+    passes just as happily when the floor never fires at all, which is exactly
+    how the first live check of the fix fooled me.
+    """
+    ctl = controller(
+        temps={"rl_hk01": 24.0, "rl_hk02": 24.0, "rl_hk03": 24.0,
+               "vl_total": 30.0},
+        room_temps={"gaestebad": 25.0},      # well above the 21 degC target
+    )
+    ctl.io.touch(time.monotonic())
+    # Gästebad is the only room with a sensor, so it is the only circuit the
+    # ROOM pid drives - and the room path is ungated, so it can actually reach
+    # 0 %. Wohnzimmer's two circuits have no room sensor, so rl_gate distrusts
+    # their returns and holds them OPEN at the failsafe position. That pins the
+    # mean at ~67 %, which is why the floor has to be lifted above it to make
+    # this condition reachable at all.
+    ctl.demand.min_open_pct = 90.0
+
+    with caplog.at_level("INFO", logger="heatctl"):
+        for _ in range(50):
+            ctl.io.touch(time.monotonic())
+            await ctl.step(1.0)
+
+    assert ctl._flow_floor_pct is not None, "floor never fired - test is vacuous"
+    lines = [r for r in caplog.records if "flow floor" in r.getMessage()]
+    assert len(lines) == 1, f"{len(lines)} flow-floor lines for 50 cycles"
 
 
 async def test_failsafe_recovery_is_logged(controller, caplog):
@@ -489,6 +633,10 @@ async def test_safety_still_forces_a_circuit_shut_after_the_flow_floor(controlle
         dew_point=14.0,                    # limit 16.0 -> supply is bad
         control={"mode": "cooling"},
     )
+    # Dwell neutralised: this test is about the override PROPAGATING, not
+    # about when it fires. The 2026-08-01 trip dwell has its own tests in
+    # test_safety.py; leaving it in would make these depend on wall time.
+    ctl.safety.undertemp_dwell_s = 0.0
     ctl.io.touch(time.monotonic())
     await ctl.step(1.0)
     written = ctl.io.last_write

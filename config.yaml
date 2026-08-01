@@ -186,17 +186,37 @@ valves:
     # controller's flow proxy counts it as 100 %). Flip to true as each
     # actuator is installed - marking one fitted before it is will make
     # heatctl hold or flush a circuit that is in fact wide open.
+    #
+    # 2026-07-31: actuators fitted on 1-4 and 6-11 (owner). These flags were
+    # flipped the same evening, BEFORE the wiring was verified, on an
+    # asymmetry argument rather than on evidence - the two errors here are not
+    # equally bad:
+    #
+    #   fitted: true  on a channel that is NOT really connected -> the flow
+    #     proxy under-counts real flow (the circuit is open pipe anyway) and
+    #     rl_gate distrusts a return sensor that was in fact trustworthy.
+    #     Control quality is lost; nothing is endangered.
+    #   fitted: false on a channel that IS connected -> enforce_flow_floor
+    #     computes need = 40*10 - 100*8 = -400 and can never fire, so
+    #     distribution may drive circuits to open_threshold_pct (5 %) and
+    #     starve the exchanger into Er03; and rl_gate unconditionally trusts
+    #     return sensors on circuits that can now sit shut (D-009 defect, on
+    #     eight circuits at once).
+    #
+    # The second is dangerous in both directions, the first only wasteful, so
+    # the safe default while wiring is UNVERIFIED is true. Verification is the
+    # per-channel sweep in tools/commission_valves.py.
     - {index: 1,  name: valve_hk01, fitted: true}   # Gästebad
     - {index: 2,  name: valve_hk02, fitted: true}   # Wohnzimmer
-    - {index: 3,  name: valve_hk03, fitted: false}  # Kinderzimmer Natalie
-    - {index: 4,  name: valve_hk04, fitted: false}  # Kinderzimmer Naomi
+    - {index: 3,  name: valve_hk03, fitted: true}   # Kinderzimmer Natalie
+    - {index: 4,  name: valve_hk04, fitted: true}   # Kinderzimmer Naomi
     - {index: 5,  name: valve_hk05, fitted: false}  # Bad Handtuchhalter, reserve
-    - {index: 6,  name: valve_hk06, fitted: false}  # Badezimmer
-    - {index: 7,  name: valve_hk07, fitted: false}  # Elternschlafzimmer
-    - {index: 8,  name: valve_hk08, fitted: false}  # Wohnzimmer
-    - {index: 9,  name: valve_hk09, fitted: false}  # Wohnzimmer
-    - {index: 10, name: valve_hk10, fitted: false}  # Wohnzimmer
-    - {index: 11, name: valve_hk11, fitted: false}  # Arbeitszimmer
+    - {index: 6,  name: valve_hk06, fitted: true}   # Badezimmer
+    - {index: 7,  name: valve_hk07, fitted: true}   # Elternschlafzimmer
+    - {index: 8,  name: valve_hk08, fitted: true}   # Wohnzimmer
+    - {index: 9,  name: valve_hk09, fitted: true}   # Wohnzimmer
+    - {index: 10, name: valve_hk10, fitted: true}   # Wohnzimmer
+    - {index: 11, name: valve_hk11, fitted: true}   # Arbeitszimmer
     - {index: 12, name: valve_hk12, fitted: false}  # out of service
     # Genuine spares - no circuit 13-16 exists.
     - {index: 13, name: valve_ao13, fitted: false}
@@ -445,7 +465,11 @@ control:
     # belongs to the house, not to the plant. Flash is not the constraint -
     # this is at most 30 writes/hour against a 30/hour budget only in the
     # pathological case, and the deviation band stops it hunting.
-    saturated_interval_s: 120
+    # At least ~7x the capacity loop's settle times. Setting these EQUAL on
+    # 2026-07-31 let the trim walk P04 19 -> 14 in ten minutes and outrun the
+    # frequency ceiling that protects supply - a cascade needs the outer loop
+    # several times slower than the inner, or it is two controllers racing.
+    saturated_interval_s: 900
     step_c: 1.0
     saturated_pct: 85.0     # valves this open = not enough capacity
     idle_pct: 30.0          # valves this shut = water more aggressive than needed
@@ -565,7 +589,27 @@ control:
     # is too low. Er03 was observed instantly with everything but circuit 11
     # shut (owner, 2026-07-28), so the trip is real and unforgiving.
     # Replace this with a flow-based limit once flow is measured - see BACKLOG.
-    min_open_pct: 40.0
+    #
+    # RAISED 40 -> 55 on 2026-08-01, and the paragraph above called it: Er03
+    # tripped repeatedly with the mean at 38.9 %, so 40 was NOT below the trip
+    # point, it was essentially ON it. Every heat-pump reset re-faulted within
+    # minutes because heatctl immediately throttled back to ~39 %.
+    #
+    # 55 is a MARGIN, not a measurement - treat it as provisional. Two things
+    # found the same day say the underlying quantity is wrong, not just the
+    # value:
+    #   * The proportional valves have very low authority. Measured at the
+    #     manifold flow indicators, an 18 % command still passes 1.5-2.0 l/min
+    #     against a per-circuit maximum above 3 l/min - over half the flow at
+    #     under a fifth of the command. So mean-commanded-percent is not
+    #     proportional to flow in even a rough sense.
+    #   * Consequently total flow is governed mostly by how many circuits are
+    #     near-SHUT, not by the mean. A mean-based floor is the wrong shape for
+    #     the failure it guards against, and can be satisfied while individual
+    #     circuits are starved.
+    # The flow-based limit in BACKLOG is the fix; until then this is a blunt
+    # guard chosen to keep the plant running, and it binds continuously.
+    min_open_pct: 55.0
     engage_deviation_c: 0.3 # how far off target before the source is worth it
     mode_deadband_c: 1.0    # PLANT-level only - rooms keep one target each.
                             # Without it the plant flaps around the average.
@@ -658,7 +702,30 @@ safety:
   # RAISING this costs cooling: the plant runs with valves shut while the
   # supply is already safe. LOWERING it below 0.2 re-opens the defect.
   dew_point_release_margin_c: 0.3
-  dew_point_max_age_s: 900     # older than this -> fall back to the static value
+  # How long supply must sit below the dew point CONTINUOUSLY before the valve
+  # backstop closes circuits. Added 2026-08-01 on the owner's call: *"it's not
+  # like a minute or three below dew point causes immediate harm, if it is a
+  # rare event."* Condensation is a rate process; three minutes deposits
+  # nothing that matters, while the instant trip it replaced fired on a single
+  # 0.1 K quantisation tick and starved the pump into a LATCHED Er03 needing a
+  # person at the unit. Er03 appeared three times on 2026-08-01.
+  #
+  # It is not an arbitrary delay - it makes the guard the last stage of a
+  # cascade. The capacity loop cuts frequency within a cycle and stops the
+  # compressor at its floor, so if supply is still under the dew point after
+  # this long, the source-side protection has demonstrably failed. That case is
+  # real: the heat pump was unreachable for 8 minutes that afternoon with
+  # supply 0.1 K off the dew point, and nothing else could have stopped it.
+  #
+  # 0 restores the pre-2026-08-01 instant trip. Do NOT raise this to "fix"
+  # nuisance closures without checking what is driving supply down - the
+  # capacity loop is what should be answering that.
+  undertemp_dwell_s: 180.0
+  # Older than this reads as ABSENT. The comment here used to say "fall back to
+  # the static value"; there is no static value any more (removed 2026-07-31)
+  # and absent now means heatctl refuses to make cold water at all - a
+  # source-side stop, not a valve action. See safety.py.
+  dew_point_max_age_s: 900
   frost_protect_c: 6.0         # below this return temp: force valve open
   sensor_fault_raw: [0x05DC, 0xFED4]  # wire-break / short-circuit saturation
   stale_data_timeout_s: 15     # no fresh input data -> failsafe

@@ -35,6 +35,12 @@ class Safety:
         # ASYMMETRIC hysteresis on the condensation guard. Trip immediately,
         # release only `release_margin` above the limit. See apply().
         self.dew_release_margin = s.get("dew_point_release_margin_c", 0.3)
+        # How long supply must sit below the dew point CONTINUOUSLY before the
+        # valve backstop fires. 0 restores the pre-2026-08-01 instant trip.
+        # See the long note in apply() - this is what turns the guard from a
+        # noise amplifier into the last stage of a cascade.
+        self.undertemp_dwell_s = float(s.get("undertemp_dwell_s", 180.0))
+        self._undertemp_since: float | None = None
         self._cooling_tripped = False
         self._dew: float | None = None
         self._dew_ts = 0.0
@@ -111,7 +117,8 @@ class Safety:
         return limit
 
     def apply(self, mode: str, state, circuit_sensor: str,
-              proposed_pct: float) -> tuple[float, str | None]:
+              proposed_pct: float,
+              now: float | None = None) -> tuple[float, str | None]:
         """Returns (valve position, reason). reason != None => override active.
 
         Failure policy - two deliberately different directions:
@@ -162,6 +169,7 @@ class Safety:
         if mode == "heating" and vl is not None and vl > self.vl_max_heating:
             return 0.0, "vl_overtemp"    # screed protection
 
+        _now = time.monotonic() if now is None else now
         if mode == "cooling":
             # Condensation guard, deliberately scoped to cooling (owner's
             # call, 2026-07-27). An earlier draft made it mode-independent, on
@@ -170,8 +178,29 @@ class Safety:
             # honest fix is to detect a disagreement and alarm, not to run a
             # condensation guard in heating where a lukewarm start-up supply
             # plus humid air would block the house warming up.
-            if not self.dew_point_known():
-                return 0.0, "dew_point_unknown"
+            # NO VALVE ACTION ON AN UNKNOWN DEW POINT. Removed 2026-08-01.
+            #
+            # This used to `return 0.0, "dew_point_unknown"`, closing every
+            # owned valve until the first dew-point message arrived over MQTT.
+            # Measured that day: 33 s of a fully shut manifold on EVERY
+            # restart, four restarts, and Er03 - which latches and needs a
+            # person at the unit - three times.
+            #
+            # Two things make that the wrong actuator, not merely badly tuned:
+            #   * It inverts D-003. Lost knowledge fails OPEN everywhere else,
+            #     and this failed CLOSED into a fault only a human can clear.
+            #   * "Nobody has told me the dew point" is not a measured danger
+            #     to the screed. It is a reason not to MAKE cold water, which
+            #     is a source-side action. Shutting valves cannot stop the
+            #     compressor; it can only starve the pump.
+            #
+            # The refusal now lives where it belongs: main.py commands the
+            # compressor OFF while the dew point is unknown. Valve position is
+            # left exactly as control proposed.
+            if not self.dew_point_known(now):
+                self._undertemp_since = None
+                self._cooling_tripped = False
+                return proposed_pct, None
             if vl is not None:
                 # THE GUARD TRIPS AT THE DEW POINT, not at the control target
                 # (owner, 2026-07-31: "Trip at 0, target 1K"). These are two
@@ -204,15 +233,50 @@ class Safety:
                 # protective direction and must stay instantaneous, so the
                 # margin may only ever DELAY REOPENING. Do not "simplify" this
                 # into a symmetric band - that would defer the trip.
-                if vl < limit or (self._cooling_tripped
-                                  and vl < limit + self.dew_release_margin):
-                    self._cooling_tripped = True
-                    return 0.0, "vl_undertemp"
+                below = (vl < limit or (self._cooling_tripped
+                                        and vl < limit + self.dew_release_margin))
+                # DWELL BEFORE TRIPPING. Added 2026-08-01, owner's call.
+                #
+                # The instant trip above was firing on ONE 0.1 K quantisation
+                # tick in either signal (D-023 records a trip from supply and a
+                # release 16 s later from the dew point moving instead), and
+                # every firing starved the pump into a latched Er03. Against a
+                # 150 s actuator stroke the valve never even reached the
+                # commanded position, so the "protection" was noise in and a
+                # plant outage out.
+                #
+                # Owner, 2026-08-01: *"it's not like a minute or three below
+                # dew point causes immediate harm, if it is a rare event."*
+                # Condensation is a rate process; three minutes deposits
+                # nothing that matters.
+                #
+                # The dwell is not an arbitrary delay - it is what makes this a
+                # CASCADE. The capacity loop cuts frequency within a cycle and
+                # stops the compressor at its floor, so if supply is still
+                # under the dew point after the dwell, the source-side
+                # protection has demonstrably failed and this backstop should
+                # fire. That is the case worth keeping: on 2026-08-01 the heat
+                # pump was unreachable for 8 minutes with supply 0.1 K off the
+                # dew point, and nothing else could have stopped it.
+                #
+                # Set `undertemp_dwell_s: 0` to restore the instant trip.
+                if below:
+                    if self._undertemp_since is None:
+                        self._undertemp_since = _now
+                    if _now - self._undertemp_since >= self.undertemp_dwell_s:
+                        self._cooling_tripped = True
+                        return 0.0, "vl_undertemp"
+                    return proposed_pct, None
+                self._undertemp_since = None
             self._cooling_tripped = False
         else:
             # Mode left cooling; the latch must not survive into the next
             # cooling period (restart == safe state, and so does a mode flip).
+            # The dwell timer is part of that latch and must reset with it, or
+            # a mode flip would carry accumulated below-limit time into a fresh
+            # cooling period and trip on the first cycle.
             self._cooling_tripped = False
+            self._undertemp_since = None
 
         # Lost knowledge of this circuit -> fail open (see policy above).
         if not rl_valid:
