@@ -94,6 +94,15 @@ class Estimator:
         self.room_topics = [r["room_temp_topic"] for r in cfg.get("rooms", [])
                             if r.get("room_temp_topic")]
         self.readings: dict[str, Reading] = {}
+        # Indoor dew point, published by layer 1 / HA on the same topic the
+        # condensation guard reads. Subscribed here so the humidity gap can be
+        # MEASURED rather than assumed - see `humidity_gap`.
+        self._dew_topic = m.get("dew_point_topic") or ""
+        # The same margin safety adds to the dew point, so the planner sizes
+        # against the limit layer 1 will actually enforce rather than a second,
+        # separately-drifting number.
+        self.dew_margin_c = float(cfg.get("safety", {})
+                                  .get("dew_point_margin_c", 1.0))
 
         w = params["weather"]
         lat, lon = w.get("latitude"), w.get("longitude")
@@ -108,8 +117,24 @@ class Estimator:
                       if lat is not None and params.get("solar") else None)
 
         self.filter: KalmanFilter | None = None
-        self.max_age_s = float(cfg.get("safety", {})
-                               .get("stale_data_timeout_s", 300))
+        # INPUT STALENESS IS LAYER 2's OWN, not layer 1's. This used to read
+        # `safety.stale_data_timeout_s`, which is 15 s on this plant - a
+        # CONTROL-LOOP timeout, correct for a 1 Hz loop that must failsafe on
+        # lost sensors. Layer 2 consumes slow signals: room temperatures every
+        # ~60 s, and the indoor dew point republished every 120 s. Against a
+        # 15 s window the dew point read as stale ~87 % of the time, so
+        # `humidity_gap()` returned None on almost every cycle and the
+        # condensation ceiling silently sat on its fallback - which is exactly
+        # what it looked like after the 2026-08-01 deploy: both ceiling
+        # entities pinned at 5700 W.
+        #
+        # Being generous here is the safe direction: a slightly old dew point
+        # still predicts tomorrow's humidity far better than no dew point at
+        # all, and nothing in this module actuates.
+        self.max_age_s = float(cfg.get("optimizer", {}).get(
+            "input_max_age_s",
+            max(900.0, float(cfg.get("safety", {})
+                             .get("stale_data_timeout_s", 300)))))
         self._client: aiomqtt.Client | None = None
         self._last_load_summary: str | None = None
         self._last_delta: float | None = None
@@ -316,6 +341,85 @@ class Estimator:
             })
         return out
 
+    # ---------- condensation-limited delivery ceiling ----------
+
+    @staticmethod
+    def _w_from_dew(dew_c: float, p_pa: float = 101325.0) -> float:
+        """Humidity ratio in g/kg from a dew point, via Magnus."""
+        e = 610.94 * math.exp(17.625 * dew_c / (dew_c + 243.04))
+        return 0.622 * e / (p_pa - e) * 1000.0
+
+    @staticmethod
+    def _dew_from_w(w_gkg: float, p_pa: float = 101325.0) -> float:
+        """Inverse of `_w_from_dew`."""
+        w = max(w_gkg, 1e-4) / 1000.0
+        e = p_pa * w / (0.622 + w)
+        lg = math.log(e / 610.94)
+        return 243.04 * lg / (17.625 - lg)
+
+    def humidity_gap(self) -> float | None:
+        """Measured `W_indoor - W_outdoor`, in g/kg. The whole predictor.
+
+        WHY A GAP AND NOT A MOISTURE MODEL. Fitting the balance
+        `dW/dt = n(W_out - W) + G/(rho V)` was attempted on five months of
+        archive on 2026-08-01 and FAILED to identify `n`: the house sits near
+        moisture steady state, so `dW ~= 0` and the dynamics carry almost no
+        information, while what variance `dW` has comes from unmeasured
+        occupancy. See BACKLOG.
+
+        What that same work DID establish tightly is the steady state itself -
+        `<W_in - W_out> = 1.442 +- 0.018 g/kg` over 3002 hours. So the gap is
+        the identifiable quantity, and predicting indoor humidity from a
+        forecast outdoor one needs nothing else.
+
+        MEASURED LIVE, NOT HARD-CODED, and that is deliberate: 1.442 is a
+        WINTER figure with windows shut. On 2026-08-01 the owner opened the
+        windows on humid outdoor air and the indoor dew point ROSE - the gap can
+        go to zero or negative. A live estimate tracks the regime; a constant
+        would have been confidently wrong on exactly the days that matter.
+        """
+        dew_in = self.readings.get(self._dew_topic) if self._dew_topic else None
+        if dew_in is None or not dew_in.fresh(self.max_age_s):
+            return None
+        if not self.weather or not self.weather.points:
+            return None
+        dew_out = self.weather.points[0].dew_point
+        if dew_out != dew_out:                      # NaN: API gave no dew point
+            return None
+        return self._w_from_dew(dew_in.value) - self._w_from_dew(dew_out)
+
+    def ceiling_w(self, pt, target_air: float, gap_gkg: float | None,
+                  fallback_w: float) -> float:
+        """Deliverable cooling power for one forecast hour, W.
+
+        THE SOURCE LIMIT NEVER BINDS IN COOLING. `load_forecast` was passed a
+        static 5700 W - the heat pump's output - on the reasoning that the
+        machine binds before the 9.0 kW of emitter. Measured 2026-08-01 through
+        `derived.q_max`, the CONDENSATION limit binds before either: 3.40 kW on
+        a humid day, 2.77 K on a very humid one, and even on dry air 5.10 kW.
+        So every hour of the forecast was sized against a constraint that is
+        never the active one, and `hours_over`, `store_kwh` and `precharge_k`
+        all inherited that.
+
+        Chain: forecast outdoor dew point -> add the measured gap -> indoor dew
+        point -> condensation limit (dew + margin) -> `q_max` at that limit.
+
+        Falls back to `fallback_w` when the gap or the dew point is unavailable,
+        because a missing humidity signal must not silently zero the ceiling and
+        make the planner think the plant can do nothing.
+        """
+        if gap_gkg is None:
+            return fallback_w
+        dew_out = pt.dew_point
+        if dew_out != dew_out:
+            return fallback_w
+        w_in = self._w_from_dew(dew_out) + gap_gkg
+        limit = self._dew_from_w(w_in) + self.dew_margin_c
+        if target_air - limit <= 0:
+            return 0.0                # supply cannot be below the room: no cooling
+        q = derived.q_max(self.params, limit, target_air)
+        return max(0.0, min(fallback_w, q.value))
+
     def hourly_forecast(self, target_air: float, ceiling_w: float,
                         hours: int = 48) -> list[dict]:
         """The per-hour series `load_forecast` computes and then throws away.
@@ -342,13 +446,16 @@ class Estimator:
         if not self.weather or not self.weather.points:
             return []
         out = []
+        gap = self.humidity_gap()
         for pt in self.weather.points[:hours]:
             load = net_load_w(self.bp, target_air, pt.temperature,
                               self.t_ground, q_sol=self.solar_w(pt),
                               q_int=self.q_int)
+            cap = self.ceiling_w(pt, target_air, gap, ceiling_w)
             out.append({
                 "t": pt.time,
                 "load_w": round(load, 0),
+                "ceiling_w": round(cap, 0),
                 "outdoor_c": round(pt.temperature, 1),
                 # Outdoor dew point, UNCORRECTED and for planning only - the
                 # condensation guard uses the measured INDOOR maximum and must
@@ -357,7 +464,7 @@ class Estimator:
                 # is the only forward-looking humidity signal available.
                 "dew_point_c": (None if pt.dew_point != pt.dew_point
                                 else round(pt.dew_point, 1)),
-                "deficit_w": round(max(0.0, load - ceiling_w), 0),
+                "deficit_w": round(max(0.0, load - cap), 0),
             })
         return out
 
@@ -440,6 +547,55 @@ class Estimator:
 
     # ---------- MQTT, status only ----------
 
+    async def _discover(self) -> None:
+        """Register the layer-2 outputs as HA entities.
+
+        WHY THIS EXISTS. Everything this module produced was publish-only to
+        MQTT with NO discovery, so none of it was visible in Home Assistant -
+        `setpoint_delta`, the day totals, the forecast, all of it. The module
+        already carries a comment noting that answering "what is the optimizer
+        asking for right now" meant hunting an MQTT client twice; the fix for
+        that was to LOG the value, which helps whoever is reading logs and
+        nobody else.
+
+        A separate HA device from layer 1 on purpose: these are predictions,
+        not measurements, and an operator should never mistake one for the
+        other on a dashboard.
+        """
+        if self._client is None:
+            return
+        for uid, name, unit, dclass, icon in (
+                ("opt_humidity_gap", "Humidity gap (indoor - outdoor)",
+                 "g/kg", None, "mdi:water-percent"),
+                ("opt_ceiling_now", "Delivery ceiling now",
+                 "W", "power", "mdi:speedometer"),
+                ("opt_ceiling_min_24h", "Delivery ceiling min 24 h",
+                 "W", "power", "mdi:speedometer-slow"),
+                ("opt_deficit_24h", "Cooling deficit 24 h",
+                 "kWh", "energy", "mdi:alert-decagram-outline"),
+                ("opt_setpoint_delta", "Pre-conditioning delta",
+                 "K", None, "mdi:thermometer-chevron-down")):
+            conf = {
+                "unique_id": uid,
+                "name": name,
+                "state_topic": f"{self.base}/opt/{uid.removeprefix('opt_')}",
+                "state_class": "measurement",
+                "device": {"identifiers": ["heatctl_optimizer"],
+                           "name": "heatctl optimizer",
+                           "manufacturer": "heatctl",
+                           "model": "layer 2 (prediction only)"},
+            }
+            if unit:
+                conf["unit_of_measurement"] = unit
+            if dclass:
+                conf["device_class"] = dclass
+            if icon:
+                conf["icon"] = icon
+            with contextlib.suppress(Exception):
+                await self._client.publish(
+                    f"homeassistant/sensor/heatctl_opt/{uid}/config",
+                    json.dumps(conf), retain=True)
+
     async def _publish(self, subtopic: str, payload: str) -> None:
         """Publish under `<base>/opt/` and nowhere else.
 
@@ -457,6 +613,8 @@ class Estimator:
     async def run(self) -> None:
         interval = float(self.cfg.get("optimizer", {}).get("interval_s", 60))
         topics = list(self.room_topics) + [f"{self.base}/hp/power_estimate"]
+        if self._dew_topic:
+            topics.append(self._dew_topic)
         ot = self._outdoor_topic()
         if ot:
             topics.append(ot)
@@ -469,6 +627,7 @@ class Estimator:
                     self._client = client
                     for t in topics:
                         await client.subscribe(t)
+                    await self._discover()
                     log.info("optimizer connected, %d topics", len(topics))
                     loop = asyncio.create_task(self._loop(interval))
                     try:
@@ -534,10 +693,26 @@ class Estimator:
                     # separately rather than folded into `load_forecast` so the
                     # daily aggregates keep their shape for anything already
                     # reading them.
-                    await self._publish(
-                        "forecast_hourly",
-                        json.dumps(self.hourly_forecast(
-                            target, opt.get("delivery_ceiling_w", 5700.0))))
+                    series = self.hourly_forecast(
+                        target, opt.get("delivery_ceiling_w", 5700.0))
+                    await self._publish("forecast_hourly", json.dumps(series))
+                    # SCALARS, not just the JSON blob. A series is for a
+                    # planner; a number is what an operator can put on a
+                    # dashboard and watch. Publishing only the blob is how this
+                    # layer stayed invisible.
+                    gap = self.humidity_gap()
+                    if gap is not None:
+                        await self._publish("humidity_gap", f"{gap:.2f}")
+                    if series:
+                        nxt = series[:24]
+                        await self._publish("ceiling_now",
+                                            f"{series[0]['ceiling_w']:.0f}")
+                        await self._publish(
+                            "ceiling_min_24h",
+                            f"{min(r['ceiling_w'] for r in nxt):.0f}")
+                        await self._publish(
+                            "deficit_24h",
+                            f"{sum(r['deficit_w'] for r in nxt)/1000.0:.2f}")
                     t = days[0]
                     await self._publish("today/peak_kw", str(t["peak_kw"]))
                     await self._publish("today/cooling_kwh",

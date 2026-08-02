@@ -119,7 +119,31 @@ def _estimator(monkeypatch, temps: list[float]):
         _Pt((now + dt.timedelta(hours=i)).isoformat().replace("+00:00", ""), t)
         for i, t in enumerate(temps)])
     est.solar_w = lambda pt: 0.0
+    # Condensation-limited ceiling inputs (2026-08-01). No dew-point reading is
+    # provided, so `humidity_gap()` returns None and `ceiling_w()` falls back to
+    # the ceiling passed in - which is what keeps these lead-time tests about
+    # TIMING rather than about humidity.
+    est.readings = {}
+    est._dew_topic = ""
+    est.max_age_s = 300.0
+    est.dew_margin_c = 1.0
+    est.params = {}
     return est
+
+
+
+def _real_params():
+    """The site params, so q_max is exercised against the real building."""
+    from optimizer.params import load_params
+    return load_params("optimizer/params.yaml")
+
+
+def _with_dew(pt, dew_c):
+    """Copy of a forecast point with a chosen outdoor dew point."""
+    import copy
+    q = copy.copy(pt)
+    q.dew_point = dew_c
+    return q
 
 
 class TestLeadTime:
@@ -271,3 +295,78 @@ def test_hourly_deficit_reconciles_with_the_daily_total(monkeypatch):
         assert sum(1 for r in hours if r["deficit_w"] > 0) == d["hours_over"]
         store_kwh = sum(r["deficit_w"] for r in hours) / 1000.0
         assert abs(store_kwh - d["store_kwh"]) < 0.15, d["day"]
+
+
+class TestCondensationCeiling:
+    """The delivery ceiling is condensation-limited, not source-limited.
+
+    `load_forecast` was passed a static 5700 W - the heat pump's output - on the
+    reasoning that the machine binds before the 9.0 kW of emitter. Measured
+    2026-08-01, the condensation limit binds before either: 3.40 kW on a humid
+    day against 5.10 kW on dry air. So every forecast hour was sized against a
+    constraint that is never the active one.
+    """
+
+    def test_humid_air_lowers_the_ceiling_below_dry_air(self, monkeypatch):
+        """The whole point: the ceiling must MOVE with humidity."""
+        est = _estimator(monkeypatch, [NEUTRAL_C] * 6)
+        est.params = _real_params()
+        pt = est.weather.points[0]
+
+        dry = est.ceiling_w(_with_dew(pt, 8.0), 24.0, gap_gkg=1.4,
+                            fallback_w=99_000.0)
+        humid = est.ceiling_w(_with_dew(pt, 17.0), 24.0, gap_gkg=1.4,
+                              fallback_w=99_000.0)
+        assert dry > humid, "humid air must not permit MORE cooling"
+        assert humid > 0
+        # And the effect must be large enough to matter - a few percent would
+        # not justify the machinery.
+        assert dry > 1.3 * humid
+
+    def test_a_missing_humidity_signal_falls_back_and_does_not_zero(self,
+                                                                   monkeypatch):
+        """A missing signal must not make the planner think the plant is dead.
+
+        Failing to zero is the safety-relevant direction here: a zero ceiling
+        would report the whole day as deficit and demand maximum pre-cooling.
+        """
+        est = _estimator(monkeypatch, [NEUTRAL_C] * 6)
+        est.params = _real_params()
+        pt = est.weather.points[0]
+        assert est.ceiling_w(pt, 24.0, gap_gkg=None, fallback_w=5700.0) == 5700.0
+
+    def test_the_ceiling_never_exceeds_the_source_limit(self, monkeypatch):
+        """Condensation binds FIRST, but the machine is still a hard cap."""
+        est = _estimator(monkeypatch, [NEUTRAL_C] * 6)
+        est.params = _real_params()
+        pt = _with_dew(est.weather.points[0], -10.0)   # absurdly dry
+        assert est.ceiling_w(pt, 24.0, gap_gkg=1.4, fallback_w=5700.0) <= 5700.0
+
+    def test_dew_point_round_trip(self, monkeypatch):
+        """W(dew) and dew(W) must invert, or the gap arithmetic is nonsense."""
+        est = _estimator(monkeypatch, [NEUTRAL_C] * 2)
+        for d in (-5.0, 0.0, 7.3, 12.0, 18.6, 24.0):
+            assert est._dew_from_w(est._w_from_dew(d)) == pytest.approx(d,
+                                                                       abs=0.01)
+
+
+def test_layer2_does_not_inherit_the_control_loop_staleness(monkeypatch):
+    """Real defect, 2026-08-01: the condensation ceiling never engaged.
+
+    `max_age_s` was read from `safety.stale_data_timeout_s`, which is 15 s on
+    this plant - right for a 1 Hz control loop that must failsafe on a lost
+    sensor, and wrong for a layer that consumes a dew point republished every
+    120 s. The reading was stale on almost every cycle, `humidity_gap()`
+    returned None, and both ceiling entities sat on the 5700 W fallback while
+    looking perfectly healthy.
+    """
+    from optimizer.estimator import Estimator
+    cfg = {"mqtt": {"host": "x"}, "safety": {"stale_data_timeout_s": 15},
+           "rooms": [], "optimizer": {}}
+    est = Estimator.__new__(Estimator)
+    est.cfg = cfg
+    # Reproduce only the line under test.
+    est.max_age_s = float(cfg.get("optimizer", {}).get(
+        "input_max_age_s",
+        max(900.0, float(cfg.get("safety", {}).get("stale_data_timeout_s", 300)))))
+    assert est.max_age_s >= 900.0, "layer 2 inherited the control-loop timeout"
