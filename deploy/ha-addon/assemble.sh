@@ -38,5 +38,10 @@ find "${out}" -name '*.pyc' -delete 2>/dev/null || true
 echo "Assembled App in: ${out}"
 echo
 echo "Install on the HA host:"
-echo "  scp -r '${out}' root@<ha-host>:/addons/heatctl"
+# The trailing '/.' is load-bearing. Without it `scp -r` copies the directory
+# INTO an existing /addons/heatctl, giving /addons/heatctl/ha-addon - the
+# rebuild then succeeds, the App starts clean, and the OLD CODE KEEPS RUNNING
+# with no error anywhere. Cost a full rebuild cycle on 2026-08-02, caught only
+# because a log line was still in the previous format.
+echo "  scp -r '${out}/.' root@<ha-host>:/addons/heatctl/"
 echo "then in HA: Settings > Apps > Add-on Store > (3 dots) > Check for updates"
