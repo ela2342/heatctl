@@ -887,37 +887,45 @@ class Controller:
             # 3 A - a SHAPE error, worst at part load, which is exactly where a
             # future optimizer needs it to be right.
             i_a = hpm.decode(hpm.by_name("compressor_current"), amps)
-            # MEASURED 2026-08-02: 147 W per reported amp, no intercept.
+            # MEASURED 2026-08-02: P = 2.0 * f * I. NOT a watts-per-amp constant.
             #
-            # This published `198*I + 200` per D-027. Both terms were wrong, and
-            # they were one artefact: D-027 regressed against a utility-meter
-            # phase that also carries household load, which depresses the slope
-            # and parks the residual in an intercept.
+            # This published `198*I + 200` (D-027), which was wrong in both
+            # terms - that regression ran against a utility-meter phase also
+            # carrying household load, which depresses a slope and parks the
+            # residual in an intercept.
             #
-            # Measured instead from the grid meter's ACTIVE POWER across
-            # compressor on/off, 3107 five-minute samples over six weeks:
+            # Replacing it with a measured 147 W/A was still wrong, in a more
+            # interesting way. Binning the grid meter's ACTIVE POWER by
+            # compressor frequency shows watts-per-amp is not constant at all:
             #
-            #   delta active power / delta reported current = 148 W/A
-            #   delta phase-A current / delta reported      = 0.639 A/A
-            #   230 V * 0.639                               = 147 W/A
-            #   PF = 1020 W / (230 V * 4.40 A)              = 1.007
+            #   freq band   W/A     W/(A*Hz)
+            #    5-35       38.2      1.91
+            #   35-50       92.2      2.17
+            #   50-65      132.7      2.31
+            #   65-80      146.5      2.02
+            #   80-120     174.6      1.75
             #
-            # Two independent routes agreeing, and the PF landing on 1.00 is the
-            # check that matters - a confounded baseline would not produce that.
-            # The compressor is an inverter drive with active PFC, and the
-            # REGISTER OVER-READS mains current by ~1.56x. D-027's "0.92 A per
-            # reported A" is contradicted by this measurement.
+            # W/A varies 4.6x across the range; dividing by frequency collapses
+            # that to +-15 %. THE REGISTER IS ON THE INVERTER OUTPUT, not the
+            # mains: motor voltage scales with frequency under V/f control, so
+            # mains power goes as f*I. The "0.639 mains-amps per reported amp"
+            # is not a scaling factor, it is simply the value that holds at the
+            # ~70 Hz the plant usually sits at.
             #
-            # Fan and pump are NOT in this number and that is correct: the
-            # register does not see them. They are a real term for a UNIT COP
-            # and remain unmeasured - so this is COMPRESSOR power, named as
-            # such, and a faulted plant with everything stopped now reports 0 W
-            # rather than the fictitious 200 W it showed for the 14 hours Er03
-            # was latched on 2026-08-01/02.
+            # A per-sample regression is impossible here and that is not a
+            # tooling problem: household load on the same phase varies by ~760 W
+            # sample to sample, so R2 tops out at 0.33 with ~900 W RMSE.
+            # Averaging within frequency bins is what makes the signal visible.
             #
-            # Consequence: the measured COP moves 1.69 -> 2.66.
+            # Fan and pump are NOT in this number - the register cannot see
+            # them. It is COMPRESSOR power and named so, and a faulted plant
+            # reports 0 W rather than the fictitious 200 W it showed for the
+            # 14 hours Er03 was latched on 2026-08-01/02.
+            hz = self.hp.status.get(hpm.by_name("compressor_freq").addr)
+            hz_f = 0.0 if hz is None else float(
+                hpm.decode(hpm.by_name("compressor_freq"), hz))
             await self.plane.publish("hp/power_estimate",
-                                     f"{147.0 * i_a:.0f}")
+                                     f"{2.0 * hz_f * i_a:.0f}")
         if self._peak_demand is not None:
             # PRE-normalisation peak. The commanded maximum is pinned at 100 %
             # by construction, so only this says whether there is enough

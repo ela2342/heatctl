@@ -386,7 +386,7 @@ worst at part load, which is exactly where an optimizer needs it right.
 literally none of it, R² 0.000 and 0.059), so per-phase beats the 3-phase total
 by 8 points of R².
 
-## D-033 · `P_el = 147 · I`, superseding D-027's `198 · I + 200`
+## D-033 · `P_el = 2.0 · f · I`, superseding D-027's `198 · I + 200`
 Measured 2026-08-02 from the grid meter's **active power** across compressor
 on/off, 3107 five-minute samples over six weeks. **Both of D-027's terms were
 wrong and they were ONE artefact**: that regression was against a utility-meter
@@ -419,6 +419,34 @@ uncertainty, so the earlier claim that "the factor of two has nowhere left to
 sit except the thermal measurement" was wrong - most of it was electrical. That
 error came from treating "the current reading is validated" as "the power is
 validated"; D-027's delta method validated a CURRENT, never a power factor.
+
+**AND IT IS NOT A WATTS-PER-AMP CONSTANT AT ALL.** Binning the same active
+power by compressor FREQUENCY (owner asked where the 0.639 came from):
+
+```
+freq band   W/A     W/(A*Hz)
+ 5-35       38.2      1.91
+35-50       92.2      2.17
+50-65      132.7      2.31
+65-80      146.5      2.02
+80-120     174.6      1.75
+```
+
+Watts-per-amp varies **4.6x** across the range; dividing by frequency collapses
+it to +-15 %. **The register is on the INVERTER OUTPUT, not the mains.** Motor
+voltage scales with frequency under V/f control, so mains power goes as `f*I`.
+The 0.639 "mains amps per reported amp" is not a scaling factor - it is the
+value that happens to hold at the ~70 Hz the plant usually runs at, which is
+also why a single constant looked plausible.
+
+A per-sample regression cannot be done here, and that is a property of the data
+rather than of the method: household load on the same phase varies by ~760 W
+between samples, so R2 tops out at 0.33 with ~900 W RMSE. Averaging within
+frequency bins is what makes the relationship visible at all.
+
+At the winter mean (67.9 Hz, 5.80 A) this gives 788 W, so the **measured COP
+becomes 2.90** against an assumed 3.35 - a 13 % gap, comfortably inside the
+manifold-dT and flow uncertainty.
 
 **Caveat kept deliberately:** `assumed_cop` is a unit-level figure while this is
 compressor-only, so `heat_input_w()` multiplying one by the other overstates
