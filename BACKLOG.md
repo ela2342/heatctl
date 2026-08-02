@@ -3491,6 +3491,51 @@ against. The loop is what needs fixing.
       draw scales with speed, so `dc_pump_speed` should scale that share rather
       than switch it.
 
+### 2026-08-02 — P04-low + R32-modulating lost a self-limiting property
+
+Owner, 2026-08-02, describing what the control had become: *"So we now clamp P04
+to a low value, use the max frequency for regulation, and just turn off the
+compressor by setting P04 to 30 if needed?"* That is an accurate description,
+and it EMERGED rather than being designed - worth recording as an architecture,
+because it now has a failure mode nobody chose.
+
+| lever | role | why |
+|---|---|---|
+| R32 frequency ceiling | the modulating regulator | fast, continuous, no wear |
+| P04 setpoint | coarse permission | flash wear, 30-min cadence, 2 K dead zone |
+| P04 = 30 | off | the unit has no off command |
+
+The allocation is defensible: the condensation constraint needs a FAST actuator
+and R32 is one, while P04 is a poor one on every count. Note P04 is not
+"clamped" low - the trim WALKS it down under demand and bottoms out at
+`cooling_min_c: 14` on hot days, and the 2026-08-02 dead-zone fix now also
+lowers it on resume. Low is a consequence, not a setting.
+
+**WHAT WAS LOST.** With P04 near its floor the unit permanently asks for maximum
+output, and R32 is the only restraint. A higher P04 used to be self-limiting -
+the machine stopped wanting more once return reached setpoint. That property is
+gone.
+
+It matters because the restraint is reachable only over the RS485 gateway, which
+dropped TWICE in two days (2026-08-01 13:53 and 18:04). In that window heatctl
+keeps running, valves stay under control, and the compressor pulls toward a
+14 degC return with nothing able to stop it. The remaining defences moved
+further out at the same time:
+
+  * the condensation valve guard now waits `undertemp_dwell_s` (180 s), where it
+    used to be instant;
+  * the coupler watchdog only helps if heatctl dies ENTIRELY, not if just the
+    heat-pump link does.
+
+- [ ] **Make P04 retreat when the heat-pump link goes stale.** If the status
+      block has not been read for some multiple of the poll interval, walk P04
+      back toward a survivable value while the link still works, so a
+      subsequent loss leaves the plant asking for something safe rather than for
+      everything. This restores the self-limiting property WITHOUT giving up the
+      fast actuator, which is the part worth keeping.
+      Note the ordering trap: the retreat must be written BEFORE the link is
+      fully gone, so it has to trigger on staleness, not on failure.
+
 ### MEASURED 2026-08-01 — 19 % of the heat pump's dT never reaches the manifold
 
 Owner asked whether the ~0.7 K loss between heat pump and manifold explains the
@@ -4655,3 +4700,57 @@ maximize spread, limited only by demand and dew point."*
           loop's, or it reproduces this exactly and faster.
         * Eight of ten circuits still cannot close, so the valve guard is a
           partial protection. It was the capacity loop that did the real work.
+
+### 2026-08-02 — [!] pre-charge lead horizon widened to 24 h, ON TRIAL
+
+Owner asked to "try hooking up the prediction to the precharge", noting *"no one
+will be bothered by a lack of comfort for a day or two"*. **The prediction was
+already hooked up** — estimator publishes `opt/setpoint_delta`, `mqtt_plane`
+subscribes with a staleness contract, `main.py` applies `active = dial + delta`
+and clamps it. It was live and acting: −0.20 K at 22:00.
+
+What it could not do was act *overnight for the next afternoon*, and that is the
+one job it exists for.
+
+| | |
+|---|---|
+| horizon (was) | `2 * tau_fast` = **11.2 h** |
+| tomorrow's 15:00 peak, from 22:00 | 17 h out → weight **0.36** |
+| forecast ask for that day | 0.43 K pre-charge, 7 h over ceiling |
+| delta actually produced | **−0.20 K** |
+
+Nothing was malfunctioning. The horizon simply did not reach, exactly as
+designed.
+
+**THE TWO ARGUMENTS, NEITHER DECIDABLE FROM THE PARAMETERS.**
+
+  * *Short (11.2 h, shipped):* the delta is recomputed every minute, so it needs
+    only enough lead to FILL the mass — `tau_fast`. Asking earlier spends
+    comfort and standing loss on charge a later cycle could put in just as well.
+  * *Long (24 h, now running):* the charging opportunity and the demand are one
+    diurnal cycle apart. This house has spare capacity at night and none in the
+    afternoon. Waiting until the peak is inside an 11.2 h horizon means starting
+    ~09:00, when the load is already rising and the capacity is going away.
+
+The short argument assumes the later cycle will still *have* capacity. Nothing
+here measures that, which is the actual gap. So the horizon became an explicit
+`optimizer.lead_horizon_h` rather than an implied constant; default unchanged,
+config.yaml sets 24.0, revert by removing the key.
+
+**Note the near-miss.** The first attempt at this changed the default and
+falsified `test_imminent_excess_outweighs_identical_excess_a_day_away`, a
+mutation-verified test. Reading it showed the shipped reasoning was stronger
+than assumed — it is *not* the impulse-survival error, it is a feedback-cadence
+argument. A test disagreeing with a change is evidence about the change.
+
+**What would settle it:** whether morning spare capacity exists is measurable —
+`ceiling_w` minus forecast load, hour by hour, is already computed in
+`hourly_forecast()`. If the 06:00–10:00 hours reliably show slack, the short
+horizon is right and this should revert. If they are already tight on hot days,
+the long one is right and the horizon should be *derived* from the last hour
+with slack rather than set to 24. That derivation is the real fix; 24 h is a
+trial standing in for it.
+
+**Watch:** overnight room temperature undershoot vs. `dial + delta`, and whether
+tomorrow's afternoon still saturates. Discomfort tolerance was explicitly given
+for a day or two — it does not extend past that.

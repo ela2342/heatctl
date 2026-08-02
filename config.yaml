@@ -788,3 +788,26 @@ optimizer:
   # overstates the storage deficit by about half - measured 2026-07-29: 31.4
   # kWh against the slab versus 22.3 kWh against the source, for the same day.
   delivery_ceiling_w: 5700.0
+
+  # PRE-CONDITIONING LEAD HORIZON, hours. Excess inside it gets full weight in
+  # the setpoint delta; beyond it the weight tapers with the fast mode.
+  #
+  # Omit this and the horizon is 2*tau_fast = 11.2 h at the identified
+  # parameters, which is the distance needed to FILL the mass. That is the
+  # right number if the only question is "how long before I need the charge
+  # must I start", and it is what shipped.
+  #
+  # 24 h is set here because that is not the only question. The charging
+  # opportunity and the demand are one diurnal cycle apart: this house has
+  # spare capacity at night and none in the afternoon, and an 11.2 h horizon
+  # cannot see tomorrow's peak from tonight. Measured 2026-08-02 22:00 -
+  # tomorrow forecast 7 h over ceiling wanting 0.43 K of pre-charge, its 15:00
+  # peak 17 h out and weighted 0.36, delta -0.20 K. Nothing was malfunctioning;
+  # the horizon simply did not reach.
+  #
+  # This is a TRIAL value, and the honest state of it is that the two arguments
+  # are not decidable from the parameters - it turns on whether spare capacity
+  # persists into the morning, which nothing here measures. Widening costs
+  # comfort and standing loss if the short-horizon argument is right. Revert to
+  # omitting the key to get the shipped behaviour back.
+  lead_horizon_h: 24.0

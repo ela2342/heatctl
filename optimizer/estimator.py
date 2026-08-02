@@ -81,6 +81,14 @@ class Estimator:
         self.cop = hi["assumed_cop"]
         self.standby_w = hi["standby_w"]
 
+        # Pre-conditioning lead horizon in hours; None means 2*tau_fast from
+        # the identified parameters, which is the original behaviour. Set it
+        # to reach from the charging opportunity to the demand - see the long
+        # comment in `setpoint_delta` for why that distance is a judgement
+        # about capacity rather than something the parameters decide.
+        lh = cfg.get("optimizer", {}).get("lead_horizon_h")
+        self.lead_horizon_h = None if lh is None else float(lh)
+
         m = cfg["mqtt"]
         self.base = m.get("base_topic", "heatctl")
         self._host, self._port = m["host"], m.get("port", 1883)
@@ -468,6 +476,17 @@ class Estimator:
             })
         return out
 
+    def lead_h(self) -> float:
+        """Effective pre-conditioning lead horizon in hours.
+
+        One place, so the logged number and the number actually weighting the
+        sum cannot drift apart - the log used to print tau and call it the
+        lead time, which is off by the factor of two.
+        """
+        if getattr(self, "lead_horizon_h", None) is not None:
+            return float(self.lead_horizon_h)
+        return 2.0 * eigen_time_constants_h(self.bp)[1]
+
     def setpoint_delta(self, target_air: float, ceiling_w: float,
                        hours: int = 24) -> float:
         """Signed pre-conditioning delta in K: `active = dial + delta`.
@@ -488,11 +507,11 @@ class Estimator:
         does not care which calendar day it falls in; the mass has to absorb
         whatever is coming.
 
-        **Excess beyond a lead horizon of two fast time constants is tapered
-        away**, which is what gives the delta a lead time at all. See the
-        comment on the sum below for why it is a horizon and not a decay - the
-        obvious exp(-dt/tau) form is wrong for an actuator that holds a
-        setpoint rather than injecting a lump of charge.
+        **Excess beyond a lead horizon is tapered away**, which is what gives
+        the delta a lead time at all. See the comment on the sum below for why
+        it is a horizon and not a decay - the obvious exp(-dt/tau) form is
+        wrong for an actuator that holds a setpoint rather than injecting a
+        lump of charge - and for why the horizon itself is configurable.
         """
         if not self.weather or not self.weather.points:
             return 0.0
@@ -521,14 +540,33 @@ class Estimator:
         # spare capacity; a rule that declines to use it is worse than the flat
         # sum it replaced.
         #
-        # So: full weight inside a lead horizon, tapering beyond it. The horizon
-        # is 2*tau - two fast time constants ahead of the excess is where
-        # holding the setpoint down starts to pay - and the taper beyond it
-        # falls off with tau. Both come from the identified parameters; neither
-        # is hand-picked. What this buys over a flat sum is a horizon at all:
-        # excess two days out no longer demands pre-cooling tonight.
+        # So: full weight inside a lead horizon, tapering beyond it. The
+        # default horizon is 2*tau_fast - two fill constants ahead of the
+        # excess is where holding the setpoint down starts to pay - and the
+        # taper beyond it falls off with tau_fast.
+        #
+        # WHY THE HORIZON IS A KNOB (2026-08-02). The default rests on an
+        # argument that is sound but incomplete: the delta is recomputed every
+        # minute, so it needs only enough lead to FILL the store (tau_fast),
+        # and asking earlier spends comfort and standing loss on a charge a
+        # later cycle could have put in just as well. True as far as it goes.
+        #
+        # What it does not model is whether that later cycle will still have
+        # the capacity. Measured this night: tomorrow forecast 7 h over
+        # ceiling needing 0.43 K, and its 15:00 peak - 17 h out - was weighted
+        # 0.36, so the delta read -0.20 K. Waiting until the peak is inside
+        # the horizon means charging from ~09:00, by which time the load is
+        # rising and the spare capacity that makes charging possible is going
+        # away. Overnight is when this house has capacity to spare; a horizon
+        # shorter than the night-to-afternoon distance cannot use it.
+        #
+        # Neither argument is decidable from the parameters - it turns on
+        # whether spare capacity persists, which nothing here measures yet. So
+        # the horizon is explicit and configurable rather than silently one or
+        # the other, and `optimizer.lead_horizon_h` in config.yaml carries the
+        # value actually being run. Default preserves the original behaviour.
         _, tau_h = eigen_time_constants_h(self.bp)
-        lead_h = 2.0 * tau_h
+        lead_h = self.lead_h()
         loads, weights = [], []
         for i, pt in enumerate(ahead):
             loads.append(net_load_w(self.bp, target_air, pt.temperature,
@@ -728,7 +766,8 @@ class Estimator:
                     # only, alongside the forecast summary it derives from.
                     if delta != self._last_delta:
                         log.info("setpoint delta %+.2f K (target %.1f, "
-                                 "lead time %.1f h)", delta, target,
+                                 "horizon %.1f h, taper %.1f h)", delta,
+                                 target, self.lead_h(),
                                  eigen_time_constants_h(self.bp)[1])
                         self._last_delta = delta
                     await self._publish("setpoint_delta", f"{delta:.2f}")

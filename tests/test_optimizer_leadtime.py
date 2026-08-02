@@ -370,3 +370,62 @@ def test_layer2_does_not_inherit_the_control_loop_staleness(monkeypatch):
         "input_max_age_s",
         max(900.0, float(cfg.get("safety", {}).get("stale_data_timeout_s", 300)))))
     assert est.max_age_s >= 900.0, "layer 2 inherited the control-loop timeout"
+
+
+class TestLeadHorizonKnob:
+    """The horizon is a judgement about capacity, so it has to be settable.
+
+    Added 2026-08-02, when the plant was asked to pre-charge overnight for a
+    day forecast 7 h over ceiling and produced -0.20 K. Nothing was broken:
+    the 15:00 peak was 17 h out against an 11.2 h horizon and was weighted
+    0.36, exactly as designed. Whether that is right depends on whether the
+    spare capacity to charge later still exists, which nothing measures - so
+    the value became explicit instead of implied.
+    """
+
+    def test_the_default_is_two_fill_constants_and_is_unchanged(self,
+                                                               monkeypatch):
+        """The knob must not move the plant by merely existing."""
+        est = _estimator(monkeypatch, [NEUTRAL_C] * 4)
+        _, fast = eigen_time_constants_h(_bp())
+        assert est.lead_h() == pytest.approx(2.0 * fast)
+
+    def test_the_logged_horizon_is_the_one_that_weights_the_sum(self,
+                                                               monkeypatch):
+        """The log printed tau and called it the lead time - off by 2x.
+
+        Mutation-verified: returning tau instead of 2*tau from `lead_h` fails
+        this, which is what the old log line effectively did.
+        """
+        est = _estimator(monkeypatch, [NEUTRAL_C] * 4)
+        _, fast = eigen_time_constants_h(_bp())
+        assert est.lead_h() > 1.5 * fast
+
+    def test_a_horizon_reaching_the_peak_stops_discounting_it(self,
+                                                             monkeypatch):
+        """The behaviour actually being bought: overnight charging can act.
+
+        Same forecast, same excess, 20 h out - beyond the default horizon and
+        inside a 24 h one. The wide horizon must ask for materially more,
+        because that is the whole point of setting it.
+        """
+        temps = [NEUTRAL_C] * 20 + [38.0] * 4
+        near = _estimator(monkeypatch, temps)
+        wide = _estimator(monkeypatch, temps)
+        wide.lead_horizon_h = 24.0
+        d_near = near.setpoint_delta(target_air=23.0, ceiling_w=SYNTH_CEILING_W)
+        d_wide = wide.setpoint_delta(target_air=23.0, ceiling_w=SYNTH_CEILING_W)
+        assert d_near < 0 and d_wide < 0
+        assert abs(d_wide) > 2.0 * abs(d_near)
+
+    def test_a_wide_horizon_does_not_invert_the_sign(self, monkeypatch):
+        """A cold snap 20 h out must still pre-HEAT, not pre-cool.
+
+        Widening the horizon changes magnitude only. Getting this backwards
+        would run the plant the wrong way for a whole night, which is the
+        failure worth a test rather than a comment.
+        """
+        est = _estimator(monkeypatch, [NEUTRAL_C] * 20 + [-15.0] * 4)
+        est.lead_horizon_h = 24.0
+        assert est.setpoint_delta(target_air=21.0,
+                                  ceiling_w=SYNTH_CEILING_W) > 0
