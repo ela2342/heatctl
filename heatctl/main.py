@@ -312,6 +312,38 @@ class Controller:
             return
         if d.resumes:
             restore = self._sp_before_off or self.default_cooling_sp
+            # A RESUME INTO THE RESTART DEAD ZONE IS A SILENT NO-OP.
+            #
+            # P01 (0x008D) is the unit's restart differential, pinned at its 2 K
+            # minimum. The compressor will not start until RETURN water exceeds
+            # P04 by that much, so restoring the previous setpoint is not enough
+            # on its own - if the water has drifted close to it, nothing
+            # happens, and heatctl goes on reporting a running plant.
+            #
+            # Measured 2026-08-02 11:20: resumed at P04 20.0 with return 21.9,
+            # i.e. 1.9 K against a 2.0 K dead zone. The compressor stayed off
+            # for eleven minutes and only started when the HOUSE warmed the
+            # return to 22.0 - the plant was restarted by the weather, not by
+            # us. It had also blocked a diagnostic run the previous night at
+            # P04 20 against a 21.4 return, so this is the second occurrence.
+            #
+            # So place the setpoint far enough BELOW return to clear the dead
+            # zone, and never above what was asked for. Colder than intended is
+            # bounded and self-correcting: the capacity loop pulls the ceiling
+            # straight back down, and the condensation guard outranks both.
+            # Silently not starting is neither.
+            rw = self.hp.status.get(hpm.by_name("return_water").addr)
+            dz = self.hp.config.get(hpm.by_name("restart_diff_c").addr)
+            if rw is not None and dz is not None:
+                rw_c = float(hpm.decode(hpm.by_name("return_water"), rw))
+                dz_k = float(hpm.decode(hpm.by_name("restart_diff_c"), dz))
+                needed = rw_c - dz_k - 0.5      # 0.5 K past the edge, not on it
+                if needed < restore:
+                    log.warning("RESUME setpoint %.1f -> %.1f degC: return %.1f "
+                                "and a %.1f K restart dead zone would have left "
+                                "the compressor off", restore, needed, rw_c, dz_k)
+                    restore = needed
+            restore = self.safety.clamp_setpoint(restore)
             log.warning("compressor RESUME at %.0f degC: %s", restore, d.reason)
             self.log_event("compressor_resume", f"{restore:.0f}: {d.reason}")
             await self.hp.set_cooling(restore, d.reason)

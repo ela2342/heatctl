@@ -751,3 +751,93 @@ async def test_the_house_average_sees_the_shifted_target(controller):
 
     assert shifted is not None and base is not None
     assert shifted < base, "a pre-cool delta must increase apparent cooling demand"
+
+
+class _ResumeHP:
+    """Heat pump stub for the RESUME dead-zone test."""
+
+    def __init__(self, return_c: float, dead_zone_k: float):
+        import heatctl.heatpump_map as hpm
+        self.allow_writes = True
+        self.enabled = True
+        self._config_seen = False
+        self.calls: list[tuple[float | None, str]] = []
+        self.status = {hpm.by_name("return_water").addr: int(return_c * 10),
+                       hpm.by_name("compressor_freq").addr: 0}
+        self.config = {hpm.by_name("restart_diff_c").addr: int(dead_zone_k)}
+
+    def cooling_is_off(self):
+        return True
+
+    def cooling_setpoint(self):
+        return None
+
+    def mode_disagrees(self, mode):
+        return None
+
+    async def sync_mode(self, mode):
+        return None
+
+    async def set_cooling(self, setpoint, why):
+        self.calls.append((setpoint, why))
+        return True
+
+
+async def test_resume_clears_the_restart_dead_zone(controller):
+    """Real defect, 2026-08-02: a RESUME that lands in the dead zone does nothing.
+
+    P01 is the unit's restart differential, pinned at its 2 K minimum. The
+    compressor will not start until RETURN water exceeds P04 by that much, so
+    restoring the previous setpoint is not sufficient on its own.
+
+    Measured that morning: resumed at P04 20.0 with return 21.9 - 1.9 K against
+    a 2.0 K dead zone. The compressor stayed off for eleven minutes and started
+    only when the house warmed the return to 22.0. heatctl reported a running
+    plant throughout.
+    """
+    ctl = controller(control={"mode": "cooling"},
+                     temps={"rl_hk01": 24.0, "rl_hk02": 24.0, "rl_hk03": 24.0,
+                            "vl_total": 22.0},
+                     dew_point=12.0)
+    ctl.io.touch(time.monotonic())
+    ctl.capacity.enabled = True
+    hp = _ResumeHP(return_c=21.9, dead_zone_k=2.0)
+    ctl.hp = hp
+    ctl._sp_before_off = 20.0
+
+    from heatctl.capacity import RESUME, CapacityDecision
+    ctl.capacity.step = lambda **kw: CapacityDecision(None, "test", RESUME)
+
+    await ctl.step(1.0)
+
+    assert hp.calls, "no setpoint written on resume"
+    sp = hp.calls[0][0]
+    assert sp is not None, "resume must write a setpoint, not the OFF sentinel"
+    # 21.9 - 2.0 = 19.9 is the edge; the write must be clear of it, not on it.
+    assert sp < 19.9, f"resume wrote {sp}, inside the dead zone - a no-op"
+    assert sp <= 20.0, "resume must never raise the setpoint above what was asked"
+
+
+async def test_resume_does_not_lower_the_setpoint_when_it_already_starts(
+        controller):
+    """The clamp must only ever bite when it has to.
+
+    Lowering the setpoint costs colder water than intended, so it is justified
+    only when the dead zone would otherwise block the start. With plenty of
+    difference, the previous setpoint must be restored untouched.
+    """
+    ctl = controller(control={"mode": "cooling"},
+                     temps={"rl_hk01": 24.0, "rl_hk02": 24.0, "rl_hk03": 24.0,
+                            "vl_total": 26.0},
+                     dew_point=12.0)
+    ctl.io.touch(time.monotonic())
+    ctl.capacity.enabled = True
+    hp = _ResumeHP(return_c=26.0, dead_zone_k=2.0)   # 6 K of headroom
+    ctl.hp = hp
+    ctl._sp_before_off = 20.0
+
+    from heatctl.capacity import RESUME, CapacityDecision
+    ctl.capacity.step = lambda **kw: CapacityDecision(None, "test", RESUME)
+
+    await ctl.step(1.0)
+    assert hp.calls[0][0] == 20.0, "clamp bit when the compressor would start anyway"
