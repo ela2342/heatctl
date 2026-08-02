@@ -349,7 +349,11 @@ class ControlPlane:
                      "demand/deviation", "K")
         await sensor("demand_peak", "Peak circuit demand", "demand/peak", "%")
         await sensor("hp_spread", "HP spread", "hp/spread", "K")
-        await sensor("hp_power_estimate", "HP power estimate",
+        # Named COMPRESSOR, not "HP", since 2026-08-02: it is 218*I from the
+        # compressor current register and excludes fan and pump, which that
+        # register does not see. Calling it "HP power" invited exactly the
+        # boundary confusion that put a fan+pump intercept into it.
+        await sensor("hp_power_estimate", "Compressor power (electrical)",
                      "hp/power_estimate", "W", "power")
         await sensor("demand_open_pct", "Circuit opening (flow proxy)",
                      "demand/open_pct", "%")

@@ -386,6 +386,45 @@ worst at part load, which is exactly where an optimizer needs it right.
 literally none of it, R² 0.000 and 0.059), so per-phase beats the 3-phase total
 by 8 points of R².
 
+## D-033 · `P_el = 147 · I`, superseding D-027's `198 · I + 200`
+Measured 2026-08-02 from the grid meter's **active power** across compressor
+on/off, 3107 five-minute samples over six weeks. **Both of D-027's terms were
+wrong and they were ONE artefact**: that regression was against a utility-meter
+phase which also carries household load, and fitting a line to a series with an
+uncorrelated baseline depresses the slope and parks the residual in an
+intercept. With the compressor off, phase A still reads ~848 W of house.
+
+```
+delta active power / delta reported current   148 W/A
+delta phase-A current / delta reported        0.639 A/A
+230 V * 0.639                                 147 W/A
+PF = 1020 W / (230 V * 4.40 A)                1.007
+```
+
+Two independent routes agree, and **the power factor landing on 1.00 is the
+check that matters** - a confounded baseline would not produce that. The
+compressor is an inverter drive with active PFC, and **the register OVER-READS
+mains current by ~1.56x**, so D-027's "phase-A RMS tracks it 0.92 A per reported
+A" is contradicted.
+
+**The intercept is gone entirely.** Fan and pump are real draw but the register
+does not see them, so they are not in this number; it is COMPRESSOR electrical
+power and the entity is named so. A faulted plant now reports 0 W instead of the
+fictitious 200 W it showed throughout the 14 hours Er03 was latched on
+2026-08-01/02.
+
+**Consequence: the measured COP moves 1.69 -> 2.66**, against an assumed 3.35.
+The remaining ~26 % is small enough to sit inside the manifold-dT and flow
+uncertainty, so the earlier claim that "the factor of two has nowhere left to
+sit except the thermal measurement" was wrong - most of it was electrical. That
+error came from treating "the current reading is validated" as "the power is
+validated"; D-027's delta method validated a CURRENT, never a power factor.
+
+**Caveat kept deliberately:** `assumed_cop` is a unit-level figure while this is
+compressor-only, so `heat_input_w()` multiplying one by the other overstates
+thermal input by the auxiliary fraction. The two must be brought to the same
+boundary - see BACKLOG.
+
 ## D-028 · Winter data confirms the building model at two timescales
 Same analysis. **Flow: 0.345 l/s = 1.24 m³/h** (±10 % systematic, from the COP
 map), consistent with the manufacturer's 0.16–0.40 l/s band at its 80th

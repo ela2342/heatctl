@@ -887,7 +887,37 @@ class Controller:
             # 3 A - a SHAPE error, worst at part load, which is exactly where a
             # future optimizer needs it to be right.
             i_a = hpm.decode(hpm.by_name("compressor_current"), amps)
-            await self.plane.publish("hp/power_estimate", f"{198.0 * i_a + 200.0:.0f}")
+            # MEASURED 2026-08-02: 147 W per reported amp, no intercept.
+            #
+            # This published `198*I + 200` per D-027. Both terms were wrong, and
+            # they were one artefact: D-027 regressed against a utility-meter
+            # phase that also carries household load, which depresses the slope
+            # and parks the residual in an intercept.
+            #
+            # Measured instead from the grid meter's ACTIVE POWER across
+            # compressor on/off, 3107 five-minute samples over six weeks:
+            #
+            #   delta active power / delta reported current = 148 W/A
+            #   delta phase-A current / delta reported      = 0.639 A/A
+            #   230 V * 0.639                               = 147 W/A
+            #   PF = 1020 W / (230 V * 4.40 A)              = 1.007
+            #
+            # Two independent routes agreeing, and the PF landing on 1.00 is the
+            # check that matters - a confounded baseline would not produce that.
+            # The compressor is an inverter drive with active PFC, and the
+            # REGISTER OVER-READS mains current by ~1.56x. D-027's "0.92 A per
+            # reported A" is contradicted by this measurement.
+            #
+            # Fan and pump are NOT in this number and that is correct: the
+            # register does not see them. They are a real term for a UNIT COP
+            # and remain unmeasured - so this is COMPRESSOR power, named as
+            # such, and a faulted plant with everything stopped now reports 0 W
+            # rather than the fictitious 200 W it showed for the 14 hours Er03
+            # was latched on 2026-08-01/02.
+            #
+            # Consequence: the measured COP moves 1.69 -> 2.66.
+            await self.plane.publish("hp/power_estimate",
+                                     f"{147.0 * i_a:.0f}")
         if self._peak_demand is not None:
             # PRE-normalisation peak. The commanded maximum is pinned at 100 %
             # by construction, so only this says whether there is enough
