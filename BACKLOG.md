@@ -4754,3 +4754,53 @@ trial standing in for it.
 **Watch:** overnight room temperature undershoot vs. `dial + delta`, and whether
 tomorrow's afternoon still saturates. Discomfort tolerance was explicitly given
 for a day or two — it does not extend past that.
+
+### 2026-08-04 — [!] Er03 latched 11 h; the flow floor guards only half the loop
+
+**Current state at time of writing: Er03 latched since 03:39:54, water pump
+off, compressor 0 A, no cooling on a day forecast 6.8 kW peak and 3 h over
+ceiling.** Needs a unit reset, which heatctl must not do itself (register
+0x0000 is the HA automations' to write — single-writer rule, CLAUDE.md).
+
+**Timeline.** Cleared 08-02 10:58 and stayed clear through 40 h of heavy
+cooling. Returned 08-03 23:56, then 08-04 03:10, 03:23, 03:39 — three retries
+in half an hour, each clearing in ~3 min, the last one latching for good.
+`pump_non_stop` went off at 08:37, after the latch, so it is not the cause.
+
+**Both clusters are at night, at low load.** That is the pattern, and it points
+at the thing the flow floor does not cover:
+
+| lever | who owns it | at low load |
+|---|---|---|
+| valve opening | heatctl (`min_open_pct`, flow floor) | held at 55 % mean |
+| **circulation pump speed** | **the unit / HA automations** | **50 % → 40 % → 0** |
+
+The flow floor did its job — measured at the latch, five circuits at 100 % and
+five at 10 %, mean exactly 55.0 %. Flow still failed, because **flow is the
+product of valve opening and pump speed, and heatctl owns only one factor.**
+
+Note also that 55 % *mean* is not 55 % *flow*: five circuits open and five
+nearly shut is hydraulically nothing like ten at 55 %, and a proportional
+actuator at 10 % passes far less than a tenth. The mean is the wrong statistic
+for a constraint that is about total flow. `circuit_opening_flow_proxy` already
+reports 55 % on that distribution, so the proxy inherits the same flaw.
+
+**What to do, in order:**
+  1. Establish whether the flow switch is genuinely tripping or is itself
+     faulty/fouled — every conclusion here assumes the sensor is honest, and
+     nothing has verified that. The rotameters would settle it in minutes.
+  2. Make the flow floor a floor on the *minimum* circuit, not the mean, or on
+     a proxy that models valve authority rather than averaging position.
+  3. Decide who guarantees pump speed at low load. `pump_non_stop` (0x0000
+     bit 4) is the obvious lever and heatctl may not touch that register —
+     so this is an HA-side change, or a case for renegotiating the
+     single-writer boundary (see the 2026-08-02 P04 entry, same theme:
+     heatctl's authority stops short of the thing that actually protects it).
+  4. Until then Er03 recurrence is expected on any low-load night, and
+     recovery needs a human. That is the real cost.
+
+**Process note.** This was reported to the owner as "no faults" while it had
+been latched ten hours. The fault entity was never queried; absence of error
+lines in a 12-second log window was read as health. The log window was 12
+seconds because of the pymodbus flood fixed in the same session — a defect in
+observability turned into a defect in the report.
