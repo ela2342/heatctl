@@ -1111,6 +1111,61 @@ class Controller:
             self._prune_db()
 
 
+def _quiet_pymodbus(level: str) -> None:
+    """Stop pymodbus dumping every Modbus frame into the add-on log.
+
+    THE DEFECT THIS FIXES (2026-08-04). pymodbus installs its OWN logger with
+    its own handler, so `logging.basicConfig(level=INFO)` above does not reach
+    it - the frame lines carry no timestamp precisely because they never went
+    through our formatter. Measured on the live plant: 93 of every 100 log
+    lines were `>>>>> send:` / `recv:` dumps, roughly ONE real heatctl line per
+    minute, and the retained add-on log covered **12 seconds**. Two days of
+    plant history were unrecoverable from it; the Er03 latch that had been
+    standing for ten hours had to be found in InfluxDB instead.
+
+    Nothing in heatctl asked for this. It arrived when a rebuild re-resolved
+    `pymodbus>=3.6,<4` onto a newer release - see `_log_dependency_versions`.
+
+    `pymodbus_apply_logging_config` is the library's own supported switch, so
+    use it rather than reaching into its logger. Wrapped because the name has
+    moved between 3.x releases and a logging tweak must never be the reason a
+    heating controller fails to start. Belt and braces with setLevel for any
+    release where the helper is gone but the logger is standard.
+
+    Kept at WARNING even when heatctl runs at DEBUG: pymodbus DEBUG is frame
+    dumps, and turning heatctl up to read control decisions must not cost the
+    log again. Raise it deliberately when debugging the transport itself.
+    """
+    want = "DEBUG" if level == "DEBUG" else "WARNING"
+    if want != "DEBUG":
+        try:
+            from pymodbus import pymodbus_apply_logging_config
+            pymodbus_apply_logging_config(want)
+        except Exception:                       # pragma: no cover - defensive
+            logging.getLogger(__name__).debug(
+                "pymodbus_apply_logging_config unavailable", exc_info=True)
+        logging.getLogger("pymodbus").setLevel(logging.WARNING)
+
+
+def _log_dependency_versions() -> None:
+    """Print the resolved dependency versions on every start.
+
+    WHY. `requirements.txt` carries RANGES, so a Supervisor rebuild can change
+    what runs with git perfectly clean - which is exactly how the frame-dump
+    flood arrived, unattributable to any commit. One line at startup makes the
+    next such change visible in the log instead of costing a day of guessing.
+    """
+    out = []
+    for mod, attr in (("pymodbus", "__version__"), ("yaml", "__version__"),
+                      ("aiomqtt", "__version__")):
+        try:
+            m = __import__(mod)
+            out.append(f"{mod} {getattr(m, attr, '?')}")
+        except Exception:                       # pragma: no cover - defensive
+            out.append(f"{mod} (absent)")
+    logging.getLogger("heatctl").info("dependencies: %s", ", ".join(out))
+
+
 def main() -> None:
     cfg_path = sys.argv[1] if len(sys.argv) > 1 else "/etc/heatctl/config.yaml"
     cfg = yaml.safe_load(Path(cfg_path).read_text())
@@ -1120,6 +1175,8 @@ def main() -> None:
              or cfg["logging"]["level"]).upper()
     logging.basicConfig(level=level,
                         format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    _quiet_pymodbus(level)
+    _log_dependency_versions()
     ctl = Controller(cfg)
     loop = asyncio.new_event_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):

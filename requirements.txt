@@ -1,5 +1,22 @@
 # hard dependencies (control core):
-pymodbus>=3.6,<4
-PyYAML>=6
+#
+# RANGES ARE NOT PINS, and a Supervisor rebuild re-resolves them. On 2026-08-02
+# a rebuild that shipped an unrelated change moved pymodbus onto a release that
+# dumps every Modbus frame to stdout; git stayed clean, so nothing in the
+# history explained it and two days of add-on log were reduced to 12 seconds of
+# retained history. The 30-year promise in CLAUDE.md says "minimal PINNED
+# dependencies" - these ranges were the gap between the promise and the file.
+#
+# `device_id=` in heatpump.py requires pymodbus >= 3.7 (it was `slave=` before),
+# so this cannot be pinned backwards to the 3.6 the file used to allow. The
+# range had in fact resolved all the way to 3.14 - eight minor releases past
+# anything this code was written against, arrived at silently.
+#
+# These are now EXACT, and they are the versions the 409-test suite passes
+# against. heatctl logs the resolved versions on every start, so a mismatch
+# between this file and what is actually running is visible in one line.
+# Changing a pin is a deliberate act: re-run the suite, then deploy.
+pymodbus==3.14.0
+PyYAML==6.0.3
 # mqtt paths (io backend "mqtt" and control plane):
-aiomqtt>=2,<3
+aiomqtt==2.5.1
