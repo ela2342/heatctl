@@ -4843,3 +4843,49 @@ has never been tried. The successful clears were physical resets, which may be
 a mains interruption; a control-bit power-off may be a standby that preserves
 the latch. Do not build auto-recovery on this until it has been tested with
 someone present. Until then, prevention (C01) is the whole strategy.
+
+### 2026-08-05 — C01 pump_non_stop set; the Er03 fix is now on trial
+
+Written from heatctl over MQTT (`heatctl/hp/set/bit/pump_non_stop`), which
+routes to `set_control_bit` — read-modify-write against a register actually
+read, no-op writes refused for flash wear.
+
+```
+0x0000   65 -> 81      (0x41 -> 0x51)
+         bit 4 pump_non_stop  0 -> 1
+         bit 0 power          1 -> 1   preserved
+         bit 6 A45 EV mode    1 -> 1   preserved
+```
+
+Read back **from the unit's registers**, not a command echo.
+
+This was possible only because the single-writer constraint turned out to have
+been void since 2026-07-28 (see that entry). The previous recommendation — walk
+to the front panel — was an artefact of a stale doc.
+
+**F6 manual speed stays at 100 %,** and the earlier suggestion to reduce it was
+wrong. Two levers move spread in opposite directions: compressor frequency
+raises it (more Q at fixed flow), pump speed lowers it (more flow at fixed Q).
+The binding constraint is manifold SUPPLY staying above dew point + margin, and
+supply is the cold end, so low spread is margin. Throttling the pump spends
+exactly the headroom `capacity.py` exists to use.
+
+**The test is the first low-load compressor stop.** Prediction: `water_pump`
+stays `on` and `dc_pump_speed` stays at 100 while `compressor_current` goes to
+0. Before C01, the pump cycled on `pump_cycle_min` = 30, and an Er03 fired when
+a compressor start landed in an off-window. Verify in InfluxDB, not the add-on
+log — see below.
+
+**Deliberately NOT deployed alongside this:** the committed fix for the
+duplicated pymodbus errors. Deploying restarts heatctl, and a restart commands
+P04 to 30 and back ~30 s later, i.e. a compressor stop/start — the exact
+transition under test. Doing both at once would make an Er03 unattributable and
+would spend the owner's absence on a cosmetic fix. C01 should make that restart
+safe; that is a reason to deploy *after* it is proven, not before.
+
+**Consequence worth noting:** the add-on log is currently unusable again, this
+time from the duplicated transaction-id errors (~12/min), which is why the C01
+write itself could not be found in it. Verification came from MQTT and
+InfluxDB. The transaction-id errors themselves — ~6/min on the heat-pump link,
+two separate pymodbus clients so not our concurrency, most likely the RS485→TCP
+gateway — remain unexplained and are their own open item.
