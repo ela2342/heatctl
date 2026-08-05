@@ -28,6 +28,14 @@ mode, not per-room. These need no HA-side configuration at all.
 | `sensor.installed_valve_demand` | min_max (max) | Max of the two valve channels that actually have an actuator. Currently **unused** - kept for when the remaining actuators arrive. |
 
 ## Automations
+
+> **STATUS 2026-08-05: every automation in this table that touches the heat
+> pump is OFF and has been since 2026-07-28 23:25.** They remain in the entity
+> registry rather than deleted, so they are trivially reversible, but nothing
+> below writes a heat-pump register today. The only row still running is the
+> wall-unit bridge (20159 state changes in the last 7 days), which touches MQTT
+> and not the pump. Read the table as history plus a rebuild recipe, not as a
+> description of what is currently steering the plant.
 | Automation | What it does | Notes |
 |---|---|---|
 | `Climate: Prevent Condensation (With Modbus Fallback)` | Clears the heat pump's pump-request bit when dew-point knowledge is lost; restores it, raising the setpoint **first**, when it returns. | Rewritten to be **state-based** and re-evaluated on HA start and every 5 min. The original was edge-triggered and latched cooling off indefinitely after a sensor dropout - a real incident on 2026-07-26. |
@@ -51,9 +59,19 @@ editing this file; when it is unavoidable, back up and validate first.
    depends on HA being up - exactly what layer 1 is meant not to need. Safe
    degradation: a room temperature older than 5 min is treated as absent and the
    return-temperature loop takes over.
-3. **Single-writer boundary.** The heat pump's registers are written by these HA
-   automations, not by heatctl. Until WP-B migrates that, heatctl must not write
-   them.
+3. ~~**Single-writer boundary.** The heat pump's registers are written by these
+   HA automations, not by heatctl. Until WP-B migrates that, heatctl must not
+   write them.~~ **RESOLVED 2026-07-28, recorded 2026-08-05.** All four
+   heat-pump-writing automations were turned off at 23:25 that night and have
+   not run since — verified in InfluxDB: `last(state)` is `off` for each, and
+   zero state changes in the following seven days against 42352 / 58780 /
+   401 / 6 points in the preceding month. **heatctl is the sole writer of the
+   heat pump's registers**, including `0x0000`.
+
+   This entry stayed stale for a week and cost real advice: on 2026-08-05 the
+   C01 fix for recurring Er03 was recommended "at the front panel, to avoid
+   racing the HA automations" that had not existed for eight days. A doc that
+   describes a retired constraint is worse than no doc, because it is trusted.
 
 ## Legacy entity cleanup - DONE 2026-07-27
 
