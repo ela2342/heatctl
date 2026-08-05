@@ -1144,7 +1144,19 @@ def _quiet_pymodbus(level: str) -> None:
         except Exception:                       # pragma: no cover - defensive
             logging.getLogger(__name__).debug(
                 "pymodbus_apply_logging_config unavailable", exc_info=True)
-        logging.getLogger("pymodbus").setLevel(logging.WARNING)
+        lg = logging.getLogger("pymodbus")
+        lg.setLevel(logging.WARNING)
+        # AND STRIP ITS HANDLERS. `pymodbus_apply_logging_config` does not just
+        # set a level - it attaches pymodbus's own StreamHandler. With that
+        # attached AND propagation to root still on, every surviving record was
+        # printed twice, once in pymodbus's format (`ERROR base:86 ...`) and
+        # once in ours. Measured on the live plant 2026-08-05: the transaction
+        # -id errors appeared as exact duplicate pairs. Silencing the frame
+        # dumps while doubling the errors is not a net win, so hand the records
+        # back to root, which is the only formatter this project configures.
+        for h in list(lg.handlers):
+            lg.removeHandler(h)
+        lg.propagate = True
 
 
 def _log_dependency_versions() -> None:
