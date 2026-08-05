@@ -4804,3 +4804,42 @@ been latched ten hours. The fault entity was never queried; absence of error
 lines in a 12-second log window was read as health. The log window was 12
 seconds because of the pymodbus flood fixed in the same session — a defect in
 observability turned into a defect in the report.
+
+### 2026-08-05 — Er03: the pump CYCLES when the compressor is idle
+
+Owner recalled setting pump non-stop and min speed to 100 and wondered whether
+the 08-04 reset lost it. Checked against 14 days of InfluxDB history — **the
+settings are intact, and they were never the ones that matter.**
+
+| register | set | now | transitions in 14 d |
+|---|---|---|---|
+| F4 `pump_mode` (0x0105) | 1 auto → **2 manual**, 07-31 18:56:53 | 2 | none since |
+| F6 `pump_manual_speed_pct` (0x0107) | 30 → **100**, 07-31 18:56:30 | 100 | none since |
+| **C01 `pump_non_stop` (0x0000 bit 4)** | — | **off** | **none, ever** — 101 points, all off since 07-27 |
+| F9 `pump_regulation_speed_pct` | — | 10 | none |
+| F8 `pump_min_speed_pct` | — | 10 | none |
+
+So the 07-31 intervention took and survived the reset. Manual 100 % governs
+**how fast the pump runs while it runs** — it says nothing about *whether* it
+runs. C01 is the knob for that, and it has been off the whole time.
+
+**The mechanism, corrected.** Earlier this was read as the pump "winding down"
+50 → 40 → 0. It is not modulating: in manual mode it runs at 100 or not at all,
+and `pump_cycle_min` is 30. Those figures are 2 h bucket MEANS of a pump
+cycling on and off — 50 % means on half the time. **Er03 fires when a
+compressor start lands in a pump-off window.**
+
+That also explains the clean night of 08-04→05: the compressor never stopped,
+so the pump never cycled, so there was no off-window to start into.
+
+**The fix is C01, and it should be set AT THE UNIT'S FRONT PANEL**, not over
+Modbus. C01 shares register 0x0000 with bit 0, which the HA automations write;
+a read-modify-write from anywhere else races them, and bit 0 is unit power.
+Setting it at the panel avoids the register entirely.
+
+**Untested hypothesis, flagged by the owner:** using 0x0000 bit 0 to clear a
+latched fault. Bit 0 = power is documented, but *toggling it to reset a latch*
+has never been tried. The successful clears were physical resets, which may be
+a mains interruption; a control-bit power-off may be a standby that preserves
+the latch. Do not build auto-recovery on this until it has been tested with
+someone present. Until then, prevention (C01) is the whole strategy.
