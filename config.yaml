@@ -323,18 +323,18 @@ rooms:
     label: "Kinderzimmer Naomi"
     floor_area_m2: 15.61   # plan "Kind 2": S glazing only, one window
     circuits: [{sensor: rl_hk04, valve: valve_hk04}]
-    room_temp_topic: ""
+    room_temp_topic: "roomtemp/kind_naomi"   # Shelly H&T G3, via the HA bridge
   - name: badezimmer
     label: "Badezimmer"
     floor_area_m2: 8.94   # Bad
     circuits: [{sensor: rl_hk06, valve: valve_hk06}]
-    room_temp_topic: ""
+    room_temp_topic: "roomtemp/badezimmer"   # Shelly H&T G3, via the HA bridge
   # rl_hk05 = Badezimmer Handtuchhalter, reserve, not installed
   - name: schlafzimmer
     label: "Elternschlafzimmer"
     floor_area_m2: 11.08   # Schlafen
     circuits: [{sensor: rl_hk07, valve: valve_hk07}]
-    room_temp_topic: ""
+    room_temp_topic: "roomtemp/schlafzimmer"   # Shelly H&T G3, via the HA bridge
   - name: arbeitszimmer
     label: "Arbeitszimmer"
     floor_area_m2: 31.20   # plan "Arbeit/Gaeste"

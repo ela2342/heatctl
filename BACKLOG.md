@@ -4952,3 +4952,64 @@ for acting on any of the above, not a nice-to-have.
 capacity loop earn it back, so restarts are gentle instead of reactive. Cannot
 stop the cycling — that is a capacity mismatch and needs buffer volume, not
 control.
+
+### 2026-08-06 — Room sensing: three Shelly H&T G3 wired, and the target that isn't this
+
+Three Shelly H&T G3 units, all mains-powered (`ext_power` on, battery 0 %,
+so the 7200 s `sleep_period` two of them carry is moot), reporting every
+6-12 minutes:
+
+| device | area | heatctl room |
+|---|---|---|
+| Raumcontroller Elternachlafzimmer | schlafzimmer | `schlafzimmer` |
+| Raumcontroller Naomi | kinderzimmer | `kind_naomi` |
+| Raumcontroller Bad | bad | `badezimmer` |
+
+That takes the house from 3 of 7 rooms with comfort feedback to 6 of 7.
+**`kind_natalie` is now the only blind room** and still runs on the house
+average.
+
+**The staleness window had to move first.** At 6-12 min reporting against a
+300 s window, each room would have been called stale about a third of the time,
+and every flip switches the control path AND resets that room's integrator - so
+the rooms would never settle. `control.room_temp_max_age_s` now defaults to
+900 s, safe against a 5.62 h air/slab mode. Without that, wiring the sensors up
+would have looked like bad tuning.
+
+**Shipped today: option A, the HA bridge.** Three automations republish each
+temperature onto `roomtemp/<room>`, matching the existing Controme pattern.
+Retained, so heatctl gets a value the instant it reconnects rather than running
+the return-temperature fallback for up to 12 minutes; the cost is that a
+retained value can look fresh for up to one staleness window after a restart.
+
+**This raises the layer-1 independence debt from two rooms to five.**
+`docs/HA_INTEGRATION.md` risk 2 already records it. Accepted deliberately for
+today.
+
+#### The target (owner, 2026-08-06)
+
+> the whole control on the PFC200, an MQTT there, and the Shellys connecting
+> directly to this MQTT, making the whole setup as HA independent as possible
+
+Three steps, and each stands on its own:
+
+1. **Shellys publish to the broker directly** (option B). One-time RPC config
+   on each device - they are at `192.168.178.64`, `.67`, `.68`, mains-powered,
+   Gen3, so MQTT can run alongside the HTTP/WS the Shelly integration uses. HA
+   keeps battery and firmware entities; heatctl subscribes to the device topic,
+   the way it already does for Arbeitszimmer's rtl_433 sensor. Needs an MQTT
+   user, since the Mosquitto App rejects anonymous clients. **Removes HA from
+   the path for three rooms.**
+2. **A broker on the PFC200.** Then the Shellys and heatctl share a broker that
+   does not depend on the HA machine being up at all.
+3. **heatctl itself on the PFC200.** This is the step that changes the
+   hardware story: today the WAGO 750-352 is a dumb Modbus TCP coupler and the
+   control runs on the HA host, so the control core depends on a general-purpose
+   machine it does not own. A PFC200 runs the control on the same hardware that
+   owns the I/O.
+
+Worth noting what each step buys, because they are not equal: step 1 removes an
+automation that can be turned off by accident; step 3 removes an entire machine
+from the dependency chain. Step 3 also interacts with the 30-year-maintainability
+promise in both directions - fewer moving parts, but a specific PLC to keep
+alive.
