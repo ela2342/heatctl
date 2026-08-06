@@ -198,12 +198,39 @@ Blocking, in rough order of how much they bite:
 Entered 2026-08-06 with the floor areas from the building survey. Recording
 them here because each is a silent error class, not a rough edge.
 
-**Rooms are treated as thermally independent, and two of them are not.**
-`BUILDING.local.md` records an open **Luftraum** joining the OG Arbeitszimmer
-to the EG Wohnzimmer, and says outright that "the per-room model will need it".
-Those two rooms are 57 % of the floor area between them. The model will
-attribute to each the energy that is actually moving between them, and the
-symptom will be a persistent innovation bias on both — not an obvious failure.
+**Rooms are treated as thermally independent and NONE of them are** (owner,
+2026-08-06). This was first written as "two of them are not", naming the
+Luftraum between Arbeitszimmer and Wohnzimmer. That understated it: every room
+couples to its neighbours through interior walls, and the Arbeitszimmer
+boundary in particular is a **door that can be held open** for exactly this
+heat exchange.
+
+Rough scale, because it decides how much the per-room model is worth: an
+interior wall of ~15 m² at U ≈ 1–2 W/(m²K) is 15–30 W/K per room pair, against
+a Wohnzimmer envelope share of ~78 W/K. Non-negligible with doors closed. An
+open doorway is convectively far larger and simply dominates — the two rooms
+become one zone.
+
+**Three consequences, and they point the same way:**
+
+1. **Per-room distribution has limited authority.** Energy delivered to one
+   room leaks to its neighbours at a rate comparable to its own envelope loss.
+   Holding room A at 21 while B sits at 25 is not achievable by valve position
+   when the two are coupled that strongly, whatever the deficits say.
+2. **The house total is the robust quantity.** Inter-room flows are internal
+   and cancel in the sum, so `house_excess_wh` is unaffected by coupling even
+   though every per-room term is wrong. That is an argument for driving the
+   SOURCE from the house figure and treating distribution as a second-order
+   correction — which is also where the 2026-08-06 flat-distribution result
+   landed from the flow side.
+3. **The door is an actuator we do not model.** Its state changes the plant's
+   topology, not just a parameter. Nothing reads it, so the model cannot know
+   which building it is in. A door sensor would be worth more here than another
+   temperature sensor.
+
+The symptom of ignoring all this is a persistent innovation bias on the coupled
+rooms rather than an obvious failure — which is why it is written down now
+instead of being discovered as a puzzle later.
 
 **Floor area is a poor proxy for envelope exposure.** UA is split by area, so a
 corner room with two glazed façades gets the same W/K per m² as an interior
@@ -222,9 +249,26 @@ A fan-coil room needs an air-capacity model; it does not have one yet.
 
 - **Cycling.** `freq_min_hz` = 30 exceeds the night load; the unit must cycle
   and no target changes that. Buffer volume is the answer, not control.
-- **Dehumidification.** With no hydraulic separation the fan coil is fed water
-  the condensation guard holds above the house dew point, so it cannot condense
-  on house air. Lower dew point needs ventilation or a standalone dehumidifier.
+- **Dehumidification — REVISED 2026-08-06, the first version was too strong.**
+  It said: with no hydraulic separation the fan coil is fed water the
+  condensation guard holds above the house dew point, so it cannot condense on
+  house air, and lower dew point needs ventilation or a standalone
+  dehumidifier.
+
+  That argument assumed ONE house dew point. The house is stratified: measured
+  the same day, Arbeitszimmer sat at 16.5 while the ground floor was 13.4–13.6,
+  nearly 3 K apart. The fan coil is at the top of the Luftraum, which is
+  precisely where warm moist air collects — so supply at 14.9 °C *is* below the
+  dew point of the air actually reaching it, and it does condense, into a
+  drain.
+
+  So the coil is a dehumidifier for the house, working on stratification rather
+  than on mixed air, and an open door is what feeds it. What remains unknown is
+  the RATE: whether moisture migrates upward fast enough to pull the ground
+  floor's dew point down, and therefore whether this relaxes the condensation
+  limit on the slab circuits. That is directly testable — run the coil hard and
+  watch whether the ground-floor dew point follows — and it has not been done.
+  The earlier claim that this path is structurally closed was wrong.
 - **Sensorless rooms.** Four of seven rooms have no air temperature, so `T_set`
   is known but the *check* on whether the target was right is missing. The
   feedforward still works — that is the point of feedforward — but nothing
