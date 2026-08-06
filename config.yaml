@@ -114,6 +114,23 @@ mqtt:                          # control-plane broker (telemetry, setpoints, She
   # from a separate circuit, or the drain blocks, this decision must be revisited.
   dew_point_topic: "heatctl/env/dew_point"
 
+  # OUTDOOR AIR for the slab-target feedforward (docs/DESIGN_ENERGY_DEMAND.md).
+  # The weather station, NOT the heat pump's own ambient register: that sensor
+  # is mounted on the unit and runs 1.8-2.1 K high through the afternoon
+  # (measured 2026-08-06: 30.4 vs 28.6 at 16:00, 29.0 vs 26.9 at 18:00) with
+  # a 45.6 degC excursion on 2026-08-04. `UA_ao * (T_set - AT) / UA_sa` lands
+  # that error on the target at about half size, so it is the largest single
+  # term in the whole computation. The register stays as the fallback for when
+  # this broker is gone, and heatctl publishes which source it used.
+  #
+  # Straight off rtl_433, so occasional frames are garbled - one read 13.4 degC
+  # while both HA entities and the heat pump agreed on ~27. Hence the median
+  # below; a single bad frame would otherwise move the target ~7 K.
+  # WH65B and WH24 are the same physical station decoded two ways and agree to
+  # within 0.2 K; WH65B is the one HA derives its dew point from.
+  outdoor_temp_topic: "rtl_433/74930c0d-rtl433/devices/Fineoffset-WH65B/210/temperature_C"
+  outdoor_median_samples: 3
+
 # --- Heat pump (PW58321) -------------------------------------------------
 # heatctl is the SOLE Modbus master for this device. Not a preference: the
 # unit documents a minimum 200 ms between transactions and two independent

@@ -65,8 +65,15 @@ class ControlPlane:
         # the whole house conductance, so it is the largest single term to get
         # wrong.
         self.outdoor_topic = m.get("outdoor_temp_topic") or None
-        self._outdoor: float | None = None
-        self._outdoor_ts = 0.0
+        # A SHORT MEDIAN, because this comes straight off a 433 MHz decoder and
+        # rtl_433 emits occasional garbled frames. Observed 2026-08-06: the
+        # station published 13.4 degC while both its own HA entities and the
+        # heat pump agreed on ~27. A single bad sample moves the slab target by
+        # UA_ao * dT / UA_sa = 240 * 14 / 490 = 6.9 K, so one frame could swing
+        # the whole feedforward. A median of three rejects isolated spikes and
+        # is explainable, which a filter with state and tuning is not.
+        self._outdoor_buf: list[tuple[float, float]] = []
+        self._outdoor_window = int(m.get("outdoor_median_samples", 3))
         # Layer 2's pre-conditioning delta, in K, applied as
         # `active = dial + delta`. SIGNED and mode-independent on purpose:
         # negative asks for a cooler target (pre-cool before a hot afternoon),
@@ -97,10 +104,15 @@ class ControlPlane:
         the heat pump's own sensor is a DEGRADATION, not an equivalent, and
         whoever does it should know they have done it.
         """
-        if (self._outdoor is None
-                or time.monotonic() - self._outdoor_ts > max_age_s):
+        now = time.monotonic()
+        fresh = [v for ts, v in self._outdoor_buf if now - ts <= max_age_s]
+        if not fresh:
             return None
-        return self._outdoor
+        # Median over whatever is fresh, including a single sample: refusing to
+        # answer until the buffer fills would leave layer 1 on the heat pump's
+        # biased register for the first minutes after every restart, which is
+        # the worse failure.
+        return sorted(fresh)[len(fresh) // 2]
 
     def dew_point(self, max_age_s: float = 900) -> float | None:
         """Latest dew point if fresh enough, else None.
@@ -150,10 +162,12 @@ class ControlPlane:
     def _dispatch(self, topic: str, payload: str) -> None:
         if self.outdoor_topic and topic == self.outdoor_topic:
             try:
-                self._outdoor = float(payload)
-                self._outdoor_ts = time.monotonic()
+                v = float(payload)
             except ValueError:
                 log.debug("non-numeric outdoor temp on %s: %r", topic, payload)
+                return
+            self._outdoor_buf.append((time.monotonic(), v))
+            del self._outdoor_buf[:-self._outdoor_window]
             return
         if self.dew_topic and topic == self.dew_topic:
             try:
