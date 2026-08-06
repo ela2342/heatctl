@@ -117,6 +117,19 @@ class Controller:
         self.capacity_fan_min = float(
             (cfg['control'].get('capacity') or {}).get('fan_cap_min', 400))
         self._sp_blocked = False        # edge detector for the saturation alarm
+        # ROOM TEMPERATURE STALENESS. 300 s was right for sensors reporting
+        # every minute; the Shelly H&T G3 units fitted 2026-08-06 report every
+        # 6-12 minutes, so a 300 s window would call them stale a third of the
+        # time. Each such flip switches the room between the room PID and the
+        # return loop AND resets that room's integrator, so the room would
+        # never settle - a control failure caused entirely by a timeout.
+        #
+        # 900 s is safe on this building: the air/slab mode is 5.62 h, so a
+        # room cannot move meaningfully inside a quarter hour. The rule still
+        # does its job - a sensor that dies is out within 15 minutes and the
+        # return loop takes over.
+        self.room_temp_max_age_s = float(
+            cfg["control"].get("room_temp_max_age_s", 900.0))
         d = cfg["control"].get("setpoint_delta") or {}
         self.sp_delta_max_age_s = float(d.get("max_age_s", 3600.0))
         self._sp_delta_active = 0.0
@@ -428,7 +441,8 @@ class Controller:
         # manifold as it currently stands, not as this cycle is about to
         # command it.
         room_temps = {r["name"]: t for r in self.rooms
-                      if (t := self.plane.room_temp(r["name"])) is not None}
+                      if (t := self.plane.room_temp(
+                          r["name"], self.room_temp_max_age_s)) is not None}
 
         # PRE-CONDITIONING DELTA. `active = dial + delta`, computed ONCE here so
         # the wall dial and layer 2 can never fight over one value - the bridge
@@ -501,7 +515,7 @@ class Controller:
 
         for room in self.rooms:
             n = room["name"]
-            room_t = self.plane.room_temp(n)
+            room_t = self.plane.room_temp(n, self.room_temp_max_age_s)
             src = "sensor"
             if room_t is None and house_mean is not None:
                 room_t, src = house_mean, "house_avg"
@@ -1215,7 +1229,8 @@ class Controller:
         rows += [(ts, f"valve_actual:{n}", p)
                  for n, p in state.valves_readback_pct.items()]
         for room in self.rooms:
-            t = self.plane.room_temp(room["name"])
+            t = self.plane.room_temp(room["name"],
+                                     self.room_temp_max_age_s)
             if t is not None:
                 rows.append((ts, f"room:{room['name']}", t))
             rows.append((ts, f"setpoint:{room['name']}",

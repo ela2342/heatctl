@@ -165,6 +165,9 @@ class FakePlane:
         self.sp_delta = sp_delta
         self.published: list[tuple[str, str, bool]] = []
         self.outdoor: float | None = None
+        # How long ago the room readings arrived. Tests set this to exercise
+        # the staleness window; 0 means "just now".
+        self.room_temp_age = 0.0
 
     def outdoor_temp(self, max_age_s: float = 900) -> float | None:
         """Weather-station outdoor air, absent unless a test supplies it.
@@ -179,6 +182,8 @@ class FakePlane:
         return self.sp_delta
 
     def room_temp(self, room: str, max_age_s: float = 300) -> float | None:
+        if self.room_temp_age > max_age_s:
+            return None
         return self.room_temps.get(room)
 
     def dew_point(self, max_age_s: float = 900) -> float | None:

@@ -1102,3 +1102,38 @@ class TestEnergyShadow:
         ctl.io.touch(time.monotonic())
         await ctl.step(1.0)
         assert ctl.plane.topic("energy/outdoor_source") == "hp_register"
+
+
+class TestRoomTempStaleness:
+    """The window has to match how often the sensors actually report.
+
+    The Shelly H&T G3 units fitted 2026-08-06 report every 6-12 minutes. Under
+    the old 300 s default a room would be called stale roughly a third of the
+    time, and every flip both switches the control path AND resets that room's
+    integrator - so the room could never settle. A timeout, not a controller,
+    would have been the failure.
+    """
+
+    async def test_a_room_reporting_every_ten_minutes_stays_in_control(
+            self, controller):
+        """Mutation-verified: dropping the max-age back to 300 fails this."""
+        ctl = controller(
+            temps={"rl_hk01": 24.0, "rl_hk02": 24.0, "rl_hk03": 24.0,
+                   "vl_total": 30.0},
+            room_temps={"gaestebad": 19.0})
+        # Reading arrived 10 minutes ago - normal for these sensors.
+        ctl.plane.room_temp_age = 600.0
+        ctl.io.touch(time.monotonic())
+        await ctl.step(1.0)
+        assert ctl._room_src["gaestebad"] == "sensor"
+
+    async def test_a_genuinely_dead_sensor_still_ages_out(self, controller):
+        """The rule must still do its job - 15 min, not never."""
+        ctl = controller(
+            temps={"rl_hk01": 24.0, "rl_hk02": 24.0, "rl_hk03": 24.0,
+                   "vl_total": 30.0},
+            room_temps={"gaestebad": 19.0})
+        ctl.plane.room_temp_age = 4000.0
+        ctl.io.touch(time.monotonic())
+        await ctl.step(1.0)
+        assert ctl._room_src["gaestebad"] == "return"
