@@ -193,6 +193,31 @@ Blocking, in rough order of how much they bite:
    §7 Kalman work and belongs in layer 2, arriving as parameters. This split
    must be decided before implementation, not during it.
 
+## 7a. Per-room assumptions that are known to be wrong
+
+Entered 2026-08-06 with the floor areas from the building survey. Recording
+them here because each is a silent error class, not a rough edge.
+
+**Rooms are treated as thermally independent, and two of them are not.**
+`BUILDING.local.md` records an open **Luftraum** joining the OG Arbeitszimmer
+to the EG Wohnzimmer, and says outright that "the per-room model will need it".
+Those two rooms are 57 % of the floor area between them. The model will
+attribute to each the energy that is actually moving between them, and the
+symptom will be a persistent innovation bias on both — not an obvious failure.
+
+**Floor area is a poor proxy for envelope exposure.** UA is split by area, so a
+corner room with two glazed façades gets the same W/K per m² as an interior
+one. Wohnzimmer alone carries ~28 m² of the house's 51 m² of glazing on two
+façades that see sun from dawn to mid-afternoon; the survey says explicitly
+that "any per-room solar model that treats rooms as similar will be wrong about
+this one specifically." Per-room UA is the §7.3 refinement that fixes it.
+
+**Emitter type is not implied by floor area.** Arbeitszimmer is 31.20 m² with a
+fan coil, no slab, on a floor that the 136.40 m² slab figure does not cover.
+It now carries `emitter: fan_coil`, keeps its UA share, and is refused a slab
+excess rather than being credited with 1987 Wh/K of storage it does not have.
+A fan-coil room needs an air-capacity model; it does not have one yet.
+
 ## 8. What this does not solve
 
 - **Cycling.** `freq_min_hz` = 30 exceeds the night load; the unit must cycle

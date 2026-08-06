@@ -215,3 +215,65 @@ class TestRecoveryTerm:
         with pytest.raises(ValueError):
             slab_target_c(23.0, 28.0, 240.0, 490.0, room_c=25.0,
                           c_air_wh=2000.0, tau_recover_h=0.0)
+
+
+class TestEmitterType:
+    """Floor area does not imply thermal storage.
+
+    Arbeitszimmer is 31.20 m2 on the OG with a fan coil. Multiplying that by
+    `c_slab_wh_per_m2` invented 1987 Wh/K - 24 % of the assumed house total -
+    in a room with no slab. And `c_slab_wh` is derived from the 136.40 m2
+    GROUND FLOOR area, which does not contain that room, so the figure was
+    wrong twice over.
+    """
+
+    CFG_FC = {
+        "control": {"energy": {"building": {
+            "ua_ao_w_per_k": 240.0, "ua_sa_w_per_k": 490.0,
+            "c_slab_wh_per_m2_k": 63.7, "q_internal_w": 350.0}}},
+        "rooms": [
+            {"name": "wohnzimmer", "floor_area_m2": 42.11, "circuits": []},
+            {"name": "arbeitszimmer", "floor_area_m2": 31.20,
+             "emitter": "fan_coil", "circuits": []},
+        ],
+    }
+
+    def test_a_fan_coil_room_is_refused_a_slab_excess(self):
+        """Mutation-verified: dropping the has_slab check returns an excess."""
+        e = EnergyDemand(self.CFG_FC)
+        r = e.room("arbeitszimmer", 23.0, 33.0, rl_c=26.0, vl_c=18.0)
+        assert not r.valid
+        assert r.excess_wh is None
+        assert "no slab" in r.reason
+
+    def test_a_fan_coil_room_still_gets_a_target(self):
+        """The target says what water the room wants - that part is valid.
+
+        Only the ENERGY figure is meaningless without a capacity, so the
+        refusal is scoped to `excess`, not to the whole result.
+        """
+        e = EnergyDemand(self.CFG_FC)
+        r = e.room("arbeitszimmer", 23.0, 33.0, rl_c=26.0, vl_c=18.0)
+        assert r.target_c is not None
+
+    def test_a_fan_coil_room_keeps_its_UA_share(self):
+        """It is a real room losing heat through a real envelope.
+
+        Excluding it from the area total would silently re-weight every other
+        room's UA and slab share - a 24 % error introduced by a fix.
+        """
+        e = EnergyDemand(self.CFG_FC)
+        assert e.room_share("arbeitszimmer") == pytest.approx(
+            31.20 / (42.11 + 31.20))
+
+    def test_slab_rooms_are_unaffected(self):
+        e = EnergyDemand(self.CFG_FC)
+        r = e.room("wohnzimmer", 23.0, 33.0, rl_c=26.0, vl_c=18.0)
+        assert r.valid and r.excess_wh > 0
+
+    def test_the_house_total_skips_the_fan_coil_room(self):
+        """It contributes no slab energy, so it must not contribute a number."""
+        e = EnergyDemand(self.CFG_FC)
+        rooms = [e.room("wohnzimmer", 23.0, 33.0, 26.0, 18.0),
+                 e.room("arbeitszimmer", 23.0, 33.0, 26.0, 18.0)]
+        assert e.house_excess_wh(rooms) == pytest.approx(rooms[0].excess_wh)

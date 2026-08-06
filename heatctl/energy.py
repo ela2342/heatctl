@@ -161,15 +161,32 @@ class EnergyDemand:
         # one - so this is explicitly a first approximation, replaced per room
         # once the survey areas are entered and refined by identification.
         self.areas: dict[str, float] = {}
+        # EMITTER TYPE, because area alone does not tell you whether a room has
+        # thermal storage. Arbeitszimmer is 31.20 m2 on the OG with a fan coil:
+        # applying `c_slab_wh_per_m2` to it invented 1987 Wh/K - 24 % of the
+        # house total - in a room with no slab. Worse, `c_slab_wh` is derived
+        # from the 136.40 m2 GROUND FLOOR area, which does not include that
+        # room at all, so the number was wrong twice over.
+        #
+        # The area is still carried for the UA split: the room is real and
+        # loses heat through a real envelope. Only the slab model is excluded.
+        # A fan-coil room needs its own model (air capacity, no storage); until
+        # it has one, `room()` refuses rather than fabricating an excess.
+        self.emitters: dict[str, str] = {}
         for room in cfg.get("rooms", []):
             a = room.get("floor_area_m2")
             if a:
                 self.areas[room["name"]] = float(a)
+                self.emitters[room["name"]] = room.get("emitter", "slab")
         self.total_area = sum(self.areas.values())
 
         # Layer 2 refinements, empty until it publishes.
         self._ntu: dict[str, float] = {}
         self._q_sol: dict[str, float] = {}
+
+    def has_slab(self, name: str) -> bool:
+        """Does this room store energy in a floor slab we can aim at?"""
+        return self.emitters.get(name, "slab") == "slab"
 
     def room_share(self, name: str) -> float:
         """Fraction of the house this room represents, by floor area."""
@@ -210,6 +227,13 @@ class EnergyDemand:
             room_c=room_c, c_air_wh=self.c_air_wh * share,
             tau_recover_h=self.tau_recover_h)
 
+        if not self.has_slab(name):
+            # The target still stands - it says what water this room wants -
+            # but `excess` is C_slab * dT and this room has no C_slab. Refusing
+            # is the honest answer; a fan-coil room needs an air-capacity model
+            # it does not have yet.
+            return RoomEnergy(name, None, target, None, False,
+                              f"no slab ({self.emitters[name]})")
         if rl_c is None:
             return RoomEnergy(name, None, target, None, False, "no return temp")
         if not rl_valid:

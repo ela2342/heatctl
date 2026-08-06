@@ -92,12 +92,26 @@ mqtt:                          # control-plane broker (telemetry, setpoints, She
   # A sensor that does not follow the diurnal swing is indoors. Check that
   # before concluding anything from a sensor's name.
   #
-  # ARBEITSZIMMER LEGITIMATELY SETS THE LIMIT FOR THE WHOLE PLANT. Its dew
-  # point runs ~2.5 K above the ground-floor rooms (17.1 vs 14.5 Gaestebad), it
-  # is on the OG coupled to the Wohnzimmer by the open Luftraum so warm moist
-  # air collects there, and it holds the FAN COIL - a cold surface in a moving
-  # airstream, the most condensation-prone thing in the system. It is the room
-  # that most needs this protection, not a nuisance in the average.
+  # ARBEITSZIMMER IS NOW EXCLUDED FROM THE REFERENCE, DELIBERATELY (owner,
+  # 2026-08-06). **This reverses the paragraph that used to stand here**, which
+  # argued the opposite and was written after the 2026-07-31 removal was undone
+  # as a mistake. Both the old text and the old removal were about the same
+  # question and reached opposite answers, so read the dates before acting.
+  #
+  # What changed is not the physics but the hydraulics: the fan coil has a
+  # CONDENSATE DRAIN, so condensation there is collected rather than damaging.
+  # The room may therefore run below its own dew point, and including it in the
+  # max() would hold the whole plant's supply ~3 K warmer to protect a surface
+  # that is designed to get wet. Measured 2026-08-06: Arbeitszimmer's dew point
+  # was 16.5 against 13.4-13.6 for the ground floor, so it would have set the
+  # limit for every slab circuit in the house.
+  #
+  # WHAT IS STILL TRUE, and is the reason the old paragraph was persuasive:
+  # that room is genuinely the most condensation-prone in the building - it is
+  # on the OG, coupled to the Wohnzimmer by the open Luftraum so warm moist air
+  # collects there, and it holds a cold surface in a moving airstream. The
+  # exclusion is safe ONLY because of the drain. If the fan coil is ever fed
+  # from a separate circuit, or the drain blocks, this decision must be revisited.
   dew_point_topic: "heatctl/env/dew_point"
 
 # --- Heat pump (PW58321) -------------------------------------------------
@@ -264,6 +278,7 @@ valves:
 rooms:
   - name: gaestebad
     label: "Gästebad"
+    floor_area_m2: 3.43   # WC/Du
     circuits: [{sensor: rl_hk01, valve: valve_hk01}]
     # Legacy wall unit, bridged to MQTT by an HA automation (interim - that
     # data only exists over HTTP on the old Mini Server). Target is a Shelly
@@ -271,6 +286,7 @@ rooms:
     room_temp_topic: "roomtemp/gaestebad"
   - name: wohnzimmer
     label: "Wohnzimmer"
+    floor_area_m2: 42.11   # Wohnen/Essen
     circuits:
       - {sensor: rl_hk02, valve: valve_hk02}
       # Assigned 2026-07-27: with 16 analog outputs every circuit has one, and
@@ -282,23 +298,37 @@ rooms:
     room_temp_topic: "roomtemp/wohnzimmer"
   - name: kind_natalie
     label: "Kinderzimmer Natalie"
+    floor_area_m2: 16.33   # plan "Kind 1": W + S glazing, the room with TWO
+                           # windows, which is how the occupant identifies it
     circuits: [{sensor: rl_hk03, valve: valve_hk03}]
     room_temp_topic: ""
   - name: kind_naomi
     label: "Kinderzimmer Naomi"
+    floor_area_m2: 15.61   # plan "Kind 2": S glazing only, one window
     circuits: [{sensor: rl_hk04, valve: valve_hk04}]
     room_temp_topic: ""
   - name: badezimmer
     label: "Badezimmer"
+    floor_area_m2: 8.94   # Bad
     circuits: [{sensor: rl_hk06, valve: valve_hk06}]
     room_temp_topic: ""
   # rl_hk05 = Badezimmer Handtuchhalter, reserve, not installed
   - name: schlafzimmer
     label: "Elternschlafzimmer"
+    floor_area_m2: 11.08   # Schlafen
     circuits: [{sensor: rl_hk07, valve: valve_hk07}]
     room_temp_topic: ""
   - name: arbeitszimmer
     label: "Arbeitszimmer"
+    floor_area_m2: 31.20   # plan "Arbeit/Gaeste"
+    # NOT A SLAB ROOM. It is on the OG and its emitter is a fan coil, so it has
+    # neither the floor build-up nor the mass. Both matter: `c_slab_wh` is
+    # 63.7 Wh/(m2 K) x 136.40 m2, and that 136.40 is the GROUND FLOOR slab -
+    # this room is not in it. Assigning slab capacity here invented 1987 Wh/K
+    # of storage, 24 % of the house total, in a room that has none.
+    # The area is still carried: the room is real, loses heat through a real
+    # envelope, and needs its UA share. Only the slab model is excluded.
+    emitter: fan_coil
     circuits: [{sensor: rl_hk11, valve: valve_hk11}]
     # FineOffset WH32 via the rtl_433 bridge - a bare numeric payload on its
     # own topic, so no Home Assistant in the path for this room.
