@@ -30,8 +30,45 @@ class RoomEnergy:
     slab_c: float | None            # estimated slab temperature
     target_c: float | None          # where physics says it should sit
     excess_wh: float | None         # + = holds MORE energy than target
+    actionable_wh: float | None     # the part the plant can act on, this mode
     valid: bool                     # is `slab_c` usable at all
     reason: str                     # why not, when it is not
+
+
+def actionable_wh(excess_wh: float, mode: str) -> float:
+    """The part of a signed excess the plant can actually do something about.
+
+    `excess_wh` is physics and stays signed: it is how much energy the slab
+    holds relative to where the target says it should be. Whether that is a
+    JOB depends on which way the plant can push.
+
+    THE DEFECT THIS FIXES (2026-08-06). On an August night with the slabs cold
+    from the day's cooling and 17.9 degC forecast outdoor, the raw sum read
+    **-31 kWh** - "the house is 31 kWh short". Arithmetically true, and a
+    nonsensical instruction: in cooling a slab below the holding target is
+    STORED COOLTH, not something to make up with heat. The plant has no
+    business heating in August, and the forecast agreed - it asked for 0.00 K
+    of pre-charge for the next day.
+
+    Widening the outdoor window to a diurnal cycle did NOT fix this and could
+    not: the arithmetic was never wrong, the interpretation was. Weather tells
+    you whether you will need the stored coolth; mode tells you whether a
+    shortfall is actionable at all.
+
+        cooling  -> only a SURPLUS of stored heat is a job
+        heating  -> only a DEFICIT is a job
+        off      -> nothing is
+
+    Deliberately NOT applied to `excess_wh` itself. Clamping the measurement
+    would hide the surplus that is the very thing worth seeing overnight, and
+    a quantity that changes meaning with plant mode is one nobody can reason
+    about later.
+    """
+    if mode == "cooling":
+        return max(0.0, excess_wh)
+    if mode == "heating":
+        return min(0.0, excess_wh)
+    return 0.0
 
 
 def slab_target_c(setpoint_c: float, outdoor_c: float, ua_ao: float,
@@ -204,7 +241,8 @@ class EnergyDemand:
 
     def room(self, name: str, setpoint_c: float, outdoor_c: float | None,
              rl_c: float | None, vl_c: float | None,
-             rl_valid: bool = True, room_c: float | None = None) -> RoomEnergy:
+             rl_valid: bool = True, room_c: float | None = None,
+             mode: str = "off") -> RoomEnergy:
         """One room's slab state. Never raises; returns an invalid result.
 
         Refuses rather than guesses on every missing input. A feedforward
@@ -215,9 +253,11 @@ class EnergyDemand:
         """
         share = self.room_share(name)
         if share <= 0.0:
-            return RoomEnergy(name, None, None, None, False, "no floor area")
+            return RoomEnergy(name, None, None, None, None, False,
+                              "no floor area")
         if outdoor_c is None:
-            return RoomEnergy(name, None, None, None, False, "no outdoor temp")
+            return RoomEnergy(name, None, None, None, None, False,
+                              "no outdoor temp")
 
         target = slab_target_c(
             setpoint_c, outdoor_c,
@@ -232,17 +272,20 @@ class EnergyDemand:
             # but `excess` is C_slab * dT and this room has no C_slab. Refusing
             # is the honest answer; a fan-coil room needs an air-capacity model
             # it does not have yet.
-            return RoomEnergy(name, None, target, None, False,
+            return RoomEnergy(name, None, target, None, None, False,
                               f"no slab ({self.emitters[name]})")
         if rl_c is None:
-            return RoomEnergy(name, None, target, None, False, "no return temp")
+            return RoomEnergy(name, None, target, None, None, False,
+                              "no return temp")
         if not rl_valid:
-            return RoomEnergy(name, None, target, None, False, "rl not valid")
+            return RoomEnergy(name, None, target, None, None, False,
+                              "rl not valid")
 
         slab = slab_estimate_c(rl_c, vl_c, self._ntu.get(name))
         c_room = self.c_slab_wh_per_m2 * self.areas[name]
-        return RoomEnergy(name, slab, target, c_room * (slab - target),
-                          True, "ok")
+        excess = c_room * (slab - target)
+        return RoomEnergy(name, slab, target, excess,
+                          actionable_wh(excess, mode), True, "ok")
 
     def house_excess_wh(self, rooms: list[RoomEnergy]) -> float | None:
         """Signed house total, or None if nothing was estimable.
@@ -253,4 +296,17 @@ class EnergyDemand:
         seven would have it confidently do the wrong amount.
         """
         vals = [r.excess_wh for r in rooms if r.valid and r.excess_wh is not None]
+        return sum(vals) if vals else None
+
+    def house_actionable_wh(self, rooms: list[RoomEnergy]) -> float | None:
+        """What the plant could actually act on, summed over estimable rooms.
+
+        Kept separate from `house_excess_wh` rather than replacing it. The raw
+        sum is the physical state and lets a surplus in one room offset a need
+        in another - which the coupling makes partly real, since heat does move
+        between rooms. This one is the control-relevant figure: a surplus the
+        plant cannot deliver anywhere must not cancel a need it can.
+        """
+        vals = [r.actionable_wh for r in rooms
+                if r.valid and r.actionable_wh is not None]
         return sum(vals) if vals else None

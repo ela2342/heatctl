@@ -10,7 +10,8 @@ import math
 
 import pytest
 
-from heatctl.energy import EnergyDemand, slab_estimate_c, slab_target_c
+from heatctl.energy import (EnergyDemand, actionable_wh, slab_estimate_c,
+                            slab_target_c)
 
 
 CFG = {
@@ -277,3 +278,55 @@ class TestEmitterType:
         rooms = [e.room("wohnzimmer", 23.0, 33.0, 26.0, 18.0),
                  e.room("arbeitszimmer", 23.0, 33.0, 26.0, 18.0)]
         assert e.house_excess_wh(rooms) == pytest.approx(rooms[0].excess_wh)
+
+
+class TestModeAwareness:
+    """A signed excess is physics; whether it is a JOB depends on the mode.
+
+    The defect, 2026-08-06: an August night with slabs cold from the day's
+    cooling and 17.9 degC forecast outdoor summed to -31 kWh - "the house is
+    31 kWh short". True arithmetic, nonsensical instruction. The plant has no
+    business heating in August, and the forecast agreed: 0.00 K of pre-charge
+    wanted for the next day. Widening the outdoor window did not and could not
+    fix it - the arithmetic was never wrong.
+    """
+
+    def test_stored_coolth_is_not_a_job_in_cooling(self):
+        """The actual case. Mutation-verified: returning the raw excess fails."""
+        assert actionable_wh(-31000.0, "cooling") == 0.0
+
+    def test_stored_heat_is_a_job_in_cooling(self):
+        assert actionable_wh(4000.0, "cooling") == 4000.0
+
+    def test_a_deficit_is_a_job_in_heating(self):
+        assert actionable_wh(-31000.0, "heating") == -31000.0
+
+    def test_stored_heat_is_not_a_job_in_heating(self):
+        """In winter a warm slab is free comfort, not something to correct."""
+        assert actionable_wh(4000.0, "heating") == 0.0
+
+    def test_nothing_is_actionable_when_off(self):
+        for e in (-5000.0, 0.0, 5000.0):
+            assert actionable_wh(e, "off") == 0.0
+
+    def test_the_raw_excess_is_left_signed(self):
+        """Clamping the measurement would hide the surplus worth seeing.
+
+        A quantity that changes meaning with plant mode is one nobody can
+        reason about later, so the two are published side by side.
+        """
+        e = EnergyDemand(CFG)
+        r = e.room("wohnzimmer", 23.0, 12.0, rl_c=16.0, vl_c=15.0,
+                   mode="cooling")
+        assert r.excess_wh < 0            # physically a surplus of coolth
+        assert r.actionable_wh == 0.0     # and nothing to do about it
+
+    def test_the_house_totals_are_reported_separately(self):
+        """A surplus the plant cannot deliver must not cancel a need it can."""
+        e = EnergyDemand(CFG)
+        warm = e.room("wohnzimmer", 23.0, 33.0, rl_c=26.0, vl_c=18.0,
+                      mode="cooling")
+        cold = e.room("bad", 23.0, 12.0, rl_c=16.0, vl_c=15.0, mode="cooling")
+        rooms = [warm, cold]
+        assert e.house_excess_wh(rooms) < warm.excess_wh      # they offset
+        assert e.house_actionable_wh(rooms) == pytest.approx(warm.excess_wh)

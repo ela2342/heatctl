@@ -720,7 +720,8 @@ class Controller:
             if room_t is None:
                 room_t = house_mean
             e = self.energy.room(n, targets[n], outdoor, rl, vl,
-                                 rl_valid=rl is not None, room_c=room_t)
+                                 rl_valid=rl is not None, room_c=room_t,
+                                 mode=self.mode)
             rooms.append(e)
             base = f"energy/{n}"
             await self.plane.publish(f"{base}/valid", "1" if e.valid else "0")
@@ -733,8 +734,12 @@ class Controller:
             if e.excess_wh is not None:
                 await self.plane.publish(f"{base}/excess_wh",
                                          f"{e.excess_wh:.0f}")
+            if e.actionable_wh is not None:
+                await self.plane.publish(f"{base}/actionable_wh",
+                                         f"{e.actionable_wh:.0f}")
 
         total = self.energy.house_excess_wh(rooms)
+        act = self.energy.house_actionable_wh(rooms)
         n_valid = sum(1 for r in rooms if r.valid)
         # PARTIAL COVERAGE IS PUBLISHED, not hidden. The total sums only the
         # estimable rooms, so it understates by construction; without the count
@@ -742,6 +747,11 @@ class Controller:
         await self.plane.publish("energy/rooms_valid", str(n_valid))
         if total is not None:
             await self.plane.publish("energy/house_excess_wh", f"{total:.0f}")
+        if act is not None:
+            # THE CONTROL-RELEVANT ONE. `house_excess_wh` beside it is the raw
+            # physical state, kept visible because a surplus is exactly what is
+            # worth seeing on an August night.
+            await self.plane.publish("energy/house_actionable_wh", f"{act:.0f}")
 
     def _return_control(self, valve: str, sensor: str, state,
                         return_sp: float, dt: float, now: float) -> float:
