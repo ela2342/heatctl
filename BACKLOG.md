@@ -1537,10 +1537,96 @@ constraint binds.**
       Note condensation inside the slab is INVISIBLE - no wet patch will
       prompt anyone to intervene. That is a standing argument against relaxing
       any of this.
-- [ ] Room air sensors, target: Shelly H&T per room via MQTT (none bought
-      yet). This is still the long-term plan; the legacy wall-unit bridge above
-      is interim plumbing with a finite life. Rooms without either source
-      keep running on the return-temperature fallback.
+- [~] Room air sensors, Shelly H&T. **Three fitted and live 2026-08-06**
+      (Schlafzimmer, Kinderzimmer Naomi, Badezimmer), all mains-powered,
+      reporting every 6-12 min. House goes from 3 of 7 rooms with comfort
+      feedback to 6 of 7. Needed `control.room_temp_max_age_s` raised 300 ->
+      900 s first, or each room would have been called stale a third of the
+      time and had its integrator reset on every flip.
+      - [ ] **`kind_natalie` is the only blind room left** - one more unit.
+            Until then it runs on the house average, which cannot distinguish
+            it from its neighbours.
+      - [ ] Bridged via three HA automations onto `roomtemp/<room>` (option A).
+            **This raises the layer-1 independence debt from two rooms to
+            five** (`docs/HA_INTEGRATION.md` risk 2). Deliberate for today.
+- [ ] **Shellys publish to the broker directly** (option B), retiring the
+      three bridge automations. One-time RPC config; devices are at
+      `192.168.178.64/.67/.68`, Gen3, mains-powered, so MQTT runs alongside the
+      HTTP/WS the Shelly integration uses and HA keeps battery/firmware.
+      Blocked on: an MQTT user, since the Mosquitto App refuses anonymous
+      clients. Buys: HA out of the path for three rooms.
+- [ ] **Broker on the PFC200**, then **heatctl itself on the PFC200** (owner's
+      target, 2026-08-06: "the whole control on the PFC200, an MQTT there, and
+      the Shellys connecting directly to this MQTT"). Today the 750-352 is a
+      dumb Modbus TCP coupler and the control core runs on the HA host, so it
+      depends on a general-purpose machine it does not own. The PLC200 is
+      already on order (see the M-Bus line in the shopping list, which is
+      likewise blocked on it). Note the steps are not equal: option B removes
+      an automation someone can switch off by accident; this removes a whole
+      machine from the dependency chain.
+
+#### Opened 2026-08-06 by the energy-demand work
+
+- [ ] **Give the energy shadow authority.** `heatctl/energy.py` computes slab
+      target, estimate and per-room excess and publishes them; nothing reads
+      the result back. Unblocks on watching the numbers against the plant for
+      a few days. See `docs/DESIGN_ENERGY_DEMAND.md`.
+- [ ] **VL/RL cross-calibration.** The manifold pair reads ~0.5 K below the
+      heat pump's sensors and the slab estimate DIFFERENCES VL and RL, so a
+      bias lands straight in it. Method: compressor off, pump 100 %, all valves
+      open - with circulation and no heat input every water sensor reads the
+      same water, so the remaining spread IS the offset set. Needs no
+      reference instrument. Blocked on an idle plant: there was not one
+      sustained compressor-off window in 20 h of the current heat.
+- [ ] **Per-circuit flow at the LOW end of the opening range.** `open_threshold_pct`
+      and `full_open_pct` are unmeasured and default to identity. The
+      rotameters pin at 3 l/min, so the top of the curve is not measurable -
+      but the interesting part is where flow STARTS (Möhlenhoff `Umin` ~5 %),
+      which is exactly where they read well. Wiring verification needs only a
+      change, not an absolute.
+- [ ] **`NTU(opening)` per circuit, passively.** Converts RL into slab
+      temperature; without it the estimate is the low-flow approximation,
+      biased toward VL. §7.3 costs a dedicated sweep at ~20 h and says to
+      prefer passive identification - we now have weeks of VL, RL and
+      commanded opening logged.
+- [ ] **Per-room `UA_ao` by envelope exposure, not floor area.** Currently one
+      house-level permit prior split by area, so a corner room with two glazed
+      façades gets the same W/K per m² as an interior one. The survey says
+      outright that treating rooms as similar "will be wrong about
+      [Wohnzimmer] specifically" - it carries ~28 of the house's 51 m² of
+      glazing.
+- [ ] **Air-capacity model for the fan-coil room.** Arbeitszimmer has no slab,
+      so it is refused a slab excess and contributes nothing to the house
+      figure. It still delivers and removes energy.
+- [ ] **Door and window sensors** (planned, owner 2026-08-06). Every room
+      couples to its neighbours and the Arbeitszimmer boundary is a door that
+      is deliberately held open for heat exchange. An open door changes plant
+      TOPOLOGY, not a parameter, and nothing reads its state - so the model
+      cannot know which building it is in.
+
+#### Opened 2026-08-06 by operations
+
+- [ ] **Reconcile the heat-pump write budget.** WP-B's gate says "< 20
+      writes/day"; `config.yaml` warns at 30/hour (720/day); the capacity loop
+      actually wrote R32 **364 times** yesterday. Two numbers in this project
+      disagree by 36x, the observed rate sits between them, and nobody decided
+      that. If D-013's flash-wear premise holds and the register is EEPROM at a
+      typical 100k cycles, 364/day is under a year of endurance.
+- [ ] **Short-cycling, ~22 min.** Evenly spaced zero-crossings of compressor
+      frequency suggest the unit cycles roughly every 22 minutes with very
+      brief stops. `freq_min_hz` 30 exceeds the night load so it must cycle -
+      buffer volume, not control. Confirm it is not the frequency register
+      reading 0 transiently during modulation before acting.
+- [ ] **`transaction_id` mismatch errors, ~6/min** on the heat-pump link.
+      `modbus_direct.py` and `heatpump.py` build separate clients so it is not
+      our concurrency; most likely the RS485->TCP gateway. Unexplained.
+- [ ] **Valve command has no output deadband.** hk11 flipped +-1 % at ~1 Hz for
+      hours. Physically harmless against a 150 s actuator, but it spams every
+      write path and bloats the archive.
+- [ ] **A heatctl restart commands a compressor stop/start.** P04 goes to 30
+      ("dew point unknown") and back ~30 s later, which is the exact transition
+      that provoked Er03 before C01 was set. It makes every deploy a small
+      plant event.
 
 
 ### Raised in discussion, not yet scheduled
