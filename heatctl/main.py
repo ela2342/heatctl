@@ -613,7 +613,8 @@ class Controller:
         # Shadow: publishes only, changes nothing. Runs LAST so a fault in it
         # cannot delay a control decision - and after safety, so what it
         # reports is the state the plant actually ended the cycle in.
-        await self._publish_energy_shadow(state, targets, room_temps, now)
+        await self._publish_energy_shadow(state, targets, room_temps,
+                                          house_mean, now)
 
         # Make the heat pump's own mode follow the plant's, and shout if it
         # does not. Cheap to call every cycle: the client drops a write that
@@ -633,6 +634,7 @@ class Controller:
 
     async def _publish_energy_shadow(self, state, targets: dict[str, float],
                                      room_temps: dict[str, float],
+                                     house_mean: float | None,
                                      now: float) -> None:
         """Publish slab targets and energy deficits. Acts on nothing.
 
@@ -648,16 +650,26 @@ class Controller:
         """
         if self._cycle % self._energy_every:
             return
-        outdoor = None
-        reg = hpm.by_name("outdoor_ambient")
-        raw = self.hp.status.get(reg.addr)
-        if raw is not None:
-            # KNOWN BIASED. This is the heat pump's own ambient sensor, mounted
-            # on the unit, and it reads high in direct sun - 45.6 degC observed
-            # 2026-08-04 against a true air temperature near 30. Layer 2's
-            # forecast-averaged outdoor is the right input and can override
-            # this; layer 1 must still have an answer with the network dead.
-            outdoor = float(hpm.decode(reg, raw))
+        # OUTDOOR: weather station first, heat pump register only as fallback.
+        # The register is mounted on the unit and is notoriously unreliable -
+        # 45.6 degC on 2026-08-04 against a true air temperature near 30. It is
+        # kept because layer 1 must have an answer with the broker dead, but it
+        # is a DEGRADATION and the source is published so nobody has to guess
+        # which one produced a given target. `UA_ao * (T_set - AT)` multiplies
+        # this by the whole-house conductance, so it is the single largest term
+        # to get wrong.
+        outdoor = self.plane.outdoor_temp()
+        outdoor_src = "station"
+        if outdoor is None:
+            outdoor_src = "hp_register"
+            reg = hpm.by_name("outdoor_ambient")
+            raw = self.hp.status.get(reg.addr)
+            outdoor = None if raw is None else float(hpm.decode(reg, raw))
+        if outdoor is None:
+            outdoor_src = "none"
+        await self.plane.publish("energy/outdoor_source", outdoor_src)
+        if outdoor is not None:
+            await self.plane.publish("energy/outdoor_c", f"{outdoor:.1f}")
         vl = state.temps.get("vl_total")
 
         rooms: list = []
@@ -668,9 +680,23 @@ class Controller:
                    and self.rl_gate.action(v, now) is MEASURE
                    and (t := state.temps.get(circ["sensor"])) is not None]
             rl = sum(rls) / len(rls) if rls else None
+            # THE SAME ROOM TEMPERATURE THE CONTROL PATH USED - sensor if there
+            # is one, otherwise the house average. Passing only sensed rooms
+            # was a real defect, found 2026-08-06: a sensorless room got no
+            # recovery term, so its target was "what holds this room at
+            # setpoint" while Elternschlafzimmer actually sat at 26 degC
+            # against a 23 setpoint. It reported a -1586 Wh SURPLUS for a room
+            # that badly needed cooling.
+            #
+            # That is the same blindness as the return-water loop this is meant
+            # to replace, but wearing a plausible number, which is worse. The
+            # house average is a poor substitute for a real sensor and it is
+            # still the honest one: it at least knows the house is warm.
+            room_t = room_temps.get(n)
+            if room_t is None:
+                room_t = house_mean
             e = self.energy.room(n, targets[n], outdoor, rl, vl,
-                                 rl_valid=rl is not None,
-                                 room_c=room_temps.get(n))
+                                 rl_valid=rl is not None, room_c=room_t)
             rooms.append(e)
             base = f"energy/{n}"
             await self.plane.publish(f"{base}/valid", "1" if e.valid else "0")

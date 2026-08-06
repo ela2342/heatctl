@@ -56,6 +56,17 @@ class ControlPlane:
         self.dew_topic = m.get("dew_point_topic") or None
         self._dew: float | None = None
         self._dew_ts = 0.0
+        # OUTDOOR AIR TEMPERATURE, for the slab-target feedforward. The heat
+        # pump has its own ambient register and it is notoriously unreliable -
+        # mounted on the unit, it read 45.6 degC on 2026-08-04 against a true
+        # air temperature near 30. The outdoor weather stations are far better,
+        # so they are preferred and the register is only the fallback for when
+        # this broker is gone. `UA_ao * (T_set - AT)` multiplies this error by
+        # the whole house conductance, so it is the largest single term to get
+        # wrong.
+        self.outdoor_topic = m.get("outdoor_temp_topic") or None
+        self._outdoor: float | None = None
+        self._outdoor_ts = 0.0
         # Layer 2's pre-conditioning delta, in K, applied as
         # `active = dial + delta`. SIGNED and mode-independent on purpose:
         # negative asks for a cooler target (pre-cool before a hot afternoon),
@@ -78,6 +89,18 @@ class ControlPlane:
         if ts is None or time.monotonic() - ts > max_age_s:
             return None
         return self.room_temps.get(room)
+
+    def outdoor_temp(self, max_age_s: float = 900) -> float | None:
+        """Outdoor air from the weather station, or None if stale/absent.
+
+        None is a real answer and the caller must handle it: falling back to
+        the heat pump's own sensor is a DEGRADATION, not an equivalent, and
+        whoever does it should know they have done it.
+        """
+        if (self._outdoor is None
+                or time.monotonic() - self._outdoor_ts > max_age_s):
+            return None
+        return self._outdoor
 
     def dew_point(self, max_age_s: float = 900) -> float | None:
         """Latest dew point if fresh enough, else None.
@@ -114,6 +137,8 @@ class ControlPlane:
                         await client.subscribe(topic)
                     if self.dew_topic:
                         await client.subscribe(self.dew_topic)
+                    if self.outdoor_topic:
+                        await client.subscribe(self.outdoor_topic)
                     log.info("control plane connected: %s", self.host)
                     async for msg in client.messages:
                         self._dispatch(str(msg.topic), msg.payload.decode())
@@ -123,6 +148,13 @@ class ControlPlane:
                 await asyncio.sleep(10)
 
     def _dispatch(self, topic: str, payload: str) -> None:
+        if self.outdoor_topic and topic == self.outdoor_topic:
+            try:
+                self._outdoor = float(payload)
+                self._outdoor_ts = time.monotonic()
+            except ValueError:
+                log.debug("non-numeric outdoor temp on %s: %r", topic, payload)
+            return
         if self.dew_topic and topic == self.dew_topic:
             try:
                 self._dew = float(payload)

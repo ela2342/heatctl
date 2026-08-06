@@ -1047,3 +1047,58 @@ class TestEnergyShadow:
         n = sum(1 for s, _, _ in ctl.plane.published
                 if s == "energy/wohnzimmer/slab_target")
         assert n == 2, f"published {n} times in 20 cycles at every-10"
+
+    async def test_a_sensorless_room_gets_the_house_average_as_its_error(
+            self, controller):
+        """The defect this fixes, found on the live plant 2026-08-06.
+
+        Elternschlafzimmer has no air sensor, so it got no recovery term and
+        its target was "what holds this room at setpoint" - while the room
+        actually sat at 26 degC against a 23 setpoint. It published a -1586 Wh
+        SURPLUS for a room that badly needed cooling: the same blindness as the
+        return-water loop this replaces, but wearing a plausible number.
+
+        Mutation-verified: passing only `room_temps.get(n)` drops Wohnzimmer
+        back to the bare holding target and the two diverge.
+        """
+        _, ctl = self._both(controller)
+        ctl.io.touch(time.monotonic())
+        await ctl.step(1.0)
+        sensed = float(ctl.plane.topic("energy/gaestebad/slab_target"))
+        blind = float(ctl.plane.topic("energy/wohnzimmer/slab_target"))
+        # Gästebad is the ONLY sensed room, so the house average IS its
+        # reading. Wohnzimmer must therefore inherit exactly that error and
+        # land on the same target - the room-independent terms all cancel with
+        # floor-area share. Equality is the sharp assertion here: without the
+        # fallback Wohnzimmer gets the holding target instead and the two
+        # differ by several kelvin.
+        assert blind == pytest.approx(sensed, abs=0.01)
+
+    async def test_the_weather_station_is_preferred_over_the_heat_pump(
+            self, controller):
+        """The register is a fallback, not an equivalent.
+
+        It is mounted on the unit and read 45.6 degC on 2026-08-04 against a
+        true air temperature near 30. `UA_ao * (T_set - AT)` multiplies that
+        error by the whole-house conductance.
+        """
+        _, ctl = self._both(controller)
+        ctl.plane.outdoor = 12.0            # station says 12
+        ctl.hp.status[0x8011] = 90          # register says 45
+        ctl.io.touch(time.monotonic())
+        await ctl.step(1.0)
+        assert ctl.plane.topic("energy/outdoor_source") == "station"
+        assert float(ctl.plane.topic("energy/outdoor_c")) == pytest.approx(12.0)
+
+    async def test_it_falls_back_to_the_register_and_says_so(self, controller):
+        """With the broker gone the register is all layer 1 has.
+
+        Publishing WHICH source produced a target is the point - a degraded
+        number that cannot be distinguished from a good one is how the
+        heat-pump sensor got trusted in the first place.
+        """
+        _, ctl = self._both(controller)
+        ctl.plane.outdoor = None
+        ctl.io.touch(time.monotonic())
+        await ctl.step(1.0)
+        assert ctl.plane.topic("energy/outdoor_source") == "hp_register"

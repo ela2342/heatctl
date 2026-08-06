@@ -164,6 +164,16 @@ class FakePlane:
         self.dew = dew_point
         self.sp_delta = sp_delta
         self.published: list[tuple[str, str, bool]] = []
+        self.outdoor: float | None = None
+
+    def outdoor_temp(self, max_age_s: float = 900) -> float | None:
+        """Weather-station outdoor air, absent unless a test supplies it.
+
+        Defaulting to None keeps the heat-pump-register FALLBACK on the tested
+        path: that is the degraded branch the plant actually runs when the
+        broker is gone, so it must not be the one nothing exercises.
+        """
+        return self.outdoor
 
     def setpoint_delta(self, max_age_s: float) -> float:
         return self.sp_delta
