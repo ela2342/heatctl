@@ -29,6 +29,24 @@ Three regimes, and conflating them is the source of the existing trouble:
 | low, non-zero | **→ T_slab** (long residence, water equilibrates) | the useful regime |
 | high | **→ VL** (short residence, little exchange) | carries little slab information |
 
+**"RL ≈ cabinet air" is NOT a general stagnation test — it is emitter-
+dependent.** A flowing circuit returns at `VL + ΔT`, so the signature is only
+diagnostic when the emitter's expected ΔT is small compared to
+`cabinet_air − VL`. Worked example from 2026-08-06, where that gap was
+20.3 − 14.9 = 5.4 K:
+
+| emitter | expected ΔT | verdict |
+|---|---|---|
+| floor loop | 1–3 K → returns 16–18 °C, clearly below cabinet | **discriminates** |
+| fan coil (hk11) | ~5 K → returns ≈ 20 °C, same as cabinet | **cannot discriminate** |
+
+Concluding hk11 was stagnant from that reading was wrong; the owner observed
+flow directly. Any validity gate built on this signature must therefore know
+each circuit's emitter type and its expected ΔT, or it will declare working
+high-ΔT circuits invalid. That is an argument for the flow-based validity term
+above rather than a temperature heuristic — and it is a constraint `rl_gate`
+does not currently encode.
+
 So the estimator is an inversion, not a reading:
 
 ```
