@@ -86,6 +86,8 @@ class Estimator:
         # to reach from the charging opportunity to the demand - see the long
         # comment in `setpoint_delta` for why that distance is a judgement
         # about capacity rather than something the parameters decide.
+        self.outdoor_avg_hours = int(
+            cfg.get("optimizer", {}).get("outdoor_avg_hours", 5))
         lh = cfg.get("optimizer", {}).get("lead_horizon_h")
         self.lead_horizon_h = None if lh is None else float(lh)
 
@@ -487,6 +489,28 @@ class Estimator:
             return float(self.lead_horizon_h)
         return 2.0 * eigen_time_constants_h(self.bp)[1]
 
+    def outdoor_avg_c(self, hours: int | None = None) -> float | None:
+        """Mean forecast outdoor temperature over the lead window.
+
+        The window is the one 4 specifies for `RL_curve` - forecast-averaged,
+        default 0-5 h ahead - not an instantaneous reading. Feeding a spot
+        value to a target that governs a mass with a 5.62 h time constant asks
+        the slab to chase weather noise, and at night it asks it to chase the
+        one number that is least representative of the day ahead.
+
+        Returns None rather than a stale figure when there is no forecast, so
+        layer 1 can fall back to its own sensor and say which it used.
+        """
+        if not self.weather or not self.weather.points:
+            return None
+        n = hours if hours is not None else self.outdoor_avg_hours
+        now = dt.datetime.now(dt.timezone.utc).replace(
+            minute=0, second=0, microsecond=0)
+        ahead = [pt.temperature for pt in self.weather.points
+                 if dt.datetime.fromisoformat(pt.time).replace(
+                     tzinfo=dt.timezone.utc) >= now][:n]
+        return sum(ahead) / len(ahead) if ahead else None
+
     def setpoint_delta(self, target_air: float, ceiling_w: float,
                        hours: int = 24) -> float:
         """Signed pre-conditioning delta in K: `active = dial + delta`.
@@ -770,6 +794,21 @@ class Estimator:
                                  target, self.lead_h(),
                                  eigen_time_constants_h(self.bp)[1])
                         self._last_delta = delta
+                    # FORECAST-AVERAGED OUTDOOR for layer 1's slab target.
+                    # DESIGN_ENERGY_DEMAND.md 2 asks for this and layer 1 was
+                    # shipped using the instantaneous reading instead, which is
+                    # what produced a -20 kWh "deficit" on the night of
+                    # 2026-08-06: the slabs were cold from the day's cooling and
+                    # the target was computed against a 20 degC night as if that
+                    # were the whole story. A slab responds over hours, so the
+                    # question is not what it is outside now but what is coming.
+                    #
+                    # A PARAMETER, not a command - layer 1 decides what to do
+                    # with it and falls back to its own sensors when this goes
+                    # stale, exactly as it does for the pre-conditioning delta.
+                    avg = self.outdoor_avg_c()
+                    if avg is not None:
+                        await self._publish("outdoor_avg_c", f"{avg:.2f}")
                     await self._publish("setpoint_delta", f"{delta:.2f}")
                     if len(days) > 1:
                         n = days[1]

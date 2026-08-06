@@ -72,6 +72,8 @@ class ControlPlane:
         # UA_ao * dT / UA_sa = 240 * 14 / 490 = 6.9 K, so one frame could swing
         # the whole feedforward. A median of three rejects isolated spikes and
         # is explainable, which a filter with state and tuning is not.
+        self._outdoor_avg: float | None = None
+        self._outdoor_avg_ts = 0.0
         self._outdoor_buf: list[tuple[float, float]] = []
         self._outdoor_window = int(m.get("outdoor_median_samples", 3))
         # Layer 2's pre-conditioning delta, in K, applied as
@@ -114,6 +116,18 @@ class ControlPlane:
         # the worse failure.
         return sorted(fresh)[len(fresh) // 2]
 
+    def outdoor_avg(self, max_age_s: float = 3600) -> float | None:
+        """Layer 2's forecast-averaged outdoor, or None if stale/absent.
+
+        Longer default staleness than a live sensor on purpose: this is a
+        forecast average over hours, refreshed when the forecast is, so a value
+        an hour old is still a fair description of the window it covers.
+        """
+        if (self._outdoor_avg is None
+                or time.monotonic() - self._outdoor_avg_ts > max_age_s):
+            return None
+        return self._outdoor_avg
+
     def dew_point(self, max_age_s: float = 900) -> float | None:
         """Latest dew point if fresh enough, else None.
 
@@ -145,6 +159,11 @@ class ControlPlane:
                     # consult it, with the same staleness contract as the dew
                     # point above.
                     await client.subscribe(f"{self.base}/opt/setpoint_delta")
+                    # Layer 2's forecast-averaged outdoor. A PARAMETER, not a
+                    # command: it describes the weather, layer 1 decides what
+                    # to do about it and falls back to its own sensor when this
+                    # goes stale.
+                    await client.subscribe(f"{self.base}/opt/outdoor_avg_c")
                     for topic in self.room_topics:
                         await client.subscribe(topic)
                     if self.dew_topic:
@@ -186,6 +205,13 @@ class ControlPlane:
                 self.room_temp_ts[room] = time.monotonic()
             except ValueError:
                 log.warning("bad room temp on %s: %r", topic, payload)
+            return
+        if topic == f"{self.base}/opt/outdoor_avg_c":
+            try:
+                self._outdoor_avg = float(payload)
+                self._outdoor_avg_ts = time.monotonic()
+            except ValueError:
+                pass
             return
         if topic == f"{self.base}/opt/setpoint_delta":
             try:

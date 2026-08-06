@@ -672,8 +672,18 @@ class Controller:
         # which one produced a given target. `UA_ao * (T_set - AT)` multiplies
         # this by the whole-house conductance, so it is the single largest term
         # to get wrong.
-        outdoor = self.plane.outdoor_temp()
-        outdoor_src = "station"
+        # FORECAST FIRST. The slab governs a mass with a 5.62 h time constant,
+        # so the question is not what it is outside now but what is coming -
+        # DESIGN_ENERGY_DEMAND.md 2 asked for a forecast average and the first
+        # version used the spot reading anyway. That produced a -20 kWh
+        # "deficit" on the night of 2026-08-06: slabs cold from the day's
+        # cooling, target computed against a 20 degC night, and the stored
+        # coolth read as something to make up with heat.
+        outdoor = self.plane.outdoor_avg()
+        outdoor_src = "forecast"
+        if outdoor is None:
+            outdoor = self.plane.outdoor_temp()
+            outdoor_src = "station"
         if outdoor is None:
             outdoor_src = "hp_register"
             reg = hpm.by_name("outdoor_ambient")

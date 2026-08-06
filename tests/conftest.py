@@ -165,6 +165,7 @@ class FakePlane:
         self.sp_delta = sp_delta
         self.published: list[tuple[str, str, bool]] = []
         self.outdoor: float | None = None
+        self.outdoor_forecast: float | None = None
         # How long ago the room readings arrived. Tests set this to exercise
         # the staleness window; 0 means "just now".
         self.room_temp_age = 0.0
@@ -177,6 +178,11 @@ class FakePlane:
         broker is gone, so it must not be the one nothing exercises.
         """
         return self.outdoor
+
+    def outdoor_avg(self, max_age_s: float = 3600) -> float | None:
+        """Layer 2's forecast average; absent unless a test supplies it, so the
+        station and register fallbacks stay on the tested path."""
+        return self.outdoor_forecast
 
     def setpoint_delta(self, max_age_s: float) -> float:
         return self.sp_delta

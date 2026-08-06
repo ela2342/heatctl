@@ -1103,6 +1103,42 @@ class TestEnergyShadow:
         await ctl.step(1.0)
         assert ctl.plane.topic("energy/outdoor_source") == "hp_register"
 
+    async def test_the_forecast_average_outranks_the_spot_reading(
+            self, controller):
+        """The slab governs a 5.62 h mass, so what is coming beats what is now.
+
+        The night of 2026-08-06 is the case: slabs cold from the day's cooling,
+        outdoor down to ~20, and a target computed against that spot value read
+        the stored coolth as a -20 kWh deficit to make up with heat.
+
+        Mutation-verified: preferring `outdoor_temp()` puts the source back to
+        "station" and the target moves.
+        """
+        _, ctl = self._both(controller)
+        ctl.plane.outdoor = 20.0            # cool right now
+        ctl.plane.outdoor_forecast = 30.0   # hot day coming
+        ctl.io.touch(time.monotonic())
+        await ctl.step(1.0)
+        assert ctl.plane.topic("energy/outdoor_source") == "forecast"
+        assert float(ctl.plane.topic("energy/outdoor_c")) == pytest.approx(30.0)
+
+    async def test_it_degrades_forecast_then_station_then_register(
+            self, controller):
+        """Three sources, and the order is not arbitrary.
+
+        Layer 2 may die, the broker may die, and layer 1 must still answer -
+        but it must never let the caller mistake which one answered.
+        """
+        _, ctl = self._both(controller)
+        ctl.plane.outdoor_forecast = None
+        ctl.plane.outdoor = 21.0
+        ctl.io.touch(time.monotonic())
+        await ctl.step(1.0)
+        assert ctl.plane.topic("energy/outdoor_source") == "station"
+        ctl.plane.outdoor = None
+        await ctl.step(1.0)
+        assert ctl.plane.topic("energy/outdoor_source") == "hp_register"
+
 
 class TestRoomTempStaleness:
     """The window has to match how often the sensors actually report.
@@ -1137,3 +1173,4 @@ class TestRoomTempStaleness:
         ctl.io.touch(time.monotonic())
         await ctl.step(1.0)
         assert ctl._room_src["gaestebad"] == "return"
+
