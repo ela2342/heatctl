@@ -402,12 +402,21 @@ async def test_flow_floor_is_logged_once_not_once_per_cycle(controller, caplog):
         room_temps={"gaestebad": 25.0},      # well above the 21 degC target
     )
     ctl.io.touch(time.monotonic())
-    # Gästebad is the only room with a sensor, so it is the only circuit the
-    # ROOM pid drives - and the room path is ungated, so it can actually reach
-    # 0 %. Wohnzimmer's two circuits have no room sensor, so rl_gate distrusts
-    # their returns and holds them OPEN at the failsafe position. That pins the
-    # mean at ~67 %, which is why the floor has to be lifted above it to make
-    # this condition reachable at all.
+    # REBUILT 2026-08-06 when the house-average proxy landed. The old setup
+    # relied on Wohnzimmer having NO measurement at all, so rl_gate distrusted
+    # its returns and held both circuits open at the failsafe position, pinning
+    # the mean near 67 %. Wohnzimmer now inherits the house average instead, so
+    # both rooms see the same temperature, both reach 0 % demand, and an
+    # all-zero set correctly normalises to all-valves-open - a 100 % mean that
+    # no floor can ever bind against, which made this test vacuous rather than
+    # wrong.
+    #
+    # The spread now comes from the rooms wanting DIFFERENT things, which is
+    # the situation the floor exists for anyway: Gästebad is satisfied at
+    # 25 degC against a 21 degC target, while Wohnzimmer is asked for 30 and so
+    # demands everything. Normalisation puts Wohnzimmer's two circuits at 100 %
+    # and Gästebad near the open threshold, and the mean lands under 90 %.
+    ctl.room_setpoints["wohnzimmer"] = 30.0
     ctl.demand.min_open_pct = 90.0
 
     with caplog.at_level("INFO", logger="heatctl"):
@@ -841,3 +850,111 @@ async def test_resume_does_not_lower_the_setpoint_when_it_already_starts(
 
     await ctl.step(1.0)
     assert hp.calls[0][0] == 20.0, "clamp bit when the compressor would start anyway"
+
+
+class TestHouseAverageFallback:
+    """Rooms with no air sensor follow the house, not the return water.
+
+    The defect, measured on the live plant 2026-08-06: four of seven rooms
+    have no `room_temp_topic`, so they ran `_return_control`, which regulates
+    RETURN WATER. Their returns sat at the 16.7 degC setpoint, the loop
+    declared itself satisfied, and the circuits held ~24 % while Wohnzimmer
+    was 2.6 K above target and the plant was pinned at its condensation
+    ceiling with nothing left to give.
+
+    Throttling them was not merely useless, it was harmful: less flow means
+    more spread, spread pushes manifold supply toward the condensation limit,
+    and the capacity loop answers by cutting compressor frequency. A satisfied
+    room throttling itself takes energy from the room that needs it.
+    """
+
+    async def test_a_sensorless_room_follows_the_house_not_its_return(
+            self, controller):
+        """The whole point: a warm house must open a sensorless room's valve.
+
+        Mutation-verified: removing the `house_mean` branch drops Wohnzimmer
+        back onto the return loop, whose returns here are at target, and the
+        commanded opening collapses.
+        """
+        ctl = controller(
+            temps={"rl_hk01": 22.0, "rl_hk02": 22.0, "rl_hk03": 22.0,
+                   "vl_total": 30.0},
+            room_temps={"gaestebad": 15.0},     # 6 K BELOW the 21 degC target
+        )
+        for _ in range(30):
+            ctl.io.touch(time.monotonic())
+            await ctl.step(1.0)
+        # Wohnzimmer has no sensor of its own, so it inherits 15.0 degC and
+        # asks for heat exactly as Gästebad does.
+        assert ctl._room_src["wohnzimmer"] == "house_avg"
+        w = ctl.io.last_write
+        assert w["valve_hk02"] > 90.0
+        assert w["valve_hk03"] > 90.0
+
+    async def test_the_proxy_is_never_published_as_a_measurement(
+            self, controller):
+        """A room with no sensor must not gain a temperature in the archive.
+
+        This is the Controme failure repeated: after the floor gateway died
+        the server kept serving a frozen last-known room temperature and HA
+        recorded the constant as real data. Publishing the house average on a
+        room's measurement topic would manufacture history the same way, and
+        every later analysis would trust it.
+        """
+        ctl = controller(
+            temps={"rl_hk01": 22.0, "rl_hk02": 22.0, "rl_hk03": 22.0,
+                   "vl_total": 30.0},
+            room_temps={"gaestebad": 18.0},
+        )
+        ctl.io.touch(time.monotonic())
+        await ctl.step(1.0)
+        assert ctl.plane.topic("room/gaestebad/temp") is not None
+        assert ctl.plane.topic("room/wohnzimmer/temp") is None
+        assert ctl.plane.topic("room/wohnzimmer/source") == "house_avg"
+
+    async def test_no_sensors_at_all_falls_back_to_the_return_loop(
+            self, controller):
+        """With the broker dead there are no room temperatures anywhere.
+
+        Layer 1 must keep running on its own sensors alone - that is the whole
+        independence promise. The proxy must therefore degrade to the return
+        loop rather than to nothing.
+        """
+        ctl = controller(
+            temps={"rl_hk01": 22.0, "rl_hk02": 22.0, "rl_hk03": 22.0,
+                   "vl_total": 30.0},
+            room_temps={},                          # no MQTT room data at all
+        )
+        ctl.io.touch(time.monotonic())
+        await ctl.step(1.0)
+        assert ctl._room_src["gaestebad"] == "return"
+        assert ctl._room_src["wohnzimmer"] == "return"
+
+    async def test_one_rooms_setpoint_does_not_leak_into_another(
+            self, controller):
+        """A mean of TEMPERATURES, not of deviations - and it matters.
+
+        Arbeitszimmer was set to 20.0 degC by hand on the live plant to force
+        its valve open. Transferring the mean DEVIATION would have carried
+        that -2.9 K into every sensorless room and demanded cooling nobody
+        asked for. Comparing the house's actual temperature against each
+        room's OWN setpoint keeps one room's setpoint local to it.
+
+        Mutation-verified: switching the proxy to a deviation transfer makes
+        Wohnzimmer demand heat here, and this fails.
+        """
+        ctl = controller(
+            temps={"rl_hk01": 22.0, "rl_hk02": 22.0, "rl_hk03": 22.0,
+                   "vl_total": 30.0},
+            room_temps={"gaestebad": 22.0},
+        )
+        # Gästebad is driven far below the house temperature, as if someone
+        # had dialled it down to force its own circuit open.
+        ctl.room_setpoints["gaestebad"] = 28.0
+        for _ in range(30):
+            ctl.io.touch(time.monotonic())
+            await ctl.step(1.0)
+        # Wohnzimmer's own target is 21 and the house is at 22, so it is
+        # satisfied and must stay near the bottom of its range - regardless of
+        # how hard Gästebad is asking.
+        assert ctl.io.last_write["valve_hk02"] < 50.0

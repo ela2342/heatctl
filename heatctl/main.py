@@ -54,6 +54,10 @@ class Controller:
 
         self.room_setpoints: dict[str, float] = {}
         self.room_pids: dict[str, PID] = {}
+        # Which measurement drove each room this cycle: "sensor", "house_avg"
+        # or "return". Held so a source change can reset that room's PID, and
+        # published so an operator can see which loop is actually in charge.
+        self._room_src: dict[str, str] = {}
         self.circuit_pids: dict[str, PID] = {}
         pr, pc = c["pid_room"], c["pid_return"]
         for room in self.rooms:
@@ -452,13 +456,66 @@ class Controller:
                                    f"(house {self._last_demand.mean_deviation_c})")
             self._apply_mode(self._last_demand.mode)
 
+        # HOUSE-AVERAGE PROXY for rooms with no air sensor. Mean of the rooms
+        # that DO have a fresh reading; None when there are none at all.
+        #
+        # WHY. Four of seven rooms have no `room_temp_topic` and fall through
+        # to `_return_control`, which regulates RETURN WATER, not comfort. That
+        # loop is satisfied when the water is at target, which says nothing
+        # about the room. Measured 2026-08-06: hk03/04/06/07 sat at 24 % with
+        # their returns at the 16.7 setpoint while Wohnzimmer was 2.6 K above
+        # target and the house needed every watt of cooling available.
+        #
+        # The throttling was actively harmful, not merely useless: less flow
+        # means more spread, which pushes manifold supply toward the
+        # condensation limit, which makes the capacity loop cut compressor
+        # frequency. Throttling a satisfied room therefore takes energy away
+        # from the room that needs it.
+        #
+        # A MEAN OF TEMPERATURES, not of deviations. Transferring the mean
+        # DEVIATION would import other rooms' setpoint choices - Arbeitszimmer
+        # was set to 20.0 by hand to force its valve open, and a deviation
+        # transfer would have propagated that -2.9 K to every sensorless room.
+        # Comparing the house's actual temperature against each room's OWN
+        # setpoint keeps one room's setpoint local to that room.
+        #
+        # KNOWN WRONG, SHIPPED DELIBERATELY. This gives every sensorless room
+        # the same measurement, so they cannot be told apart and a genuinely
+        # cold one will still be cooled. The correct fix is the absolute
+        # per-room energy deficit in docs/DESIGN_ENERGY_DEMAND.md; this is the
+        # tactical version that gets the valves open while that is designed.
+        house_mean = (sum(room_temps.values()) / len(room_temps)
+                      if room_temps else None)
+
         for room in self.rooms:
             n = room["name"]
             room_t = self.plane.room_temp(n)
+            src = "sensor"
+            if room_t is None and house_mean is not None:
+                room_t, src = house_mean, "house_avg"
             room_out: float | None = None
             if room_t is not None:
+                # Reset on a source change. An integrator built against one
+                # measurement means nothing against another, and carrying it
+                # across shows as a step in valve position the moment a sensor
+                # drops out or returns.
+                if self._room_src.get(n) != src:
+                    self.room_pids[n].reset()
+                    self._room_src[n] = src
                 room_out = self.room_pids[n].step(targets[n], room_t, dt)
-                await self.plane.publish(f"room/{n}/temp", f"{room_t:.1f}")
+                # PUBLISH THE PROXY NOWHERE. `room/<n>/temp` is a measurement
+                # topic feeding the archive; writing a synthetic value onto it
+                # would fabricate history for a room that has no sensor - the
+                # same failure as the Controme server serving a frozen
+                # last-known temperature that HA then recorded as real.
+                if src == "sensor":
+                    await self.plane.publish(f"room/{n}/temp", f"{room_t:.1f}")
+            else:
+                # No sensor anywhere in the house: fall back to the return
+                # loop. This is what keeps layer 1 independent of the broker -
+                # with MQTT dead there are no room temperatures at all.
+                self._room_src[n] = "return"
+            await self.plane.publish(f"room/{n}/source", self._room_src[n])
 
             for circ in room["circuits"]:
                 valve = circ.get("valve")
