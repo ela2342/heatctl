@@ -30,6 +30,7 @@ from .backends.base import make_backend
 from .capacity import CapacityController
 from .demand import DemandController
 from .distribution import Distributor
+from .energy import EnergyDemand
 from . import heatpump_map as hpm
 from .heatpump import HeatPump
 from .mqtt_plane import ControlPlane
@@ -131,6 +132,17 @@ class Controller:
         # drive the water colder without limit.
         self._peak_demand: float | None = None
         self._flow_floor_pct: float | None = None
+
+        # SHADOW ONLY. Computes the slab targets and per-room energy deficits
+        # of docs/DESIGN_ENERGY_DEMAND.md and publishes them; NOTHING reads the
+        # result back into control. That is the point: a feedforward scheme is
+        # confidently wrong when its parameters are wrong, and four of seven
+        # rooms have no air sensor to notice, so the numbers get watched
+        # against the real plant before they get authority. `ua_ao` alone
+        # spans 216-267 depending on which of three routes you believe.
+        self.energy = EnergyDemand(cfg)
+        self._energy_every = int((cfg["control"].get("energy") or {}).get(
+            "publish_every_n_cycles", 60))
 
         self.demand = DemandController(
             cfg, can_command_source_mode=self.hp.enabled and self.hp.allow_writes)
@@ -598,6 +610,10 @@ class Controller:
         await self._clear_stale_cooling_off()
         await self._trim_water_setpoint(state, now)
         await self._trim_capacity(state, now)
+        # Shadow: publishes only, changes nothing. Runs LAST so a fault in it
+        # cannot delay a control decision - and after safety, so what it
+        # reports is the state the plant actually ended the cycle in.
+        await self._publish_energy_shadow(state, targets, room_temps, now)
 
         # Make the heat pump's own mode follow the plant's, and shout if it
         # does not. Cheap to call every cycle: the client drops a write that
@@ -614,6 +630,68 @@ class Controller:
         await self.telemetry(state)
         self._log_db(state)
         self._cycle += 1
+
+    async def _publish_energy_shadow(self, state, targets: dict[str, float],
+                                     room_temps: dict[str, float],
+                                     now: float) -> None:
+        """Publish slab targets and energy deficits. Acts on nothing.
+
+        Deliberately slow: the quantities move on the building's time constants
+        (5.62 h fast, 58 h slow), so publishing them every second would spam the
+        archive with jitter and tell nobody anything. Once a minute is already
+        far faster than the physics.
+
+        ROOM-LEVEL RL, not per circuit. `C_slab` is a per-room capacity, so the
+        slab estimate has to be per room too - the mean over that room's circuits
+        whose returns the gate currently trusts. A room with no trusted circuit
+        gets no estimate rather than an average of fiction.
+        """
+        if self._cycle % self._energy_every:
+            return
+        outdoor = None
+        reg = hpm.by_name("outdoor_ambient")
+        raw = self.hp.status.get(reg.addr)
+        if raw is not None:
+            # KNOWN BIASED. This is the heat pump's own ambient sensor, mounted
+            # on the unit, and it reads high in direct sun - 45.6 degC observed
+            # 2026-08-04 against a true air temperature near 30. Layer 2's
+            # forecast-averaged outdoor is the right input and can override
+            # this; layer 1 must still have an answer with the network dead.
+            outdoor = float(hpm.decode(reg, raw))
+        vl = state.temps.get("vl_total")
+
+        rooms: list = []
+        for room in self.rooms:
+            n = room["name"]
+            rls = [t for circ in room["circuits"]
+                   if (v := circ.get("valve"))
+                   and self.rl_gate.action(v, now) is MEASURE
+                   and (t := state.temps.get(circ["sensor"])) is not None]
+            rl = sum(rls) / len(rls) if rls else None
+            e = self.energy.room(n, targets[n], outdoor, rl, vl,
+                                 rl_valid=rl is not None,
+                                 room_c=room_temps.get(n))
+            rooms.append(e)
+            base = f"energy/{n}"
+            await self.plane.publish(f"{base}/valid", "1" if e.valid else "0")
+            await self.plane.publish(f"{base}/reason", e.reason)
+            if e.target_c is not None:
+                await self.plane.publish(f"{base}/slab_target",
+                                         f"{e.target_c:.2f}")
+            if e.slab_c is not None:
+                await self.plane.publish(f"{base}/slab", f"{e.slab_c:.2f}")
+            if e.excess_wh is not None:
+                await self.plane.publish(f"{base}/excess_wh",
+                                         f"{e.excess_wh:.0f}")
+
+        total = self.energy.house_excess_wh(rooms)
+        n_valid = sum(1 for r in rooms if r.valid)
+        # PARTIAL COVERAGE IS PUBLISHED, not hidden. The total sums only the
+        # estimable rooms, so it understates by construction; without the count
+        # beside it nobody can tell a small deficit from a small sample.
+        await self.plane.publish("energy/rooms_valid", str(n_valid))
+        if total is not None:
+            await self.plane.publish("energy/house_excess_wh", f"{total:.0f}")
 
     def _return_control(self, valve: str, sensor: str, state,
                         return_sp: float, dt: float, now: float) -> float:

@@ -958,3 +958,92 @@ class TestHouseAverageFallback:
         # satisfied and must stay near the bottom of its range - regardless of
         # how hard Gästebad is asking.
         assert ctl.io.last_write["valve_hk02"] < 50.0
+
+
+class TestEnergyShadow:
+    """The slab-energy computation publishes and must change nothing.
+
+    Shadow mode is the whole reason this landed before it had authority: a
+    feedforward scheme is confidently wrong when its parameters are wrong, and
+    `ua_ao` alone spans 216-267 W/K depending which of three routes you
+    believe. If a shadow path can move a valve it is not a shadow path.
+    """
+
+    AREAS = [
+        {"name": "gaestebad", "room_temp_topic": "roomtemp/gaestebad",
+         "floor_area_m2": 20.0,
+         "circuits": [{"sensor": "rl_hk01", "valve": "valve_hk01"}]},
+        {"name": "wohnzimmer", "floor_area_m2": 40.0,
+         "circuits": [{"sensor": "rl_hk02", "valve": "valve_hk02"},
+                      {"sensor": "rl_hk03", "valve": "valve_hk03"}]},
+    ]
+
+    def _both(self, controller):
+        """Identical plants, one with floor areas and one without.
+
+        Both get an outdoor reading and a 1-cycle cadence so the shadow path
+        actually COMPUTES. Without that every room is refused for "no outdoor
+        temp", nothing downstream runs, and a test that a shadow moves no valve
+        passes because the shadow did nothing at all - which is how the first
+        version of this fooled its own mutation check.
+        """
+        kw = dict(temps={"rl_hk01": 24.0, "rl_hk02": 24.0, "rl_hk03": 24.0,
+                         "vl_total": 30.0, "rl_total": 24.0},
+                  room_temps={"gaestebad": 18.0})
+        plain, shadow = controller(**kw), controller(rooms=self.AREAS, **kw)
+        now = time.monotonic()
+        for c in (plain, shadow):
+            c._energy_every = 1
+            c.hp.status[0x8011] = 50        # outdoor_ambient, scale 0.5 -> 25 C
+            # And the RL gate must already trust these circuits, or every room
+            # is refused for "rl not valid" and the shadow again computes
+            # nothing. Three separate reasons for this test to be vacuous were
+            # found by mutating it; none of them were visible from a green run.
+            for v in ("valve_hk01", "valve_hk02", "valve_hk03"):
+                c.rl_gate.record_command(v, 100.0, now - 3600)
+        return plain, shadow
+
+    async def test_the_shadow_path_moves_no_valve(self, controller):
+        """Mutation-verified: making _publish_energy_shadow return a demand
+        and feeding it into `demands` breaks this."""
+        plain, shadow = self._both(controller)
+        for ctl in (plain, shadow):
+            for _ in range(5):
+                ctl.io.touch(time.monotonic())
+                await ctl.step(1.0)
+        assert shadow.io.last_write == plain.io.last_write
+
+    async def test_it_publishes_a_target_and_a_house_total(self, controller):
+        _, ctl = self._both(controller)
+        ctl.io.touch(time.monotonic())
+        await ctl.step(1.0)
+        assert ctl.plane.topic("energy/wohnzimmer/slab_target") is not None
+        assert ctl.plane.topic("energy/rooms_valid") is not None
+
+    async def test_a_room_with_no_floor_area_is_reported_not_guessed(
+            self, controller):
+        """The synthetic rooms have no area unless the test adds it.
+
+        Silence would be indistinguishable from "nothing wrong"; the reason
+        has to reach the operator or the shadow teaches nobody anything.
+        """
+        ctl, _ = self._both(controller)
+        ctl.io.touch(time.monotonic())
+        await ctl.step(1.0)
+        assert ctl.plane.topic("energy/gaestebad/valid") == "0"
+        assert ctl.plane.topic("energy/gaestebad/reason") == "no floor area"
+
+    async def test_publishing_is_throttled_not_every_cycle(self, controller):
+        """These quantities move on a 5.62 h constant; 1 Hz is noise.
+
+        Publishing every cycle would also bloat the archive with jitter, which
+        is how the last observability problem started.
+        """
+        _, ctl = self._both(controller)
+        ctl._energy_every = 10
+        for _ in range(20):
+            ctl.io.touch(time.monotonic())
+            await ctl.step(1.0)
+        n = sum(1 for s, _, _ in ctl.plane.published
+                if s == "energy/wohnzimmer/slab_target")
+        assert n == 2, f"published {n} times in 20 cycles at every-10"

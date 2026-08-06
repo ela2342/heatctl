@@ -205,7 +205,14 @@ def controller(cfg):
               **overrides):
         c = copy.deepcopy(cfg)
         for section, values in overrides.items():
-            c[section].update(values)
+            # Dict sections MERGE so a test can change one key without
+            # restating the block. List sections (`rooms`, `valves`) REPLACE -
+            # merging a list has no sensible meaning, and the alternative was
+            # an AttributeError deep in the fixture.
+            if isinstance(c.get(section), dict) and isinstance(values, dict):
+                c[section].update(values)
+            else:
+                c[section] = values
         ctl = Controller(c)
         ctl.io = FakeBackend(temps, faults)
         ctl.plane = FakePlane(room_temps, dew_point)
