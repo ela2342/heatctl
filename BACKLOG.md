@@ -4889,3 +4889,66 @@ write itself could not be found in it. Verification came from MQTT and
 InfluxDB. The transaction-id errors themselves — ~6/min on the heat-pump link,
 two separate pymodbus clients so not our concurrency, most likely the RS485→TCP
 gateway — remain unexplained and are their own open item.
+
+### 2026-08-06 — Looked closer at the cycling and the dew-point dips
+
+Owner: *"I see the compressor cycling instead of reducing frequency. It also
+seems like we were below dew point repeatedly during the night."* Both real.
+Nothing changed on the plant; this is the investigation.
+
+**My first framing overstated it.** Comparing hourly VL *minima* against the
+hourly *mean* limit made brief dips look like whole bad hours. Measured against
+the limit in force at each sample, over 20 h:
+
+| | excursions | total |
+|---|---|---|
+| below the ACTUAL dew point | 12 | **3 min**, longest 1.5 min |
+| inside the 1 K margin only | 210 | 370 min (31 % of the time) |
+
+So condensation exposure is small — and consistent with the owner's own earlier
+ruling that a minute or three below dew point is not harmful if rare. What is
+not small is living inside the margin a third of the time; the margin is meant
+to be headroom, not the operating point.
+
+**R32 IS binding — I was wrong to say otherwise.** That claim came from the same
+aggregation error (hourly mean ceiling vs hourly max frequency, while the
+capacity loop moves the ceiling within the hour). At matched timestamps: 116 of
+659 samples above the ceiling then in force, median excess 8 Hz, worst +17 Hz —
+and the excursions cluster in restart windows.
+
+**Mechanism.** `freq_min_hz` = 30 exceeds the night load, so the unit has no
+lower gear and MUST cycle. On restart the return-vs-P04 error is maximal by
+construction (P01 dead zone 2 K), it ramps to ~50 Hz, supply plunges, the
+capacity loop slams the ceiling to 30–32, the compressor descends, supply
+recovers. The loop works; it is simply reacting after the plunge rather than
+preventing it. The valve guard never engages because `undertemp_dwell_s` is
+180 s and the longest excursion is 90 s — as designed.
+
+**Silent mode is not the problem.** `silent_mode` on, `heat_pump_mode` cooling,
+modes agree — all unchanged since 08-02 16:31, so the 08-04 power cycle did not
+reset them.
+
+**F10 is NOT the reactivation dead zone.** `0x010B` F10 is the DC pump's
+inlet/outlet ΔT *target* (2–30, default 5, set to 2). The reactivation dead
+zone is P01 `restart_diff_c` at `0x008D`. **Both currently read 2.0**, which is
+exactly how they get conflated.
+
+F10 is also **inert right now**: F4 `pump_mode` = 2 (manual) at 100 %, so the
+pump does not regulate to F10 at all. That retires the open puzzle in
+`heatpump_map.py` — the pump observed at 70 % with 2.9 K spread against an F10
+target of 2 K, "something else is in charge and we could not see what". It was
+in auto then; since 07-31 18:56 it has been manual. The doc claim that "F10=2
+holds the pump at full flow" remains unverified and is now unverifiable while
+manual mode holds full flow by itself.
+
+**Caveat that could change all of it:** `sensor_provenance` records the manifold
+pair reading ~0.5 K below the heat pump's own sensors at idle. Most of the
+"inside margin" time is between −0.3 and −0.7 K. **A 0.5 K calibration offset on
+`supply_total` would erase most of these excursions.** Cross-calibrating the
+VL/RL pair at settled no-flow is already on this list; it is now a prerequisite
+for acting on any of the above, not a nice-to-have.
+
+**Candidate fix, NOT implemented:** lower R32 to minimum at RESUME and let the
+capacity loop earn it back, so restarts are gentle instead of reactive. Cannot
+stop the cycling — that is a capacity mismatch and needs buffer volume, not
+control.
