@@ -1567,6 +1567,16 @@ constraint binds.**
 
 #### Opened 2026-08-06 by the energy-demand work
 
+- [ ] **The slab target is mode-agnostic and its CONSUMER must not be.**
+      Caught by the shadow the night of 2026-08-06: with outdoor down to ~20
+      and the slabs at ~17 from the day's cooling, `house_excess_wh` read
+      **-20 kWh**. That is correct arithmetic - the slabs are far below what
+      would hold 23 degC against a cool night with no gains - and a nonsensical
+      instruction, because in cooling a slab colder than the holding target is
+      STORED COOLTH, not a deficit to make up with heat. The plant has no
+      business heating in August. Either the consumer reads the sign through
+      the plant mode, or the excess is clamped on the cooling side. Exactly the
+      class of error shadow mode exists to catch before it moves a valve.
 - [ ] **Give the energy shadow authority.** `heatctl/energy.py` computes slab
       target, estimate and per-room excess and publishes them; nothing reads
       the result back. Unblocks on watching the numbers against the plant for
