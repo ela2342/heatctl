@@ -86,8 +86,22 @@ class Estimator:
         # to reach from the charging opportunity to the demand - see the long
         # comment in `setpoint_delta` for why that distance is a judgement
         # about capacity rather than something the parameters decide.
+        # ONE FULL DIURNAL CYCLE, not the 0-5 h that 4 specifies for
+        # `RL_curve`. That window was written for heating, where the near-term
+        # outdoor IS what the floor compensates. In summer it makes the slab
+        # target a function of TIME OF DAY: measured 2026-08-06 at 23:00, the
+        # 5 h mean was 16.6 degC - the coldest part of the night - and the
+        # target came back at ~25 degC, i.e. "this house needs heating", for a
+        # house at 24-25 degC discharging the day's heat.
+        #
+        # A window shorter than the forcing period cannot describe a mass whose
+        # slow mode is 58 h. 24 h is the shortest one that removes the
+        # diurnal artefact, and it is the same horizon the pre-charge already
+        # uses (`lead_horizon_h`). Not tuned until the number looked nice: a
+        # daily mean is the coarsest thing that is still honest about a
+        # building this slow.
         self.outdoor_avg_hours = int(
-            cfg.get("optimizer", {}).get("outdoor_avg_hours", 5))
+            cfg.get("optimizer", {}).get("outdoor_avg_hours", 24))
         lh = cfg.get("optimizer", {}).get("lead_horizon_h")
         self.lead_horizon_h = None if lh is None else float(lh)
 
