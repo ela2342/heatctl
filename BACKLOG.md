@@ -1567,6 +1567,28 @@ constraint binds.**
 
 #### Opened 2026-08-06 by the energy-demand work
 
+- [~] ~~The slab target is mode-agnostic and its CONSUMER must not be.~~
+      **DONE 2026-08-06.** `actionable_wh` gates the excess by plant mode -
+      cooling acts only on a surplus of stored heat, heating only on a deficit,
+      `off` on nothing - and `excess_wh` stays signed beside it, because
+      clamping the measurement would hide the surplus that is the thing worth
+      seeing overnight. House totals published both ways: the raw sum lets a
+      surplus in one room offset a need in another, which the coupling makes
+      partly real; the actionable sum does not, because a surplus the plant
+      cannot deliver must not cancel a need it can.
+      - [ ] **`blocked_wh` is the mode-switch signal and is NOT wired to mode
+            selection.** Clamping to zero without keeping the remainder would
+            have thrown away the one number saying "there is a job here and
+            this mode cannot do it", so it is published per room and per house.
+            But on the night it landed it read ~-31 kWh for a house at
+            24-25 degC: as a switch signal that means "heat, in August". The
+            slab target is STEADY-STATE and the building is in a diurnal
+            transient, so this leads the air by hours and overshoots badly.
+            Mode stays on the measured house average (D-020) - comfort, not
+            model, and chosen precisely because it does not care what month it
+            is. Its real near-term value is as an OVER-DELIVERY detector: the
+            slab crosses to the wrong side of the target before the air does.
+            Revisit as a mode input only once the shadow has earned it.
 - [ ] **The slab target is mode-agnostic and its CONSUMER must not be.**
       Caught by the shadow the night of 2026-08-06: with outdoor down to ~20
       and the slabs at ~17 from the day's cooling, `house_excess_wh` read

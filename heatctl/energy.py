@@ -31,6 +31,7 @@ class RoomEnergy:
     target_c: float | None          # where physics says it should sit
     excess_wh: float | None         # + = holds MORE energy than target
     actionable_wh: float | None     # the part the plant can act on, this mode
+    blocked_wh: float | None        # the part it cannot, i.e. wrong direction
     valid: bool                     # is `slab_c` usable at all
     reason: str                     # why not, when it is not
 
@@ -58,6 +59,10 @@ def actionable_wh(excess_wh: float, mode: str) -> float:
         cooling  -> only a SURPLUS of stored heat is a job
         heating  -> only a DEFICIT is a job
         off      -> nothing is
+
+    THE REMAINDER IS NOT NOISE - it is the mode-switch signal, and clamping to
+    zero without keeping it would throw away the one number that says "there is
+    a job here and this mode cannot do it". See `blocked_wh`.
 
     Deliberately NOT applied to `excess_wh` itself. Clamping the measurement
     would hide the surplus that is the very thing worth seeing overnight, and
@@ -253,10 +258,10 @@ class EnergyDemand:
         """
         share = self.room_share(name)
         if share <= 0.0:
-            return RoomEnergy(name, None, None, None, None, False,
+            return RoomEnergy(name, None, None, None, None, None, False,
                               "no floor area")
         if outdoor_c is None:
-            return RoomEnergy(name, None, None, None, None, False,
+            return RoomEnergy(name, None, None, None, None, None, False,
                               "no outdoor temp")
 
         target = slab_target_c(
@@ -272,20 +277,21 @@ class EnergyDemand:
             # but `excess` is C_slab * dT and this room has no C_slab. Refusing
             # is the honest answer; a fan-coil room needs an air-capacity model
             # it does not have yet.
-            return RoomEnergy(name, None, target, None, None, False,
+            return RoomEnergy(name, None, target, None, None, None, False,
                               f"no slab ({self.emitters[name]})")
         if rl_c is None:
-            return RoomEnergy(name, None, target, None, None, False,
+            return RoomEnergy(name, None, target, None, None, None, False,
                               "no return temp")
         if not rl_valid:
-            return RoomEnergy(name, None, target, None, None, False,
+            return RoomEnergy(name, None, target, None, None, None, False,
                               "rl not valid")
 
         slab = slab_estimate_c(rl_c, vl_c, self._ntu.get(name))
         c_room = self.c_slab_wh_per_m2 * self.areas[name]
         excess = c_room * (slab - target)
-        return RoomEnergy(name, slab, target, excess,
-                          actionable_wh(excess, mode), True, "ok")
+        act = actionable_wh(excess, mode)
+        return RoomEnergy(name, slab, target, excess, act, excess - act,
+                          True, "ok")
 
     def house_excess_wh(self, rooms: list[RoomEnergy]) -> float | None:
         """Signed house total, or None if nothing was estimable.
@@ -296,6 +302,27 @@ class EnergyDemand:
         seven would have it confidently do the wrong amount.
         """
         vals = [r.excess_wh for r in rooms if r.valid and r.excess_wh is not None]
+        return sum(vals) if vals else None
+
+    def house_blocked_wh(self, rooms: list[RoomEnergy]) -> float | None:
+        """Energy the plant would need the OTHER mode to deliver.
+
+        Large and persistent, this says the plant is in the wrong mode - or,
+        far more likely in August, that it has over-delivered and the building
+        is now heading past its setpoint. It is a leading indicator: the slab
+        reaches the wrong side of the target before the air does.
+
+        **NOT wired to mode selection, deliberately.** On the night this
+        landed it read about -31 kWh for a house sitting at 24-25 degC, which
+        as a switch signal would mean "heat, in August". The slab target is a
+        STEADY-STATE construct and the building is in a diurnal transient, so
+        this number leads the air by hours and overshoots it badly. Mode stays
+        on the measured house average (D-020), which is comfort rather than
+        model, and which the project chose precisely because it does not care
+        what month it is. Revisit only when the shadow has earned it.
+        """
+        vals = [r.blocked_wh for r in rooms
+                if r.valid and r.blocked_wh is not None]
         return sum(vals) if vals else None
 
     def house_actionable_wh(self, rooms: list[RoomEnergy]) -> float | None:

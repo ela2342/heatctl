@@ -330,3 +330,28 @@ class TestModeAwareness:
         rooms = [warm, cold]
         assert e.house_excess_wh(rooms) < warm.excess_wh      # they offset
         assert e.house_actionable_wh(rooms) == pytest.approx(warm.excess_wh)
+
+    def test_the_blocked_part_is_kept_not_discarded(self):
+        """Clamping to zero without keeping the remainder throws away the one
+        number that says "there is a job here and this mode cannot do it".
+
+        Mutation-verified: returning None for blocked_wh fails this.
+        """
+        e = EnergyDemand(CFG)
+        r = e.room("wohnzimmer", 23.0, 12.0, rl_c=16.0, vl_c=15.0,
+                   mode="cooling")
+        assert r.actionable_wh == 0.0
+        assert r.blocked_wh == pytest.approx(r.excess_wh)
+
+    def test_actionable_and_blocked_partition_the_excess(self):
+        """They must sum to the physics, in either mode, either sign.
+
+        If they do not, one of them is inventing or losing energy.
+        """
+        e = EnergyDemand(CFG)
+        for mode in ("cooling", "heating", "off"):
+            for outdoor, rl in ((33.0, 26.0), (12.0, 16.0)):
+                r = e.room("wohnzimmer", 23.0, outdoor, rl_c=rl, vl_c=18.0,
+                           mode=mode)
+                assert r.actionable_wh + r.blocked_wh == pytest.approx(
+                    r.excess_wh), mode

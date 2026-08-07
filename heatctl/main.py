@@ -737,9 +737,13 @@ class Controller:
             if e.actionable_wh is not None:
                 await self.plane.publish(f"{base}/actionable_wh",
                                          f"{e.actionable_wh:.0f}")
+            if e.blocked_wh is not None:
+                await self.plane.publish(f"{base}/blocked_wh",
+                                         f"{e.blocked_wh:.0f}")
 
         total = self.energy.house_excess_wh(rooms)
         act = self.energy.house_actionable_wh(rooms)
+        blocked = self.energy.house_blocked_wh(rooms)
         n_valid = sum(1 for r in rooms if r.valid)
         # PARTIAL COVERAGE IS PUBLISHED, not hidden. The total sums only the
         # estimable rooms, so it understates by construction; without the count
@@ -752,6 +756,10 @@ class Controller:
             # physical state, kept visible because a surplus is exactly what is
             # worth seeing on an August night.
             await self.plane.publish("energy/house_actionable_wh", f"{act:.0f}")
+        if blocked is not None:
+            # What the OTHER mode would have to deliver. Published, not acted
+            # on - see house_blocked_wh for why it must not pick the mode.
+            await self.plane.publish("energy/house_blocked_wh", f"{blocked:.0f}")
 
     def _return_control(self, valve: str, sensor: str, state,
                         return_sp: float, dt: float, now: float) -> float:
