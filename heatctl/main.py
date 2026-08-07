@@ -59,6 +59,11 @@ class Controller:
         # or "return". Held so a source change can reset that room's PID, and
         # published so an operator can see which loop is actually in charge.
         self._room_src: dict[str, str] = {}
+        # MANUAL VALVE OVERRIDE, for commissioning and flow measurement.
+        # In memory only, so a restart clears it - "no state may need to
+        # survive a restart" is not a slogan here, it is what stops a forgotten
+        # override from quietly holding a circuit open for a season.
+        self._valve_override: dict[str, float] = {}
         self.circuit_pids: dict[str, PID] = {}
         pr, pc = c["pid_room"], c["pid_return"]
         for room in self.rooms:
@@ -255,6 +260,25 @@ class Controller:
             if sp != self.room_setpoints[key]:
                 log.info("setpoint %s -> %.1f degC", key, sp)
             self.room_setpoints[key] = sp
+        elif kind == "valve":
+            # Manual position for one circuit, or "auto" to release it.
+            # Bypasses CONTROL, never safety - see where it is applied.
+            if key not in self.owned_valves:
+                log.warning("valve override for unknown circuit %r", key)
+                return
+            p = payload.strip().lower()
+            if p in ("auto", "", "none", "release"):
+                if self._valve_override.pop(key, None) is not None:
+                    log.warning("valve override RELEASED: %s", key)
+                return
+            try:
+                pct = max(0.0, min(100.0, float(p)))
+            except ValueError:
+                log.warning("bad valve override %r for %s", payload, key)
+                return
+            log.warning("valve override: %s -> %.0f %% (control bypassed, "
+                        "safety still applies)", key, pct)
+            self._valve_override[key] = pct
         elif kind == "hp":
             # Heat pump register write. Async work from a sync callback, so it
             # is scheduled rather than awaited; the client serialises the bus
@@ -604,6 +628,19 @@ class Controller:
                     log.info("flow floor released (was binding for %.0f s)",
                              time.monotonic() - self._flow_floor_since)
                 self._flow_floor_since = None
+
+        # MANUAL OVERRIDE, applied after distribution and the flow floor so
+        # it beats the control chain, and BEFORE safety so it never beats a
+        # frost or condensation trip. That ordering is the whole design: an
+        # operator measuring flow may hold a circuit wherever they like and
+        # still cannot command cold water onto a slab below the dew point.
+        for _v, _pct in self._valve_override.items():
+            if _v in commanded:
+                commanded[_v] = _pct
+        await self.plane.publish(
+            "valve_override",
+            ",".join(f"{k}={v:.0f}" for k, v in sorted(
+                self._valve_override.items())))
 
         overrides: dict[str, list[str]] = {}
         for valve, (_, sensor) in demands.items():

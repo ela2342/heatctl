@@ -223,6 +223,8 @@ class ControlPlane:
             return
         if topic == f"{self.base}/set/mode":
             self.on_command("mode", "", payload)
+        elif topic.startswith(f"{self.base}/set/valve/"):
+            self.on_command("valve", topic.rsplit("/", 1)[1], payload)
         elif topic.startswith(f"{self.base}/set/setpoint/"):
             room = topic.rsplit("/", 1)[1]
             self.on_command("setpoint", room, payload)
