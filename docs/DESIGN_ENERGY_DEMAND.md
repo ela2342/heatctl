@@ -232,6 +232,20 @@ The symptom of ignoring all this is a persistent innovation bias on the coupled
 rooms rather than an obvious failure — which is why it is written down now
 instead of being discovered as a puzzle later.
 
+**A room is not one slab temperature — measured, not feared.** On 2026-08-08,
+at full flow with every circuit commanded 100 % open, Wohnzimmer's four
+circuits returned 21.49 / 21.63 / 22.56 / 24.35 °C — a **2.86 K spread inside
+one room**. The two warmest are adjacent and were in direct sun on the floor,
+so this is a spatially coherent solar signature rather than sensor error
+(hk09 held +2.90 K with a stddev of 0.05 over 25 samples).
+
+§3 computes one `E_deficit` per room from one slab temperature. For the four
+single-circuit rooms that is exact. For Wohnzimmer it is an average over a
+range wider than most of the corrections this document argues about, and the
+error is not random — it tracks the sun, so it is largest exactly when cooling
+demand is highest. Deciding whether the model goes per-CIRCUIT for
+multi-circuit rooms is open; per-room stays right for the rest.
+
 **Floor area is a poor proxy for envelope exposure.** UA is split by area, so a
 corner room with two glazed façades gets the same W/K per m² as an interior
 one. Wohnzimmer alone carries ~28 m² of the house's 51 m² of glazing on two
