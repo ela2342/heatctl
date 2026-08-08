@@ -142,3 +142,37 @@ in the control layer, which can see them and change its mind.
   first time the answer should be roughly COMMON across circuits rather than
   per-circuit — which is what makes it worth putting in `config.yaml`.
 - **`min_open_pct` (55 %) needs re-deriving** against the balanced manifold.
+
+### Post-balancing: the actuator's top half does nothing
+
+All ten circuits commanded together, balanced manifold, pump 100 %:
+
+| command | meters | source side |
+|---|---|---|
+| 100 % | 2.0 | compressor 77–85 Hz |
+| 75 % | **2.0 — unmoved** | |
+| 50 % | **1.9** — inside ±0.3, no measurable change | 62–63 Hz, supply 13.0 |
+
+**The actuator has no measurable authority above ~50 %.** After balancing, the
+rotameter throttles are the dominant restriction, so anything from 50 % to
+100 % is the same plant state.
+
+Caveat on mechanism, not on the result: commanding all ten together is not a
+clean isolation — more restriction everywhere makes the pump climb its curve,
+so Δp rises and partly compensates. That prevents separating "the actuator is
+not restricting" from "Δp made up for it". It does **not** affect the practical
+answer, which is what distribution needs: *commanding 75 % instead of 100 %
+does not change what the plant delivers.*
+
+**Consequence for `distribution.py`.** It maps its entire output across
+`open_threshold_pct`=5 → `full_open_pct`=100. With flow starting near 15–20 %
+and saturating by ~50 %, roughly **two thirds of the commanded range is inert** —
+dead at the bottom, saturated at the top. This is the first measurement that
+should actually reach `config.yaml`, because it was taken on the balanced
+manifold and the balance makes it common to all circuits.
+
+  - [ ] Re-derive `full_open_pct` toward ~50 and re-measure the threshold on
+        the balanced manifold before setting `open_threshold_pct`.
+  - [ ] Re-derive `min_open_pct` (55 %) — on this evidence it sits *above* the
+        saturation point, so the flow floor may be commanding into the dead
+        upper range and achieving nothing it could not achieve at ~50 %.
