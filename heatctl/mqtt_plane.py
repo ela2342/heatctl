@@ -298,7 +298,26 @@ class ControlPlane:
         except Exception:
             pass
 
-    async def publish(self, suffix: str, payload, retain: bool = False) -> None:
+    async def publish(self, suffix: str, payload,
+                      retain: bool = True) -> None:
+        """Publish one state topic. RETAINED BY DEFAULT.
+
+        WHY THE DEFAULT FLIPPED (2026-08-08). It was False, so every value was
+        a fire-and-forget event: a subscriber joining between publishes saw
+        NOTHING and had to wait a whole interval to learn the plant's state.
+        For the energy shadow that is 60 s of blindness per lookup, and it is
+        not only a nuisance for an operator - a dashboard after a reload, or HA
+        after a restart, is equally blind, and "no value" is indistinguishable
+        from "no data" at a glance. That ambiguity has cost real time here.
+
+        Retaining is safe because staleness is already handled elsewhere: the
+        LWT publishes `status` offline, every discovered entity carries
+        `availability_topic: heatctl/status`, and the consumers that must not
+        act on old data (dew point, room temperature, layer 2's delta) all
+        judge freshness by ARRIVAL TIME and expire independently. So a retained
+        value can be read immediately and still cannot be mistaken for a live
+        one by anything that matters.
+        """
         if not self._client:
             return
         try:
@@ -429,6 +448,52 @@ class ControlPlane:
         # boundary confusion that put a fan+pump intercept into it.
         await sensor("hp_power_estimate", "Compressor power (electrical)",
                      "hp/power_estimate", "W", "power")
+        # ENERGY SHADOW (docs/DESIGN_ENERGY_DEMAND.md). Discovered so the
+        # figures become HA entities and therefore land in InfluxDB with
+        # history - without this they were MQTT-only, which meant the one part
+        # of the system whose whole purpose is to be watched could not be
+        # watched over time, and every question about it needed a live
+        # subscribe.
+        await sensor("energy_house_excess", "House slab excess",
+                     "energy/house_excess_wh", "Wh", "energy_storage")
+        await sensor("energy_house_actionable", "House demand (actionable)",
+                     "energy/house_actionable_wh", "Wh", "energy_storage")
+        await sensor("energy_house_blocked", "House demand (wrong mode)",
+                     "energy/house_blocked_wh", "Wh", "energy_storage")
+        await sensor("energy_rooms_valid", "Rooms with a slab estimate",
+                     "energy/rooms_valid", "")
+        await sensor("energy_outdoor", "Outdoor used for slab target",
+                     "energy/outdoor_c", "°C", "temperature")
+        await disc("binary_sensor", "energy_stale",
+                   {"name": "Energy shadow blind",
+                    "state_topic": f"{self.base}/energy/status",
+                    "payload_on": "stale: no I/O", "payload_off": "ok",
+                    "device_class": "problem"})
+        await disc("sensor", "energy_outdoor_source",
+                   {"name": "Outdoor source",
+                    "state_topic": f"{self.base}/energy/outdoor_source",
+                    "icon": "mdi:thermometer-check"})
+        await disc("sensor", "valve_override",
+                   {"name": "Valve override",
+                    "state_topic": f"{self.base}/valve_override",
+                    "icon": "mdi:hand-back-right"})
+        for room in self.cfg["rooms"]:
+            n = room["name"]
+            await sensor(f"energy_{n}_slab", f"{n} slab estimate",
+                         f"energy/{n}/slab", "°C", "temperature")
+            await sensor(f"energy_{n}_slab_target", f"{n} slab target",
+                         f"energy/{n}/slab_target", "°C", "temperature")
+            await sensor(f"energy_{n}_excess", f"{n} slab excess",
+                         f"energy/{n}/excess_wh", "Wh", "energy_storage")
+            await sensor(f"energy_{n}_actionable", f"{n} demand (actionable)",
+                         f"energy/{n}/actionable_wh", "Wh", "energy_storage")
+            # Which measurement drives this room: sensor, house average, or the
+            # return loop. Invisible before, and it decides how much the room's
+            # comfort figure is worth.
+            await disc("sensor", f"room_{n}_source", {
+                "name": f"{n} control source",
+                "state_topic": f"{self.base}/room/{n}/source",
+                "icon": "mdi:thermometer-lines"})
         await sensor("demand_open_pct", "Circuit opening (flow proxy)",
                      "demand/open_pct", "%")
         await disc("sensor", "demand_reason", {

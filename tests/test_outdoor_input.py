@@ -71,3 +71,45 @@ class TestOutdoorMedian:
         p._dispatch("rtl/out", "27.0")
         p._dispatch("rtl/out", "unavailable")
         assert p.outdoor_temp() == pytest.approx(27.0)
+
+
+class _StubClient:
+    def __init__(self):
+        self.calls = []
+
+    async def publish(self, topic, payload, retain=False):
+        self.calls.append((topic, payload, retain))
+
+
+class TestStatePublishingIsRetained:
+    """State must be readable the instant something subscribes.
+
+    Before 2026-08-08 `publish` defaulted to retain=False, so every value was
+    fire-and-forget: a subscriber joining between publishes saw nothing and had
+    to wait a full interval. For the energy shadow that is 60 s of blindness per
+    lookup, and a dashboard after a reload or HA after a restart is equally
+    blind - with "no value" indistinguishable from "no data" at a glance.
+    """
+
+    async def test_state_is_retained_by_default(self):
+        """Mutation-verified: flipping the default back to False fails this."""
+        p = _plane()
+        p._client = _StubClient()
+        await p.publish("energy/house_actionable_wh", "2514")
+        topic, payload, retain = p._client.calls[-1]
+        assert topic == "heatctl/energy/house_actionable_wh"
+        assert payload == "2514"
+        assert retain is True
+
+    async def test_a_caller_can_still_opt_out(self):
+        """Kept explicit so a genuinely transient topic remains expressible."""
+        p = _plane()
+        p._client = _StubClient()
+        await p.publish("some/event", "x", retain=False)
+        assert p._client.calls[-1][2] is False
+
+    async def test_publishing_without_a_broker_is_silent(self):
+        """The control loop must not care that the plane is down."""
+        p = _plane()
+        p._client = None
+        await p.publish("energy/house_actionable_wh", "2514")   # must not raise

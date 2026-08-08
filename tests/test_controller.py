@@ -1174,3 +1174,27 @@ class TestRoomTempStaleness:
         await ctl.step(1.0)
         assert ctl._room_src["gaestebad"] == "return"
 
+
+
+class TestEnergyStatusVisibility:
+    """The shadow must say when it cannot see, not just go quiet.
+
+    Observed 2026-08-08: both Modbus links dropped, `step` took the stale-data
+    path and returned before the shadow ran, so it published nothing for
+    minutes. On a dashboard that is indistinguishable from "nothing to report",
+    and the last good figures sat there looking current.
+    """
+
+    async def test_it_reports_blindness_on_stale_io(self, controller):
+        """Mutation-verified: removing the publish leaves the topic absent."""
+        ctl = controller(temps={"rl_hk01": 24.0, "vl_total": 30.0})
+        ctl.io.touch(time.monotonic() - 10_000)     # far beyond the timeout
+        await ctl.step(1.0)
+        assert ctl.plane.topic("energy/status") == "stale: no I/O"
+
+    async def test_it_reports_ok_when_the_io_is_fresh(self, controller):
+        ctl = controller(temps={"rl_hk01": 24.0, "rl_hk02": 24.0,
+                                "rl_hk03": 24.0, "vl_total": 30.0})
+        ctl.io.touch(time.monotonic())
+        await ctl.step(1.0)
+        assert ctl.plane.topic("energy/status") == "ok"

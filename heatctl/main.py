@@ -445,7 +445,18 @@ class Controller:
 
         if state.is_stale(self.safety.stale_timeout):
             await self.failsafe("stale_data")
+            # SAY THAT THE INSTRUMENT IS BLIND, do not just go quiet. The cycle
+            # is skipped here, and the energy shadow runs at the END of the
+            # cycle, so it stops publishing entirely - which is
+            # indistinguishable from "nothing to report" for anyone reading a
+            # dashboard. Observed 2026-08-08: both Modbus links dropped, the
+            # shadow published nothing for minutes, and the figures on screen
+            # were the last good ones with no indication they were frozen. An
+            # instrument that goes silent exactly when the plant misbehaves is
+            # worse than one that says "I cannot see".
+            await self.plane.publish("energy/status", "stale: no I/O")
             return
+        await self.plane.publish("energy/status", "ok")
         self._failsafe_cleared()
 
         # Dew point in, before safety runs: it sets the real condensation
