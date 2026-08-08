@@ -88,10 +88,57 @@ threshold.
 
 Command set: `hk01 02 03 04 06` = 25 %, `hk07 08 09 10 11` = 100 %.
 
-| circuit | flow |
-|---|---|
-| hk01 | |
-| hk02 | |
-| hk03 | |
-| hk04 | |
-| hk06 | |
+| circuit | flow | at 20 % (pass 1) |
+|---|---|---|
+| hk01 | 1.9 | 0.5 |
+| hk02 | 1.7 | 0.8 |
+| hk03 | 1.4 | 0.5 |
+| hk04 | 1.4 | 0 |
+| hk06 | **0.8** | 0 |
+
+**hk06 passes 0.8 where hk01 passes 1.9** at identical command and pressure —
+Badezimmer was being starved whenever the plant throttled, and no control logic
+fixes that. This is what prompted the balancing below.
+
+---
+
+## THE MANIFOLD WAS BALANCED — 2026-08-08
+
+**All ten circuits set to 2.0 l/min** at 100 % valve opening, using the
+rotameters' own throttles, within the instruments' precision (±0.3).
+
+**Everything above this line describes a different plant.** The passes were
+taken on an unbalanced manifold and their numbers do not carry forward. They
+are kept for the reasoning, not the values.
+
+### Why equal flow and not proportional to floor area
+
+Proposed area-proportional targets (Gästebad 3.43 m² → 0.5 l/min, Kind Natalie
+16.33 m² → 2.4) and the owner rejected it, correctly, on two grounds:
+
+1. **It would break the assumption it was meant to serve.** Equal flow makes
+   "100 % open" mean the same thing on every circuit, which is exactly what
+   `distribution.py` assumes. Different per-circuit maxima would break that
+   again.
+2. **It bakes a weak proxy into brass.** Floor area is already known to be a
+   poor stand-in for load — Wohnzimmer's glazing, the 2.9 K solar spread across
+   its own four circuits, per-room envelope exposure nobody has numbers for.
+   Committing one such guess to a physical setting, where changing it means a
+   trip to the manifold, is worse than leaving a controller with real
+   temperature feedback to allocate. Loop lengths are unknown, so the
+   proportionality could not be checked either.
+
+Uniform hydraulic authority is the neutral substrate; load differences belong
+in the control layer, which can see them and change its mind.
+
+### Consequences to watch
+
+- **Total flow is now ~20 l/min (1.2 m³/h)**, inside the unit's documented
+  0.58–1.44 and well above the ~9.6 l/min Er03 floor. Before balancing it was
+  higher — seven circuits pinned at ≥2.5 each — so **total flow has dropped**,
+  which widens spread for the same heat and pushes supply toward the
+  condensation limit. Expect the capacity loop to sit at a lower frequency.
+- **The thresholds must be re-measured.** They will have moved, and for the
+  first time the answer should be roughly COMMON across circuits rather than
+  per-circuit — which is what makes it worth putting in `config.yaml`.
+- **`min_open_pct` (55 %) needs re-deriving** against the balanced manifold.
