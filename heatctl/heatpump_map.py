@@ -199,6 +199,9 @@ def encode(reg: Reg, value: float) -> int:
     return raw & 0xFFFF if raw >= 0 else (raw + 0x10000) & 0xFFFF
 
 
+REG_BY_ADDR: dict[int, Reg] = {r.addr: r for r in (*STATUS, *WRITABLE)}
+
+
 def by_name(name: str) -> Reg:
     """Look a register up by name. Use this rather than hardcoding an address
     and a scale at the call site - the scales are per register and getting one

@@ -91,6 +91,9 @@ class HeatPump:
 
         self.plane = plane
         self.client: AsyncModbusTcpClient | None = None
+        # Last raw value warned about per register, so an implausible reading
+        # is reported once and not once per poll. See _check_ranges.
+        self._range_warned: dict[int, int] = {}
         self._lock = asyncio.Lock()
         self._last_txn = 0.0
         self._writes: list[float] = []       # timestamps, for the budget
@@ -416,6 +419,40 @@ class HeatPump:
         await self.plane.publish("hp/fault_any", "1" if active else "0")
         await self.plane.publish("hp/faults", ",".join(sorted(active)) or "none")
 
+    # ---------- plausibility ----------
+
+    def _check_ranges(self, block: dict[int, int]) -> None:
+        """Warn when a register reads outside the range its own map declares.
+
+        `Reg.lo`/`Reg.hi` were carried for WRITE validation only, so nothing
+        ever checked what the device sends back. That cost real time on
+        2026-08-08: `silent_max_fan_cooling` (declared 0-1000) reads 65512, and
+        the capacity loop's precondition `fan_cap >= fan_cap_min` accepts it
+        because 65512 > 400. The gate meant to confirm the condenser is not
+        throttled has been passing on a value the map itself calls impossible,
+        and it surfaced only during an unrelated conversation about silent mode.
+
+        NOT SPAM. One line per register per DISTINCT value: an implausible
+        reading is almost always a constant (a decode error, or a sentinel the
+        map does not know), so this fires once and stays quiet until the value
+        actually changes. A per-cycle warning on a 5 s poll would bury the log
+        exactly the way the pymodbus frame dumps did.
+        """
+        for addr, raw in block.items():
+            reg = hm.REG_BY_ADDR.get(addr)
+            if reg is None or reg.lo is None or reg.hi is None:
+                continue
+            val = hm.decode(reg, raw)
+            if reg.lo <= val <= reg.hi:
+                self._range_warned.pop(addr, None)
+                continue
+            if self._range_warned.get(addr) == raw:
+                continue
+            self._range_warned[addr] = raw
+            log.warning("register out of its documented range: 0x%04X %s = %s "
+                        "(raw %d), declared %s..%s - decode or map may be wrong",
+                        addr, reg.name, val, raw, reg.lo, reg.hi)
+
     # ---------- drift detection ----------
 
     def _diff_config(self, new: dict[int, int]) -> list[tuple[int, int, int]]:
@@ -453,6 +490,7 @@ class HeatPump:
                                         "heatctl: 0x%04X %d -> %d", addr, old, new)
                             await self.plane.publish(
                                 "hp/config_changed", f"0x{addr:04X}:{old}->{new}")
+                        self._check_ranges(cfg)
                         self.config = cfg
                         self._config_seen = True
                         await self._publish_block(cfg)
@@ -461,6 +499,7 @@ class HeatPump:
                     # Control block only - cheap, and mode/power can move.
                     ctrl = await self._read_span(hm.RW_FIRST, 0x0038)
                     if ctrl:
+                        self._check_ranges(ctrl)
                         self.config.update(ctrl)
                         await self._publish_block(ctrl)
 
