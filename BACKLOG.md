@@ -5131,3 +5131,53 @@ automation that can be turned off by accident; step 3 removes an entire machine
 from the dependency chain. Step 3 also interacts with the 30-year-maintainability
 promise in both directions - fewer moving parts, but a specific PLC to keep
 alive.
+
+### 2026-08-08 — [!] both Modbus endpoints lost at once: a switch, probably a loop
+
+~13:18 to ~13:45 the WAGO coupler (`192.168.178.52:502`) AND the heat-pump
+RS485→TCP gateway (`192.168.178.37:4196`) were both unreachable from the HA
+host — ping and port. The HA host itself stayed fine, which is what made this
+diagnosable: not two device faults, one shared path.
+
+Owner reset an aging TP-Link **dumb** switch in the chain and the links
+returned. The upstream MikroTik was reporting **excessive broadcast traffic,
+consistent with a loop**. A broadcast storm saturating that segment explains
+both devices vanishing together while everything else kept working, and it will
+recur until the loop is found. The dumb switch offers no diagnostics, so there
+is nothing to read from it directly.
+
+**heatctl behaved correctly, and "correctly" still meant no cooling:**
+
+```
+13:18:47  coupler watchdog trigger write FAILED
+13:18:47  FAILSAFE: stale_data
+13:21:36  failsafe write to 100% failed for 10/10 valves: modbus not connected
+```
+
+The coupler watchdog expired on its own, zeroed the outputs, and the NC
+actuators CLOSED. heatctl kept trying to write the failsafe position and could
+not. That is the layering working as designed — the coupler's own watchdog is
+the only thing that survives loss of the controller — but the outcome is a
+plant with every circuit shut and no supervision of the heat pump, which had
+Er03 latched throughout.
+
+**What this exposes, beyond the switch:**
+
+1. **The I/O path and the heat-pump path share a failure domain.** They are
+   different protocols to different devices, but one segment. Losing it loses
+   both the ability to read the plant and the ability to command the source.
+2. **Availability, not safety.** Nothing unsafe happened and nothing could
+   have: valves closed, the source was already locked out. But cooling stopped
+   for the rest of the day, and the day after was forecast 8 h over ceiling.
+3. **This is an argument for the PFC200 target** beyond HA independence. With
+   control running on the hardware that owns the I/O, the control↔I/O link stops
+   crossing the network at all — a switch fault can then cost telemetry and
+   layer 2, but not the control loop itself. Worth weighing when sequencing
+   that work.
+
+**Open:**
+  - [ ] Find the loop. Managed ports with storm control, or STP, on whatever
+        the coupler and gateway hang off.
+  - [ ] Consider whether those two devices should share a path at all.
+  - [ ] The aging dumb switch is a diagnostic dead end; replacing it with
+        something manageable would at least make the next occurrence legible.
