@@ -1603,13 +1603,14 @@ constraint binds.**
       target, estimate and per-room excess and publishes them; nothing reads
       the result back. Unblocks on watching the numbers against the plant for
       a few days. See `docs/DESIGN_ENERGY_DEMAND.md`.
-- [ ] **VL/RL cross-calibration.** The manifold pair reads ~0.5 K below the
-      heat pump's sensors and the slab estimate DIFFERENCES VL and RL, so a
-      bias lands straight in it. Method: compressor off, pump 100 %, all valves
-      open - with circulation and no heat input every water sensor reads the
-      same water, so the remaining spread IS the offset set. Needs no
-      reference instrument. Blocked on an idle plant: there was not one
-      sustained compressor-off window in 20 h of the current heat.
+- [~] **VL/RL cross-calibration - ATTEMPTED 2026-08-08, THREE TIMES, ALL
+      INVALID.** See the entry below. The short version: you cannot calibrate
+      two sensors against each other inside a live system with a distributed
+      heat source. It needs a REFERENCE - a calibrated probe strapped
+      alongside, or the pair in a common bath. The suspicion that started this
+      (a ~0.5 K offset making the condensation guard permissive) is now
+      neither confirmed nor refuted, and the number it rested on turned out to
+      be an artefact.
 - [ ] **Per-circuit flow at the LOW end of the opening range.** `open_threshold_pct`
       and `full_open_pct` are unmeasured and default to identity. The
       rotameters pin at 3 l/min, so the top of the curve is not measurable -
@@ -5181,3 +5182,67 @@ Er03 latched throughout.
   - [ ] Consider whether those two devices should share a path at all.
   - [ ] The aging dumb switch is a diagnostic dead end; replacing it with
         something manageable would at least make the next occurrence legible.
+
+### 2026-08-08 — VL/RL calibration: three methods, three confounds, one real finding
+
+The plant was idle after a 33 h Er03 outage, so the long-wanted calibration
+window looked free. It was not. Recorded in full because the negative result is
+what stops the next attempt costing another evening.
+
+| attempt | condition | why it was invalid |
+|---|---|---|
+| 1 | no flow, 27 h settled | **separate water columns.** The header sensors read water that sat in pipe runs through 24-26 degC rooms; the circuit sensors read water that sat in the 22 degC slab. Nothing mixes them without a pump, so the difference measured LOCATION. |
+| 2 | full flow, compressor off, 8 min | **still a thermal transient.** Water was warming from the cooling that had just stopped; sensor differences were lag, not offset. |
+| 3 | full flow, compressor off, 17 min | **the building is a heat source.** "Compressor off" is not "no heat input" - circulating water picks up slab heat continuously, so `rl_total > vl_total` by however much it collected. |
+
+Attempt 1 produced `vl_total - rl_total = +0.775 K` and I reported it as a
+calibration offset with consequences for the condensation guard. **Both were
+wrong.** At full flow the same two sensors sit within 0.25 K of the pack; the
++0.775 was two different water columns. Owner's challenge - "all other sensors
+show a measurement in the same range, but these two are both way off?" - was
+what exposed it, and the follow-up that all probes are the same batch, same
+cable length, and both header sensors sit at the manifold killed the two
+systematic explanations offered (2-wire lead resistance, differing ambient).
+
+**Attempt 3 refutes itself, visibly.** `vl_total - rl_total` GREW from -0.405
+to -0.858 K over the 17 minutes. Equilibrating water would show the pickup
+shrinking as it approaches slab temperature. It grew, because afternoon solar
+gain was increasing the heat the slab hands to the water. There is no quiet
+moment to calibrate in.
+
+**What this means:** the -0.4 to -0.9 K observed is entirely consistent with
+ZERO sensor offset plus real slab pickup. The method cannot separate the two.
+Calibration needs a reference instrument, full stop. Every attempt to be clever
+about it has failed for a different reason, which is itself the signal.
+
+#### The finding that survives: Wohnzimmer's slab is not one temperature
+
+Measured during attempt 3, full flow, all circuits open:
+
+```
+return_circuit_9     24.35   +2.90 K   Wohnzimmer
+return_circuit_8     22.56   +1.11 K   Wohnzimmer
+return_circuit_10    21.63           Wohnzimmer
+return_circuit_2     21.49           Wohnzimmer
+the other seven      20.76 - 21.70
+```
+
+Owner identified the cause immediately: **that is where the sun is on the floor
+right now.** The two outliers are adjacent circuits in the same room, so this is
+a spatially coherent solar signature, not two faulty sensors - hk09 held +2.90 K
+with a stddev of 0.05 over 25 samples.
+
+**Wohnzimmer's four circuits span 2.86 K.** `energy.py` models each room as ONE
+slab at ONE temperature, and for this room that abstraction is wrong by more
+than most effects being chased elsewhere. It is the building survey's warning -
+"any per-room solar model that treats rooms as similar will be wrong about this
+one specifically" - appearing directly in return temperatures.
+
+  - [ ] Decide whether the slab model needs to be per-CIRCUIT rather than
+        per-room, at least for rooms with several circuits and high glazing.
+        Per-room is cheaper and right for the four single-circuit rooms.
+  - [ ] Note the diagnostic value: a circuit reading far above its neighbours
+        at equal commanded opening is either solar or no flow, and the two are
+        distinguishable by whether the pattern is spatially coherent and
+        follows the sun. That is a better stagnation test than the
+        cabinet-air comparison, which is emitter-dependent (see 2026-08-06).
