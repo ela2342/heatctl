@@ -166,6 +166,7 @@ class FakePlane:
         self.published: list[tuple[str, str, bool]] = []
         self.outdoor: float | None = None
         self.outdoor_forecast: float | None = None
+        self.room_solar: dict[str, float] = {}
         # How long ago the room readings arrived. Tests set this to exercise
         # the staleness window; 0 means "just now".
         self.room_temp_age = 0.0
@@ -186,6 +187,15 @@ class FakePlane:
 
     def setpoint_delta(self, max_age_s: float) -> float:
         return self.sp_delta
+
+    def room_solar_w(self, max_age_s: float = 3600) -> dict[str, float]:
+        """Layer 2's per-room solar gain; EMPTY unless a test supplies it.
+
+        Empty is the no-optimizer case, so the default keeps the fallback -
+        every room at zero gain - on the tested path rather than making the
+        enriched branch the only one anything exercises.
+        """
+        return self.room_solar
 
     def room_temp(self, room: str, max_age_s: float = 300) -> float | None:
         if self.room_temp_age > max_age_s:

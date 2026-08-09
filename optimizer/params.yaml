@@ -197,6 +197,43 @@ solar:
     - {name: S, azimuth_deg: 196.3, aperture_m2: 6.180}   # brutto 19.62 m^2
     - {name: W, azimuth_deg: 286.3, aperture_m2: 1.588}   # brutto  5.04 m^2
 
+  # Per-room split of the SAME glazing, keyed by the room names in
+  # heatctl's config.yaml. Apertures use the identical convention to the
+  # facades above - brutto x 0.70 frame x 0.90 shading x 0.50 g - and
+  # deliberately NOT the survey's extra 0.9 non-perpendicular factor, which
+  # solar.py supersedes by computing incidence hourly. Survey A_eff figures
+  # are therefore aperture x 0.9, not aperture.
+  #
+  # Window-to-room assignment is owner-confirmed (2026-07-29) and was checked
+  # arithmetically: the assigned ground-floor windows sum exactly to the
+  # per-facade totals minus the upper floor. That closure is re-checked by
+  # tests/test_optimizer_solar.py, so a typo here fails the suite rather than
+  # quietly moving heat between rooms.
+  #
+  # CAVEAT ON THE 0.90 SHADING FACTOR: nothing at this site has been surveyed
+  # for shading. The number comes from the energy certificate's methodology and
+  # survives because it reproduces the certificate's own effective areas. It is
+  # a flat annual constant applied to an hourly model, and it is most wrong on
+  # the east facade in the morning - overhangs and reveals shade HIGH sun,
+  # while the east gain arrives at 7-27 deg elevation with nothing in its way.
+  # Removing it entirely moves Schlafen's peak 788 -> 876 W, which is small
+  # against a floor that can remove ~253 W. Worth measuring, not worth
+  # blocking on.
+  rooms:
+    # 48 % of the house's glazing on 20 % of its floor, split east and south so
+    # it collects from dawn to mid-afternoon. The room that ran away 2026-07-28.
+    wohnzimmer:    {E: 4.470, S: 3.314}
+    # One 2.08 x 2.38 east window, and the whole day's gain lands 07:00-11:00.
+    schlafzimmer:  {E: 1.559}
+    kind_naomi:    {S: 0.794}
+    kind_natalie:  {S: 0.794}   # plus an unassigned share of the west EG
+    arbeitszimmer: {N: 0.756, E: 0.756, S: 1.280, W: 0.605}
+    # UNASSIGNED, and left out on purpose so the gap stays visible: the north
+    # EG 1.20x2.10 (0.794) and the west EG group (0.983), which belong to some
+    # mix of kind_natalie, gaestebad and the utility room. 1.8 of 14.5 m^2
+    # effective, on the two facades with the least gain. `per_room_w` omits
+    # rooms it has no data for rather than reporting a confident 0.0.
+
 # Hydronics. THE FLOW RATE IS LOAD-BEARING: it converts every measured
 # manifold delta-T into watts, so it sets the scale of every energy figure this
 # project quotes. Until 2026-07-31 it lived only in prose - four mentions in

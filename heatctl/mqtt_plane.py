@@ -76,6 +76,8 @@ class ControlPlane:
         self._outdoor_avg_ts = 0.0
         self._outdoor_buf: list[tuple[float, float]] = []
         self._outdoor_window = int(m.get("outdoor_median_samples", 3))
+        self._room_solar: dict[str, float] = {}
+        self._room_solar_ts: dict[str, float] = {}
         # Layer 2's pre-conditioning delta, in K, applied as
         # `active = dial + delta`. SIGNED and mode-independent on purpose:
         # negative asks for a cooler target (pre-cool before a hot afternoon),
@@ -128,6 +130,22 @@ class ControlPlane:
             return None
         return self._outdoor_avg
 
+    def room_solar_w(self, max_age_s: float = 3600) -> dict[str, float]:
+        """Layer 2's per-room solar gain, W, fresh entries only.
+
+        Same staleness argument as `outdoor_avg`: the forecast has hourly
+        resolution, so an hour-old value still describes the hour it covers.
+
+        Stale rooms are DROPPED rather than zeroed. Zero is a physical claim -
+        "this room is in shade" - and after sunset it happens to be true, which
+        is exactly what would make a silent fallback impossible to notice. An
+        absent room lets `EnergyDemand` keep its own default and lets the
+        telemetry say how many rooms layer 2 is actually describing.
+        """
+        now = time.monotonic()
+        return {r: w for r, w in self._room_solar.items()
+                if now - self._room_solar_ts.get(r, 0.0) <= max_age_s}
+
     def dew_point(self, max_age_s: float = 900) -> float | None:
         """Latest dew point if fresh enough, else None.
 
@@ -164,6 +182,13 @@ class ControlPlane:
                     # to do about it and falls back to its own sensor when this
                     # goes stale.
                     await client.subscribe(f"{self.base}/opt/outdoor_avg_c")
+                    # Layer 2's per-room solar gain. Also a parameter: it says
+                    # how much sun each room is taking, and the slab target
+                    # subtracts it. Stale or absent means every room falls back
+                    # to zero gain, which is the pre-2026-08-09 behaviour and
+                    # merely conservative - it understates cooling need, it
+                    # never invents one.
+                    await client.subscribe(f"{self.base}/opt/room/+/solar_w")
                     for topic in self.room_topics:
                         await client.subscribe(topic)
                     if self.dew_topic:
@@ -205,6 +230,15 @@ class ControlPlane:
                 self.room_temp_ts[room] = time.monotonic()
             except ValueError:
                 log.warning("bad room temp on %s: %r", topic, payload)
+            return
+        if (topic.startswith(f"{self.base}/opt/room/")
+                and topic.endswith("/solar_w")):
+            room = topic[len(f"{self.base}/opt/room/"):-len("/solar_w")]
+            try:
+                self._room_solar[room] = float(payload)
+                self._room_solar_ts[room] = time.monotonic()
+            except ValueError:
+                log.debug("non-numeric room solar on %s: %r", topic, payload)
             return
         if topic == f"{self.base}/opt/outdoor_avg_c":
             try:
@@ -462,6 +496,14 @@ class ControlPlane:
                      "energy/house_blocked_wh", "Wh", "energy_storage")
         await sensor("energy_rooms_valid", "Rooms with a slab estimate",
                      "energy/rooms_valid", "")
+        # How many rooms layer 2 is currently describing the sun for. Worth an
+        # entity because the failure it detects is SILENT: if the optimizer
+        # dies or a room name stops matching, every room quietly reverts to
+        # zero gain and the slab targets go back to being wrong in the summer
+        # without anything looking broken. A count that drops to 0 at noon is
+        # the visible symptom.
+        await sensor("energy_solar_rooms", "Rooms with a solar estimate",
+                     "energy/solar_rooms", "")
         await sensor("energy_outdoor", "Outdoor used for slab target",
                      "energy/outdoor_c", "°C", "temperature")
         await disc("binary_sensor", "energy_stale",

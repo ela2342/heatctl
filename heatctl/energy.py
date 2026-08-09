@@ -238,11 +238,28 @@ class EnergyDemand:
 
     def update_params(self, ntu: dict[str, float] | None = None,
                       q_sol: dict[str, float] | None = None) -> None:
-        """Accept layer 2 refinements. Parameters only - never commands."""
+        """Accept layer 2 refinements. Parameters only - never commands.
+
+        THE TWO ARGUMENTS HAVE DIFFERENT LIFETIMES, and merging both would be
+        wrong for one of them.
+
+        `ntu` is a per-circuit calibration - a property of the pipework that
+        does not expire - so it MERGES. Layer 2 may identify one room's
+        transfer units today and another's next week without the first being
+        forgotten.
+
+        `q_sol` is a SNAPSHOT of the sun right now, and it REPLACES. Merging it
+        would leave the last value standing when layer 2 stops publishing: a
+        room would go on being credited with 800 W of east sun through the
+        night, and the slab target would ask for cooling nobody needs. Passing
+        `{}` (or letting the optimizer die) therefore clears every room back to
+        zero gain, which is the conservative direction - it understates the
+        cooling need and never invents one.
+        """
         if ntu:
             self._ntu.update(ntu)
-        if q_sol:
-            self._q_sol.update(q_sol)
+        if q_sol is not None:
+            self._q_sol = dict(q_sol)
 
     def room(self, name: str, setpoint_c: float, outdoor_c: float | None,
              rl_c: float | None, vl_c: float | None,

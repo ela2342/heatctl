@@ -742,6 +742,23 @@ class Controller:
         await self.plane.publish("energy/outdoor_source", outdoor_src)
         if outdoor is not None:
             await self.plane.publish("energy/outdoor_c", f"{outdoor:.1f}")
+
+        # PER-ROOM SOLAR from layer 2. A parameter, never a command, and
+        # clamped by nothing because it cannot move a valve on its own - it
+        # only shifts each room's slab target, which safety still overrides.
+        #
+        # Why it matters here rather than in the house model: the gain is not
+        # distributed like the floor area that absorbs it. Elternschlafzimmer
+        # takes its whole day through one east window between 07:00 and 11:00,
+        # roughly 3x what its floor can remove, while rooms with no glazing on
+        # that facade take none of it. Feeding every room the house average is
+        # what let a room report "satisfied" at 3.7 K above setpoint.
+        #
+        # Absent layer 2 the dict is empty, every room keeps q_sol = 0 and the
+        # behaviour is exactly what it was before this existed.
+        solar = self.plane.room_solar_w()
+        self.energy.update_params(q_sol=solar)
+        await self.plane.publish("energy/solar_rooms", str(len(solar)))
         vl = state.temps.get("vl_total")
 
         rooms: list = []

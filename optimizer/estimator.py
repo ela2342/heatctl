@@ -185,17 +185,96 @@ class Estimator:
         p = point or (self.weather.points[0] if self.weather.points else None)
         if p is None:
             return 0.0
-        try:
-            when = dt.datetime.fromisoformat(p.time)
-        except ValueError:
+        # `_when` attaches UTC explicitly rather than letting solar_position
+        # assume it: that function rejects naive datetimes precisely so a
+        # local-time stamp cannot silently shift the sun by hours.
+        when = self._when(p)
+        if when is None:
             return 0.0
-        if when.tzinfo is None:
-            # Open-Meteo is asked for timezone=UTC and returns naive stamps.
-            # Attaching UTC explicitly rather than letting solar_position
-            # assume it: that function rejects naive datetimes precisely so a
-            # local-time stamp cannot silently shift the sun by hours.
-            when = when.replace(tzinfo=dt.timezone.utc)
         return self.solar.gain_w(when, p.dni, p.dhi, p.shortwave)
+
+    @staticmethod
+    def _when(point) -> dt.datetime | None:
+        """Forecast point timestamp as aware UTC, or None if unusable."""
+        try:
+            when = dt.datetime.fromisoformat(point.time)
+        except ValueError:
+            return None
+        # Open-Meteo is asked for timezone=UTC and returns naive stamps.
+        return when if when.tzinfo else when.replace(tzinfo=dt.timezone.utc)
+
+    def room_solar_w(self, point=None) -> dict[str, float]:
+        """Solar power into each room at the forecast hour, W.
+
+        THE CURRENT HOUR, not a lead-window average, and that is a deliberate
+        difference from `outdoor_avg_c`. The two feed different things.
+        `outdoor_avg_c` sets a target for a mass with a 5.62 h time constant,
+        so a spot value would ask the slab to chase weather noise. This feeds
+        `slab_target_c`, which is a room energy BALANCE - `UA_sa(T_slab-T_room)
+        = UA_ao(T_room-AT) - Q_sol - Q_int` - and the Q_sol in that equation is
+        the gain the room is under right now. Averaging it away would state a
+        load the room does not have.
+
+        That the slab cannot follow a four-hour morning pulse is a physical
+        fact about the building, not a reason to misreport the disturbance.
+        The recovery term in `slab_target_c` is what answers the resulting
+        error, and starting EARLIER than the pulse is a scheduling decision
+        that belongs to the planner, not to this feedforward term. See
+        `room_solar_hourly` for the series that makes such a plan possible.
+
+        Empty dict when there is no forecast or no per-room mapping, so a
+        consumer can tell "no data" from "no sun".
+        """
+        if not self.solar or not self.weather or not self.solar.rooms:
+            return {}
+        p = point or (self.weather.points[0] if self.weather.points else None)
+        if p is None:
+            return {}
+        when = self._when(p)
+        if when is None:
+            return {}
+        return self.solar.per_room_w(when, p.dni, p.dhi, p.shortwave)
+
+    def room_solar_hourly(self, hours: int = 24) -> list[dict]:
+        """Per-room solar gain, hour by hour, for the forecast window.
+
+        A SERIES, NOT A SCHEDULE - the same distinction `hourly_forecast`
+        makes. It says which room gets how much and when; turning that into a
+        pre-cooling start time needs the trajectory simulation in WP-H.
+
+        What it buys before that exists is that the shape is visible at all.
+        The east rooms peaking mid-morning while the south peaks after noon is
+        a falsifiable prediction, and per room it is checkable against the
+        room's own sensor rather than against a house average that averages
+        the effect away.
+        """
+        if not self.solar or not self.weather or not self.solar.rooms:
+            return []
+        out = []
+        for pt in self.weather.points[:hours]:
+            when = self._when(pt)
+            if when is None:
+                continue
+            out.append({
+                "t": pt.time,
+                "rooms": {r: round(w, 0) for r, w in self.solar.per_room_w(
+                    when, pt.dni, pt.dhi, pt.shortwave).items()},
+            })
+        return out
+
+    def room_solar_peak(self, hours: int = 24) -> dict[str, dict]:
+        """Each room's peak solar gain in the window, and when it lands.
+
+        The operator-facing scalar behind the series. "Schlafzimmer peaks 788 W
+        at 10:00" is something a human can read off a dashboard and check
+        against a thermometer; a 24-element JSON blob is not.
+        """
+        peaks: dict[str, dict] = {}
+        for row in self.room_solar_hourly(hours):
+            for room, w in row["rooms"].items():
+                if room not in peaks or w > peaks[room]["peak_w"]:
+                    peaks[room] = {"peak_w": w, "at": row["t"]}
+        return peaks
 
     def outdoor_c(self) -> float | None:
         """Measured outdoor first; forecast only as a fallback.
@@ -672,7 +751,36 @@ class Estimator:
                     f"homeassistant/sensor/heatctl_opt/{uid}/config",
                     json.dumps(conf), retain=True)
 
-    async def _publish(self, subtopic: str, payload: str) -> None:
+        # Per-room solar, one entity per room. Discovered rather than left as
+        # raw topics for the same reason as everything above: a number nobody
+        # can graph is a number nobody checks, and this one is a PREDICTION
+        # that badly needs checking against the room's own thermometer.
+        for room in sorted((self.solar.rooms if self.solar else {})):
+            for suffix, label, icon in (
+                    ("solar_w", "solar gain", "mdi:weather-sunny"),
+                    ("solar_peak_w", "solar peak 24 h",
+                     "mdi:weather-sunny-alert")):
+                uid = f"opt_room_{room}_{suffix}"
+                conf = {
+                    "unique_id": uid,
+                    "name": f"{room} {label}",
+                    "state_topic": f"{self.base}/opt/room/{room}/{suffix}",
+                    "unit_of_measurement": "W",
+                    "device_class": "power",
+                    "state_class": "measurement",
+                    "icon": icon,
+                    "device": {"identifiers": ["heatctl_optimizer"],
+                               "name": "heatctl optimizer",
+                               "manufacturer": "heatctl",
+                               "model": "layer 2 (prediction only)"},
+                }
+                with contextlib.suppress(Exception):
+                    await self._client.publish(
+                        f"homeassistant/sensor/heatctl_opt/{uid}/config",
+                        json.dumps(conf), retain=True)
+
+    async def _publish(self, subtopic: str, payload: str,
+                       retain: bool = False) -> None:
         """Publish under `<base>/opt/` and nowhere else.
 
         The guard is not decoration. `heatctl/set/#` is a live command
@@ -684,7 +792,8 @@ class Estimator:
             raise ValueError(f"refusing to publish outside opt/: {subtopic!r}")
         if self._client is None:
             return
-        await self._client.publish(f"{self.base}/opt/{subtopic}", payload)
+        await self._client.publish(f"{self.base}/opt/{subtopic}", payload,
+                                   retain=retain)
 
     async def run(self) -> None:
         interval = float(self.cfg.get("optimizer", {}).get("interval_s", 60))
@@ -772,6 +881,23 @@ class Estimator:
                     series = self.hourly_forecast(
                         target, opt.get("delivery_ceiling_w", 5700.0))
                     await self._publish("forecast_hourly", json.dumps(series))
+
+                    # PER-ROOM SOLAR. Retained, unlike the rest of this
+                    # module's output, because layer 1 consumes it: a heatctl
+                    # restart would otherwise run with q_sol = 0 for every room
+                    # until the next cycle, which silently understates the load
+                    # in exactly the rooms this exists to describe.
+                    room_now = self.room_solar_w()
+                    for room, w in room_now.items():
+                        await self._publish(f"room/{room}/solar_w",
+                                            f"{w:.0f}", retain=True)
+                    for room, pk in self.room_solar_peak().items():
+                        await self._publish(f"room/{room}/solar_peak_w",
+                                            f"{pk['peak_w']:.0f}", retain=True)
+                    rows = self.room_solar_hourly()
+                    if rows:
+                        await self._publish("room_solar_hourly",
+                                            json.dumps(rows))
                     # SCALARS, not just the JSON blob. A series is for a
                     # planner; a number is what an operator can put on a
                     # dashboard and watch. Publishing only the blob is how this

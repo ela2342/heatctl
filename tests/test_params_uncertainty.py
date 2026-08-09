@@ -6,6 +6,7 @@ else is schema hygiene; that one is the thesis.
 from __future__ import annotations
 
 import copy
+import pathlib
 
 import pytest
 import yaml
@@ -116,3 +117,64 @@ class TestSamplingRespectsPhysics:
         # P04_opt must be known better than the 1 K register quantisation, or
         # the controller cannot pick the right integer.
         assert derived.p04_opt(p, 16.5, 26.0).sigma < 0.5
+
+
+class TestSolarRoomSplit:
+    """The real params.yaml, not a synthetic copy.
+
+    tests/test_optimizer_solar.py exercises the mechanism against its own
+    table; this checks that the file actually shipped agrees with it. Without
+    this, a decimal slip in params.yaml would leave every unit test green while
+    the plant quietly misattributed sunshine between rooms.
+    """
+
+    @staticmethod
+    def _solar() -> dict:
+        return yaml.safe_load(pathlib.Path(PARAMS).read_text())["solar"]
+
+    def test_every_room_facade_exists_in_the_facade_table(self):
+        s = self._solar()
+        known = {f["name"] for f in s["facades"]}
+        for room, split in (s.get("rooms") or {}).items():
+            assert set(split) <= known, f"{room} references unknown facade"
+
+    def test_rooms_never_claim_more_aperture_than_the_facade_has(self):
+        """A window belongs to exactly one room. Over-assignment means one got
+        counted twice, and the house would predict more gain per room than it
+        admits in total."""
+        s = self._solar()
+        per_facade = {f["name"]: f["aperture_m2"] for f in s["facades"]}
+        claimed: dict[str, float] = {}
+        for split in (s.get("rooms") or {}).values():
+            for facade, area in split.items():
+                claimed[facade] = claimed.get(facade, 0.0) + area
+        for facade, total in claimed.items():
+            assert total <= per_facade[facade] + 0.005, (
+                f"{facade}: rooms claim {total} of {per_facade[facade]}")
+
+    def test_east_and_south_stay_fully_assigned(self):
+        """The closure that is EVIDENCE the floor-plan reading was right.
+
+        The assigned ground-floor windows sum exactly to the certificate's
+        per-facade totals minus the upper floor, on both facades that carry
+        the gain. Breaking this means the assignment no longer matches the
+        survey it was audited against - so the numbers stop being the audited
+        ones even if they still look plausible.
+        """
+        s = self._solar()
+        per_facade = {f["name"]: f["aperture_m2"] for f in s["facades"]}
+        claimed: dict[str, float] = {}
+        for split in (s.get("rooms") or {}).values():
+            for facade, area in split.items():
+                claimed[facade] = claimed.get(facade, 0.0) + area
+        for facade in ("E", "S"):
+            assert claimed[facade] == pytest.approx(per_facade[facade],
+                                                    abs=0.005)
+
+    def test_room_names_are_rooms_heatctl_actually_has(self):
+        """A typo here is silent: layer 1 looks the room up by name, misses,
+        and falls back to zero gain - which looks exactly like night."""
+        s = self._solar()
+        rooms = {r["name"] for r in yaml.safe_load(
+            pathlib.Path("config.yaml").read_text())["rooms"]}
+        assert set(s.get("rooms") or {}) <= rooms

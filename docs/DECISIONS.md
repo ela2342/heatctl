@@ -843,3 +843,83 @@ correction would have tightened them by itself.
 
 **Safety still may not depend on any of this** (D-031). Parameters serve
 optimisation; a wrong sigma should cost efficiency, never containment.
+
+
+## D-034 · Solar gain is per room, because the load is not distributed like the floor that absorbs it
+
+**2026-08-09.** `slab_target_c` has taken a `q_sol_w` argument since it was
+written, and layer 1 fed it `0.0` for every room. The house model carried a
+single lumped `f_sol` instead. That is now wired: `optimizer/solar.py` computes
+`q_sol,room = Σ_facade A_eff,room,facade · I_facade` hourly at true azimuths,
+publishes it retained on `heatctl/opt/room/<name>/solar_w`, and `EnergyDemand`
+subtracts it per room.
+
+**The lump was not merely imprecise, it was the wrong shape.** Effective
+collector area per room, against each room's share of `ua_sa`:
+
+| room | peak | at | floor at 6 K | ratio |
+|---|---|---|---|---|
+| Wohnzimmer | 2827 W | 11:00 | 962 W | 2.9× |
+| **Schlafzimmer** | **788 W** | **10:00** | **253 W** | **3.1×** |
+| Arbeitszimmer | 855 W | 13:00 | 713 W | 1.2× |
+| Kind Naomi / Natalie | 353 W | 15:00 | ~365 W | 1.0× |
+
+Two rooms take ~3× what their floors can remove and three take roughly what
+theirs can. A house average hands all five the same shape, and the observable
+consequence was a room reporting *satisfied* while sitting 3.7 K above
+setpoint: its target was computed against a gain spread over rooms that never
+saw the sun.
+
+**Schlafzimmer cannot be solved by control, and the model now says so.** One
+east window admits ~4.9 kWh on a clear day into a slab with 706 Wh/K, so
+absorbing it would need 6.9 K of pre-cooling and the dew point permits 3–4.
+That is an envelope problem — external shading on one window — and the value of
+computing it is knowing which problems *are not* the controller's.
+
+### Why the current hour and not a lead average
+
+`outdoor_avg_c` deliberately feeds the slab a forecast average, because a spot
+value asks a 5.62 h mass to chase weather noise. Solar is fed **instantaneous**
+anyway, and the asymmetry is not an oversight. `slab_target_c` is a room energy
+balance, `UA_sa(T_slab−T_room) = UA_ao(T_room−AT) − Q_sol − Q_int`, and the
+`Q_sol` in it is the gain the room is under now. Averaging it away states a
+load the room does not have. That the slab cannot follow a four-hour morning
+pulse is a fact about the building; starting *earlier* than the pulse is a
+scheduling decision, and scheduling belongs to WP-H, not to a feedforward term.
+`room_solar_hourly` publishes the series a planner will need — a series, not a
+schedule, the same line `hourly_forecast` draws.
+
+### The 0.90 shading factor is unevidenced and stays for now
+
+Effective areas come from the certificate's own methodology, `brutto × 0.70
+frame × 0.90 shading × 0.9 non-perpendicular × g 0.50`, and the justification
+for the constants is that they reproduce the certificate's stated areas. The
+incidence factor is genuinely superseded here — `solar.py` computes the real
+angle hourly. **The shading factor is not: nothing at this site has been
+surveyed for shading**, and a flat annual constant is exactly the wrong shape
+for an hourly model. It is most wrong where it matters, since overhangs and
+reveals shade high sun while the east gain arrives at 7–27° elevation with
+nothing in its way.
+
+Kept because removing it moves Schlafzimmer's peak 788 → 876 W, ~11 %, against
+a 3× overshoot it cannot change. Recorded rather than silently carried, so
+nobody later mistakes it for a measurement. **See BACKLOG.**
+
+### What holds this honest
+
+The per-room apertures are a *split* of the façade table, not a second opinion,
+and `tests/test_params_uncertainty.py` checks the real `params.yaml`: no room
+may claim more than its façade holds, east and south must stay fully assigned
+(the closure that was the original evidence the floor-plan reading was right),
+and every room name must exist in `config.yaml` — a typo there would silently
+fall back to zero gain, which looks exactly like night.
+
+Rooms with no assigned windows are **omitted**, never reported as 0.0 W. The
+north and west EG windows (1.8 of 14.5 m² effective) are genuinely unassigned,
+and "in shade" is a claim that happens to be true after sunset — precisely what
+would make a silent fallback impossible to notice.
+
+`q_sol` **replaces** on update while `ntu` merges, because one is a snapshot of
+the sun and the other a property of pipework. Merging solar would credit a room
+with its morning gain all night. Layer 2 dying clears every room to zero, which
+understates cooling need and never invents one.

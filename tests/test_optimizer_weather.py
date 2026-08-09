@@ -129,7 +129,7 @@ def test_layer_two_cannot_publish_a_set_command():
     captured: list[str] = []
 
     class FakeClient:
-        async def publish(self, topic, payload):
+        async def publish(self, topic, payload, retain=False):
             captured.append(topic)
 
     est._client = FakeClient()

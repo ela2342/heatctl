@@ -355,3 +355,61 @@ class TestModeAwareness:
                            mode=mode)
                 assert r.actionable_wh + r.blocked_wh == pytest.approx(
                     r.excess_wh), mode
+
+
+class TestSolarParameterLifetime:
+    """`q_sol` replaces, `ntu` merges. Getting this backwards is silent.
+
+    Mutation-checked: reverting `update_params` to `self._q_sol.update(q_sol)`
+    makes `test_solar_is_forgotten_when_layer_2_stops` fail, which is the whole
+    point of writing it.
+    """
+
+    def test_solar_is_forgotten_when_layer_2_stops(self):
+        """A snapshot of the sun must not outlive the sun.
+
+        Merging would leave a room credited with its morning east gain all
+        night: the slab target would keep subtracting ~800 W of load that is
+        not there and ask for cooling nobody needs, on the room that already
+        runs coldest at 04:00.
+        """
+        e = EnergyDemand(CFG)
+        e.update_params(q_sol={"wohnzimmer": 800.0})
+        assert e._q_sol == {"wohnzimmer": 800.0}
+        e.update_params(q_sol={})
+        assert e._q_sol == {}
+
+    def test_a_room_dropping_out_clears_only_that_room(self):
+        e = EnergyDemand(CFG)
+        e.update_params(q_sol={"wohnzimmer": 2400.0, "bad": 800.0})
+        e.update_params(q_sol={"wohnzimmer": 2400.0})
+        assert e._q_sol == {"wohnzimmer": 2400.0}
+
+    def test_not_passing_q_sol_leaves_it_alone(self):
+        """`update_params(ntu=...)` must not wipe the solar it never mentioned
+        - otherwise an unrelated calibration write blanks the gains."""
+        e = EnergyDemand(CFG)
+        e.update_params(q_sol={"wohnzimmer": 800.0})
+        e.update_params(ntu={"wohnzimmer": 1.2})
+        assert e._q_sol == {"wohnzimmer": 800.0}
+
+    def test_ntu_still_merges_because_it_is_a_calibration(self):
+        e = EnergyDemand(CFG)
+        e.update_params(ntu={"wohnzimmer": 1.2})
+        e.update_params(ntu={"bad": 0.9})
+        assert e._ntu == {"wohnzimmer": 1.2, "bad": 0.9}
+
+    def test_solar_gain_lowers_the_slab_target_for_that_room_only(self):
+        """The reason the whole feature exists: a sunlit room must be asked to
+        run its floor colder than an identical room in shade. A house-average
+        term gives both the same target, which is how a room reports satisfied
+        at 3.7 K over setpoint.
+        """
+        e = EnergyDemand(CFG)
+        e.update_params(q_sol={"wohnzimmer": 800.0})
+        sunny = e.room("wohnzimmer", 23.0, 28.0, 20.0, 18.0, room_c=23.0,
+                       mode="cooling")
+        shaded = e.room("bad", 23.0, 28.0, 20.0, 18.0, room_c=23.0,
+                        mode="cooling")
+        assert sunny.valid and shaded.valid
+        assert sunny.target_c < shaded.target_c

@@ -96,3 +96,57 @@ def test_the_dew_point_topic_does_not_shadow_a_room_topic(plane):
     p._dispatch("roomtemp/gaestebad", "22.4")
     assert p.room_temp("gaestebad") == 22.4
     assert p.dew_point() is None
+
+
+# ---------- per-room solar from layer 2 ----------
+
+def test_per_room_solar_is_captured_from_the_opt_topic(plane):
+    p = plane()
+    p._dispatch("heatctl/opt/room/schlafzimmer/solar_w", "788")
+    assert p.room_solar_w() == {"schlafzimmer": 788.0}
+
+
+def test_per_room_solar_ages_out_per_room(plane):
+    """Staleness is PER ROOM, not a single connection flag. Layer 2 publishes
+    every room each cycle, so one room going quiet while others keep arriving
+    means that room's mapping broke - and it must stop being trusted on its
+    own rather than waiting for the whole feed to die."""
+    p = plane()
+    p._dispatch("heatctl/opt/room/schlafzimmer/solar_w", "788")
+    p._dispatch("heatctl/opt/room/wohnzimmer/solar_w", "2415")
+    p._room_solar_ts["schlafzimmer"] = time.monotonic() - 3601
+    assert p.room_solar_w() == {"wohnzimmer": 2415.0}
+
+
+def test_a_stale_room_is_dropped_not_zeroed(plane):
+    """Zero is a physical claim - "this room is in shade" - and after sunset it
+    is even true, which is what would make a silent fallback impossible to
+    spot. Absent must stay distinguishable from dark."""
+    p = plane()
+    p._dispatch("heatctl/opt/room/schlafzimmer/solar_w", "788")
+    p._room_solar_ts["schlafzimmer"] = time.monotonic() - 3601
+    out = p.room_solar_w()
+    assert "schlafzimmer" not in out
+    assert out.get("schlafzimmer") is None
+
+
+def test_a_non_numeric_room_solar_is_ignored(plane):
+    p = plane()
+    p._dispatch("heatctl/opt/room/schlafzimmer/solar_w", "788")
+    p._dispatch("heatctl/opt/room/schlafzimmer/solar_w", "unavailable")
+    assert p.room_solar_w() == {"schlafzimmer": 788.0}
+
+
+def test_zero_solar_at_night_is_kept_as_a_real_reading(plane):
+    """The converse of the staleness test: a genuine 0 W must survive. Dropping
+    falsy values would make every room look unmeasured after sunset."""
+    p = plane()
+    p._dispatch("heatctl/opt/room/schlafzimmer/solar_w", "0")
+    assert p.room_solar_w() == {"schlafzimmer": 0.0}
+
+
+def test_the_solar_topic_does_not_shadow_a_room_temperature_topic(plane):
+    p = plane()
+    p._dispatch("heatctl/opt/room/gaestebad/solar_w", "120")
+    assert p.room_temp("gaestebad") is None
+    assert p.room_solar_w() == {"gaestebad": 120.0}

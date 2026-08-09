@@ -158,11 +158,22 @@ def plane_of_array(facade: Facade, dni: float, dhi: float, ghi: float,
 
 class SolarModel:
     def __init__(self, facades: list[Facade], latitude: float,
-                 longitude: float, albedo: float = DEFAULT_ALBEDO) -> None:
+                 longitude: float, albedo: float = DEFAULT_ALBEDO,
+                 rooms: dict[str, dict[str, float]] | None = None) -> None:
         self.facades = facades
         self.lat = latitude
         self.lon = longitude
         self.albedo = albedo
+        # room name -> {facade name: aperture m2}. Same aperture convention as
+        # `Facade.aperture_m2`; see `per_room_w`.
+        self.rooms = rooms or {}
+        known = {f.name for f in facades}
+        for room, split in self.rooms.items():
+            unknown = set(split) - known
+            if unknown:
+                raise ValueError(
+                    f"room {room!r} references unknown facade(s) "
+                    f"{sorted(unknown)}; known: {sorted(known)}")
 
     @classmethod
     def from_config(cls, cfg: dict, latitude: float,
@@ -171,14 +182,27 @@ class SolarModel:
                            aperture_m2=f["aperture_m2"],
                            tilt_deg=f.get("tilt_deg", 90.0))
                     for f in cfg["facades"]],
-                   latitude, longitude, cfg.get("albedo", DEFAULT_ALBEDO))
+                   latitude, longitude, cfg.get("albedo", DEFAULT_ALBEDO),
+                   rooms={r: dict(s) for r, s
+                          in (cfg.get("rooms") or {}).items()})
+
+    def poa(self, when: dt.datetime, dni: float, dhi: float,
+            ghi: float) -> dict[str, float]:
+        """Irradiance on each facade plane, W/m2.
+
+        Separated from the aperture so the per-facade and per-room figures
+        cannot disagree about the sun: they are the same numbers scaled by
+        different areas.
+        """
+        elev, azim = solar_position(when, self.lat, self.lon)
+        return {f.name: plane_of_array(f, dni, dhi, ghi, elev, azim,
+                                       self.albedo) for f in self.facades}
 
     def gain_w(self, when: dt.datetime, dni: float, dhi: float,
                ghi: float) -> float:
         """Total solar power entering through all glazing, W."""
-        elev, azim = solar_position(when, self.lat, self.lon)
-        return sum(plane_of_array(f, dni, dhi, ghi, elev, azim, self.albedo)
-                   * f.aperture_m2 for f in self.facades)
+        irr = self.poa(when, dni, dhi, ghi)
+        return sum(irr[f.name] * f.aperture_m2 for f in self.facades)
 
     def per_facade_w(self, when: dt.datetime, dni: float, dhi: float,
                      ghi: float) -> dict[str, float]:
@@ -188,7 +212,36 @@ class SolarModel:
         is a prediction that can be falsified against room temperatures on a
         clear day, which a single total cannot be.
         """
-        elev, azim = solar_position(when, self.lat, self.lon)
-        return {f.name: plane_of_array(f, dni, dhi, ghi, elev, azim,
-                                       self.albedo) * f.aperture_m2
-                for f in self.facades}
+        irr = self.poa(when, dni, dhi, ghi)
+        return {f.name: irr[f.name] * f.aperture_m2 for f in self.facades}
+
+    def per_room_w(self, when: dt.datetime, dni: float, dhi: float,
+                   ghi: float) -> dict[str, float]:
+        """Solar power entering each room, W: `sum_facade A_eff * I_facade`.
+
+        WHY THIS EXISTS. The house total is the wrong shape for a control
+        decision, because the gain is not distributed like the floor area that
+        has to absorb it. Wohnen/Essen carries 48 % of the glazing on 20 % of
+        the floor; Schlafen takes its entire day through one east window in a
+        four-hour morning pulse. A house-average solar term spreads both across
+        rooms that never saw the sun, which is how a room can read "satisfied"
+        while sitting 3 K over setpoint.
+
+        Rooms absent from the mapping are absent from the result rather than
+        present as 0.0. A room with genuinely no glazing and a room nobody has
+        assigned windows to yet are different states, and returning 0.0 for
+        both would let an unassigned room silently claim a confident answer.
+        The unassigned remainder is real - the west and north EG windows, 1.8
+        of 14.5 m2 effective - and a consumer that needs to know it is guessing
+        can compare against `per_facade_w`.
+
+        Apertures follow `Facade.aperture_m2`: brutto glazing times frame,
+        shading and g-value, WITHOUT any incidence allowance. The building
+        survey's own per-room table folds in a flat 0.9 for non-perpendicular
+        incidence; that constant is superseded here exactly as it is for the
+        facades, so survey figures must be divided by 0.9 before they land in
+        the config.
+        """
+        irr = self.poa(when, dni, dhi, ghi)
+        return {room: sum(irr[f] * a for f, a in split.items())
+                for room, split in self.rooms.items()}

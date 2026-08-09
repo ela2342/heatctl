@@ -1934,11 +1934,15 @@ constraint binds.**
 - [ ] **Two geometry take-offs the model needs, both from the Bauantrag plans.**
       docs/DESIGN.md 6.1 was rewritten 2026-07-28 against the building survey;
       these are what it still lacks.
-      (a) **Per-ROOM glazing split.** We have window areas and true azimuths per
-          FACADE only, and the distribution is wildly uneven - Wohnzimmer holds
-          roughly 28 m2 of the house's 51 m2. Without the split, per-room solar
-          gain `q_sol,room` cannot be computed at all, and that is the dominant
-          summer disturbance. **Highest-value remaining geometry item.**
+      (a) **Per-ROOM glazing split. DONE 2026-08-09** - shipped as D-034.
+          The assignment was already in docs/BUILDING.local.md (owner-confirmed
+          2026-07-29, arithmetically verified against the per-facade totals);
+          it needed wiring, not surveying. `optimizer/solar.py per_room_w`
+          computes `q_sol,room` hourly, the optimizer publishes it retained on
+          `heatctl/opt/room/<name>/solar_w`, and `EnergyDemand` subtracts it
+          per room. Remaining, and deliberately left visible: the north and
+          west EG windows (1.8 of 14.5 m2 effective) are unassigned, so
+          gaestebad and the utility room report no gain rather than zero gain.
       (b) **Shared wall area per room PAIR**, for the new `UA_nb` coupling
           terms. Note the automated attempt FAILED and should not be repeated
           naively: extracting 8 cm face pairs from the EG plan gives 105.6 m of
@@ -5246,3 +5250,45 @@ one specifically" - appearing directly in return temperatures.
         distinguishable by whether the pattern is spatially coherent and
         follows the sun. That is a better stagnation test than the
         cabinet-air comparison, which is emitter-dependent (see 2026-08-06).
+
+- [ ] **The 0.90 shading factor is a certificate constant, not a measurement.**
+      Raised by the owner 2026-08-09 with one word — "What shading." — and the
+      honest answer is that nothing at this site has ever been surveyed for it.
+      It enters every effective collector area via `brutto × 0.70 frame × 0.90
+      shading × 0.9 non-perpendicular × g 0.50`, and the only justification on
+      record is that the product reproduces the certificate's own stated areas.
+      The incidence factor is genuinely superseded (solar.py computes the real
+      angle hourly); the shading one is still a flat annual constant applied to
+      an hourly model.
+      **It is most wrong where the gain is.** Overhangs, reveals and balconies
+      shade HIGH sun. The east gain arrives at 7–27° elevation between 07:00 and
+      10:00, when nothing built into a facade blocks it — so 0.90 probably
+      *understates* the morning peak, and any real obstruction there would be
+      horizon, neighbours or vegetation, none of which is documented.
+      Not urgent: removing it entirely moves Schlafzimmer 788 → 876 W against a
+      floor that removes 253 W, so the 3× overshoot stands either way. Worth
+      doing as a per-window survey when someone is at the house with the plans,
+      at which point it should become a per-window number in `solar.rooms`
+      rather than a factor smeared across the whole building.
+
+- [ ] **Falsify the per-room solar shape against the room sensors.** D-034
+      predicts distinct peak times on a clear day — Schlafzimmer 10:00,
+      Wohnzimmer 11:00, Arbeitszimmer 13:00, the two south children's rooms
+      15:00 — and three of those rooms now have a Shelly H&T. This is the check
+      the per-facade model could not support: a house average has no per-room
+      shape to be wrong about. A room whose measured rise leads or lags its
+      predicted peak by more than an hour means its window assignment or its
+      azimuth is wrong, not that the gain is mis-sized.
+      Do it on a clear day with the plant in a steady mode, or the control
+      response confounds the disturbance.
+
+- [ ] **Schlafzimmer needs external shading, and that is a building decision
+      rather than a control one.** One east window admits ~4.9 kWh on a clear
+      day into a slab holding 706 Wh/K: absorbing it needs 6.9 K of pre-cooling
+      and the dew point permits 3–4. No setpoint, distribution weighting or
+      pre-charge schedule closes that gap — the room will run above setpoint on
+      sunny mornings until the gain is rejected outside the glass. Worth
+      pricing against the alternative, which is accepting the excursion.
+      Wohnzimmer is 2.9× over on the same arithmetic but spreads its load
+      across four circuits and an open-plan ground floor, which is why it
+      presents as less severe despite collecting more per m2.
