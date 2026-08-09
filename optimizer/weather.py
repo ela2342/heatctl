@@ -20,6 +20,7 @@ running on layer 1's own defaults rather than propagating an exception.
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import json
 import logging
 import math
@@ -109,6 +110,33 @@ class WeatherSource:
     @property
     def age_s(self) -> float:
         return time.monotonic() - self._fetched if self._fetched else float("inf")
+
+    def ahead(self, hours: int | None = None) -> list["ForecastPoint"]:
+        """Forecast points from the CURRENT hour forward.
+
+        `points` deliberately keeps every hour Open-Meteo returned, and the
+        request starts at 00:00 UTC today - so `points[0]` is MIDNIGHT, not
+        now, and it becomes staler as the day goes on.
+
+        That caught us on 2026-08-09: `solar_w` read `points[0]` and therefore
+        fed the Kalman filter 0 W of solar permanently, on the one disturbance
+        this building is dominated by. The failure was invisible because 0 W is
+        a perfectly plausible number at any hour and genuinely correct at
+        night. Two callers had already grown their own inline "only future
+        hours" comprehension; this is that filter, in one place, so the next
+        caller inherits it instead of re-deriving it or forgetting to.
+        """
+        now = dt.datetime.now(dt.timezone.utc).replace(
+            minute=0, second=0, microsecond=0)
+        out = [p for p in self._cache
+               if dt.datetime.fromisoformat(p.time).replace(
+                   tzinfo=dt.timezone.utc) >= now]
+        return out[:hours] if hours is not None else out
+
+    def current(self) -> "ForecastPoint | None":
+        """The forecast hour covering right now, or None if none is left."""
+        nxt = self.ahead(1)
+        return nxt[0] if nxt else None
 
     async def refresh(self, force: bool = False) -> bool:
         """Fetch if the cache is stale. True if fresh data arrived.

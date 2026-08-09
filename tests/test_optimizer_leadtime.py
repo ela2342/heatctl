@@ -101,9 +101,30 @@ class _Pt:
         self.wind_kmh = 10.0
 
 
+from optimizer.weather import WeatherSource as _WeatherSource
+
+
 class _Weather:
+    """Minimal stand-in that still carries the REAL forward-window filter.
+
+    `ahead`/`current` are delegated to WeatherSource rather than reimplemented,
+    because the bug they exist to prevent - reading the forecast from midnight
+    instead of now - is precisely the kind a hand-rolled test double would
+    reproduce silently.
+    """
+
     def __init__(self, points):
         self.points = points
+
+    def ahead(self, hours=None):
+        return _WeatherSource.ahead(self, hours)
+
+    def current(self):
+        return _WeatherSource.current(self)
+
+    @property
+    def _cache(self):
+        return self.points
 
 
 def _estimator(monkeypatch, temps: list[float]):

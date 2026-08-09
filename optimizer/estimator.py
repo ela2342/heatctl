@@ -182,7 +182,10 @@ class Estimator:
         """Solar power through the glazing, per facade, at the forecast hour."""
         if not self.solar or not self.weather:
             return 0.0
-        p = point or (self.weather.points[0] if self.weather.points else None)
+        # `current()`, NOT `points[0]`. See WeatherSource.ahead: points[0] is
+        # midnight, so this read 0 W all day and the filter's solar input was
+        # permanently dead.
+        p = point or self.weather.current()
         if p is None:
             return 0.0
         # `_when` attaches UTC explicitly rather than letting solar_position
@@ -227,7 +230,7 @@ class Estimator:
         """
         if not self.solar or not self.weather or not self.solar.rooms:
             return {}
-        p = point or (self.weather.points[0] if self.weather.points else None)
+        p = point or self.weather.current()
         if p is None:
             return {}
         when = self._when(p)
@@ -251,7 +254,7 @@ class Estimator:
         if not self.solar or not self.weather or not self.solar.rooms:
             return []
         out = []
-        for pt in self.weather.points[:hours]:
+        for pt in self.weather.ahead(hours):
             when = self._when(pt)
             if when is None:
                 continue
@@ -286,9 +289,8 @@ class Estimator:
         r = self.readings.get(self._outdoor_topic())
         if r is not None and r.fresh(self.max_age_s):
             return r.value
-        if self.weather and self.weather.points:
-            return self.weather.points[0].temperature
-        return None
+        cur = self.weather.current() if self.weather else None
+        return cur.temperature if cur else None
 
     def _outdoor_topic(self) -> str:
         for room in self.cfg.get("rooms", []):
@@ -374,7 +376,7 @@ class Estimator:
         """
         if not self.weather or not self.weather.points:
             return {}
-        pts = self.weather.points[:hours]
+        pts = self.weather.ahead(hours)
         demands = [heat_demand_w(self.bp, target_air, p.temperature,
                                  self.t_ground, q_sol=self.solar_w(p),
                                  q_int=self.q_int) for p in pts]
@@ -422,6 +424,10 @@ class Estimator:
         if not self.weather or not self.weather.points:
             return []
         by_day: dict[str, list[float]] = {}
+        # WHOLE DAYS, so `points` and not `ahead()` - the one place that
+        # difference is correct. These are calendar-day aggregates, and a
+        # "today" total that silently covered only the remaining hours would
+        # shrink through the day while looking like a falling load.
         for pt in self.weather.points[:hours]:
             net = net_load_w(self.bp, target_air, pt.temperature,
                              self.t_ground, q_sol=self.solar_w(pt),
@@ -486,7 +492,10 @@ class Estimator:
             return None
         if not self.weather or not self.weather.points:
             return None
-        dew_out = self.weather.points[0].dew_point
+        cur = self.weather.current()
+        if cur is None:
+            return None
+        dew_out = cur.dew_point
         if dew_out != dew_out:                      # NaN: API gave no dew point
             return None
         return self._w_from_dew(dew_in.value) - self._w_from_dew(dew_out)
@@ -550,7 +559,7 @@ class Estimator:
             return []
         out = []
         gap = self.humidity_gap()
-        for pt in self.weather.points[:hours]:
+        for pt in self.weather.ahead(hours):
             load = net_load_w(self.bp, target_air, pt.temperature,
                               self.t_ground, q_sol=self.solar_w(pt),
                               q_int=self.q_int)
@@ -597,11 +606,7 @@ class Estimator:
         if not self.weather or not self.weather.points:
             return None
         n = hours if hours is not None else self.outdoor_avg_hours
-        now = dt.datetime.now(dt.timezone.utc).replace(
-            minute=0, second=0, microsecond=0)
-        ahead = [pt.temperature for pt in self.weather.points
-                 if dt.datetime.fromisoformat(pt.time).replace(
-                     tzinfo=dt.timezone.utc) >= now][:n]
+        ahead = [pt.temperature for pt in self.weather.ahead(n)]
         return sum(ahead) / len(ahead) if ahead else None
 
     def setpoint_delta(self, target_air: float, ceiling_w: float,
@@ -632,11 +637,7 @@ class Estimator:
         """
         if not self.weather or not self.weather.points:
             return 0.0
-        now = dt.datetime.now(dt.timezone.utc).replace(
-            minute=0, second=0, microsecond=0)
-        ahead = [pt for pt in self.weather.points
-                 if dt.datetime.fromisoformat(pt.time).replace(
-                     tzinfo=dt.timezone.utc) >= now][:hours]
+        ahead = self.weather.ahead(hours)
         if not ahead:
             return 0.0
         # HORIZON, NOT DECAY - and the difference matters, because getting it

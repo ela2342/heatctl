@@ -220,12 +220,15 @@ def _est_with_forecast(loads_ahead):
     now = _dt.datetime.now(_dt.timezone.utc).replace(
         minute=0, second=0, microsecond=0)
 
-    class _W:
-        points = [_FP(time=(now + _dt.timedelta(hours=i)).isoformat()[:19],
+    # A REAL WeatherSource with its cache filled, not a stub exposing only
+    # `points`. The forward-window filter lives on WeatherSource now, so a stub
+    # that lacks it would test a code path the plant does not run.
+    src = WeatherSource(52.0, 13.0, {})
+    src._cache = [_FP(time=(now + _dt.timedelta(hours=i)).isoformat()[:19],
                       temperature=t, raw_temperature=t, dew_point=10.0,
                       cloud_cover=100.0, wind_speed=5.0, shortwave=0.0)
                   for i, t in enumerate(loads_ahead)]
-    est.weather = _W()
+    est.weather = src
     return est
 
 
@@ -270,7 +273,7 @@ def test_only_hours_AHEAD_are_counted():
                 temperature=45.0, raw_temperature=45.0, dew_point=10.0,
                 cloud_cover=100.0, wind_speed=5.0, shortwave=0.0)
             for i in range(12)]
-    est.weather.points = past[::-1] + list(est.weather.points)
+    est.weather._cache = past[::-1] + list(est.weather.points)
     assert est.setpoint_delta(22.0, CEIL) == 0.0, \
         "past excess must not drive a pre-charge"
 
@@ -278,3 +281,71 @@ def test_only_hours_AHEAD_are_counted():
 def test_no_forecast_asks_for_nothing():
     est = _estimator()
     assert est.setpoint_delta(24.0, 5700.0) == 0.0
+
+
+# ---------- the forecast window starts NOW, not at midnight ----------
+
+def _pt(hour_utc, **kw):
+    from optimizer.weather import ForecastPoint
+    base = dict(temperature=20.0, raw_temperature=20.0, dew_point=12.0,
+                cloud_cover=0.0, wind_speed=5.0, shortwave=0.0,
+                dni=0.0, dhi=0.0)
+    base.update(kw)
+    day = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
+    return ForecastPoint(time=f"{day}T{hour_utc:02d}:00", **base)
+
+
+def _source_covering_today():
+    from optimizer.weather import WeatherSource
+    w = WeatherSource(50.0, 9.0, {})
+    # Irradiance that makes the hour identifiable: 0 at midnight, 700 at noon.
+    w._cache = [_pt(h, shortwave=0.0 if h < 6 else 700.0,
+                    dni=0.0 if h < 6 else 800.0, temperature=10.0 + h)
+                for h in range(24)]
+    return w
+
+
+def test_ahead_starts_at_the_current_hour_not_the_forecast_start():
+    """REGRESSION, 2026-08-09. Open-Meteo is asked for whole days in UTC, so
+    `points[0]` is MIDNIGHT and grows staler as the day passes.
+
+    `solar_w` read `points[0]` and therefore fed the Kalman filter 0 W of solar
+    permanently - on the disturbance this building is dominated by. Nothing
+    caught it because 0 W is plausible at any hour and correct at night; it was
+    found only by watching a live topic at 13:47 on a sunny afternoon report
+    `q_solar_w = 0.0` with status `ok`.
+    """
+    w = _source_covering_today()
+    now_hour = _dt.datetime.now(_dt.timezone.utc).hour
+    ahead = w.ahead()
+    assert ahead, "no forecast hours left today (test needs a UTC day)"
+    assert ahead[0].time.endswith(f"T{now_hour:02d}:00")
+    assert len(ahead) == 24 - now_hour
+
+
+def test_current_is_the_hour_covering_now():
+    w = _source_covering_today()
+    now_hour = _dt.datetime.now(_dt.timezone.utc).hour
+    assert w.current().time.endswith(f"T{now_hour:02d}:00")
+
+
+def test_ahead_respects_the_hour_limit():
+    w = _source_covering_today()
+    assert len(w.ahead(3)) <= 3
+
+
+def test_current_is_none_when_the_forecast_has_run_out():
+    """A cache that ends before now must yield None rather than the last stale
+    hour - silently reusing yesterday's final point is how a dead forecast
+    keeps looking alive."""
+    from optimizer.weather import WeatherSource
+    w = WeatherSource(50.0, 9.0, {})
+    yesterday = (_dt.datetime.now(_dt.timezone.utc)
+                 - _dt.timedelta(days=1)).strftime("%Y-%m-%d")
+    w._cache = [_pt(12)._replace(time=f"{yesterday}T12:00")] if hasattr(
+        _pt(12), "_replace") else []
+    if not w._cache:                      # frozen dataclass, not a namedtuple
+        import dataclasses
+        w._cache = [dataclasses.replace(_pt(12), time=f"{yesterday}T12:00")]
+    assert w.current() is None
+    assert w.ahead() == []
