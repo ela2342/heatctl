@@ -120,11 +120,28 @@ circuits at ~10 % before the flow floor lifted them to 24 %. Those circuits were
 throttled not because they were satisfied in absolute terms but because
 *another room was needier*.
 
-That is the coupling to remove. Throttling is a cost (§4.4) and it buys nothing
-here: it reduces total flow, which raises spread, which pushes supply toward the
-condensation limit, which forces the capacity loop to cut compressor frequency.
-**Throttling a satisfied room therefore reduces the energy available to the
-unsatisfied one.**
+That is the coupling to remove. Throttling is a cost (§4.4): it reduces total
+flow, which raises spread, which pushes supply toward the condensation limit,
+which forces the capacity loop to cut compressor frequency. Measured
+2026-08-08 — throttling five circuits took the compressor from 77–85 Hz down to
+62 Hz and supply from ~15 to 13.0 °C.
+
+**CORRECTION 2026-08-08: that argument was one-sided.** An earlier version of
+this section concluded "throttling a satisfied room therefore reduces the
+energy available to the unsatisfied one." It ignores the other half, which the
+owner pointed out and which was then measured: **the pump is fixed-speed, so
+head follows the system curve.** Throttling raises Δp across the manifold and
+pushes MORE flow through the circuits that stay open. Directly measured — hk01
+at 20 % passed 0.2 l/min with seven circuits open and 0.5 l/min with five. Same
+valve, same command, 2.5× the flow.
+
+So throttling both **reduces** total flow and **redistributes** what remains
+toward the circuits that need it. Which effect dominates depends on the pump
+curve against the system curve, and **nobody here has measured that.** The
+argument for absolute-deficit distribution does not rest on it: the case is
+that a satisfied room should not be throttled *because another room is needier*
+— which is a statement about control coupling, not about hydraulics. Do not
+re-derive the one-sided version.
 
 Proposed rule — absolute, not relative:
 
