@@ -5388,3 +5388,29 @@ one specifically" - appearing directly in return temperatures.
          must not depend on it - `slab_estimate_c` stays algebraic in layer 1
          and the filter's output arrives as parameters, the same contract the
          per-room solar term now uses (D-034).
+
+- [ ] **`valve_*_actual` is named as if it were valve feedback. It is not.**
+      Owner, 2026-08-10: *"Where do SOLL vs IST for the valves come from? We
+      have no feedback on them."* Correct, and the naming is why the question
+      had to be asked.
+      `IOState.valves_readback_pct` is the coupler's **analog output register
+      read back over Modbus** — the 0-10 V leaving the node. The Möhlenhoff
+      Alpha 5 are thermal actuators with no position sensor of any kind, so
+      valve position is not merely unmeasured but unmeasurable (D-023:
+      commanded 100 -> 0 -> 100 -> 0 in 27 s, position untrackable).
+      The comparison is still worth having — `backends/base.py` says exactly
+      what for: it detects the **coupler watchdog forcing its safe state**, a
+      failed write, or a second master on the bus. All three are real and none
+      is about the actuator.
+      **Evidence it is not mechanical**, measured 2026-08-10: 8 of 10 circuits
+      matched exactly and the two that differed by 1 % were both commanded to
+      10 %. Actuator lag would show worst on the *largest* steps; hk07 went to
+      100 % and matched exactly. It is rounding in the percent/raw conversion.
+      Rename `_actual` to something like `_output_readback` so the entity
+      cannot be read as a position. Renaming touches dashboards, InfluxDB
+      history and anything already graphing it, so follow the impact-analysis
+      workflow rather than doing it casually. Until then the Kreise view of
+      `heatctl-detail` carries the explanation on the card.
+      **The only observable of whether a valve actually opened is the
+      circuit's return temperature** (D-009), which is why that column now sits
+      beside the register in the same table.
