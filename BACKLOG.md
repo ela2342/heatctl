@@ -5414,3 +5414,12 @@ one specifically" - appearing directly in return temperatures.
       **The only observable of whether a valve actually opened is the
       circuit's return temperature** (D-009), which is why that column now sits
       beside the register in the same table.
+      **Follow-up, same day: the readback VALUE is near-worthless; the derived
+      MISMATCH is the part worth keeping — and only the worthless half is
+      instrumented.** `valve_*_actual` has ten discovered HA entities and
+      InfluxDB history; `valve_mismatch` is published to MQTT with no HA
+      discovery at all, so it is no entity, has no history and appears on no
+      dashboard. Publish the exception, not the value: add discovery for a
+      single mismatch count/flag, and consider dropping the ten per-circuit
+      readback entities. The ten graphs have already been removed from
+      `heatctl-detail`; the register stays as one column in the table.
