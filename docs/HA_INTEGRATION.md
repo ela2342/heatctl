@@ -24,6 +24,7 @@ mode, not per-room. These need no HA-side configuration at all.
 | Helper | Type | Purpose |
 |---|---|---|
 | `sensor.system_dew_point_reference` | template | **Highest INDOOR dew point**, Magnus formula over each room's temperature+humidity, falling back to the outdoor station only when no indoor pair is available. Indoor is what governs slab condensation; outdoor is often higher and would forbid cooling. Yields `unknown` only when every source is gone, which is what the safety shutdown keys on. **The pair list is the load-bearing part - see below.** |
+| `sensor.system_dew_point_source` | template | Which room currently sets the limit. **Its pair list must match the reference's exactly.** Found out of step 2026-08-10, hours after the reference was fixed: it still named Wohnzimmer (12.1 °C) while the reference correctly read 15.9 from Bad. A right number with a wrong attribution is worse than a wrong number — it sends the next person to the wrong room. |
 | `sensor.system_dew_point_pairs` | template | How many rooms are actually behind the reference. 6 is healthy. Added 2026-08-10 because the reference degraded to 2 rooms silently for two weeks; a dew point is plausible at any room count, so only the count shows it. 0 means it has fallen back to the OUTDOOR station, which is drier than indoors and therefore unsafe in the cooling direction. |
 | `binary_sensor.heat_pump_pump_request` | template | Bit 0 of the heat pump's control-flag register, so automations can compare against the actual request bit instead of the pump's output state - avoids rewriting the same register value every tick and wearing the controller's flash. |
 | `sensor.installed_valve_demand` | min_max (max) | Max of the two valve channels that actually have an actuator. Currently **unused** - kept for when the remaining actuators arrive. |
@@ -296,3 +297,32 @@ Rooms with no assigned windows are **absent** from the optimizer's solar table
 rather than shown as 0 W, matching the layer-2 contract (D-034). Kind Natalie
 is shown with an em-dash on the end-user board — it has no room sensor and is
 regulated on the house average, and saying so is better than a blank.
+
+### Dashboard rework, same day
+
+First cut was rejected: the detail board repeated the overview with worse use
+of space, most status parameters were missing, and there were no trends at all.
+Rebuilt around a different question:
+
+- **`heatctl-plant` answers "is it OK right now"** — verdict card first, one
+  screen, no history.
+- **`heatctl-detail` answers "what has each parameter been doing"** — seven
+  views, and **every quantity carries a 24 h and a 1 h graph side by side**.
+  26 and 25 of them respectively. The 1 h pane is what makes actuator response
+  and compressor cycling legible; the 24 h pane is what makes the diurnal
+  argument legible. Neither substitutes for the other.
+
+Coverage is checked mechanically, not by eye: extract every entity id from the
+three stored dashboards and diff against the live entity list. That check is
+what caught the gap the first time and it currently reports **zero heatctl
+entities absent**. Re-run it after any dashboard edit:
+
+```
+ssh root@<ha-host> 'cat /config/.storage/lovelace.heatctl_* \
+  | grep -oE "(sensor|binary_sensor|climate|number|select)\.[a-z0-9_]+" | sort -u'
+```
+
+Note the diff has false positives: entities built dynamically in Jinja
+(`'sensor.heatctl_' ~ room ~ '_slab_target'`) never appear literally. Those are
+present but were **table-only with no trend**, which is exactly the gap worth
+finding — so treat a hit as "check whether it has a graph", not "it is missing".
