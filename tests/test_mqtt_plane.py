@@ -150,3 +150,65 @@ def test_the_solar_topic_does_not_shadow_a_room_temperature_topic(plane):
     p._dispatch("heatctl/opt/room/gaestebad/solar_w", "120")
     assert p.room_temp("gaestebad") is None
     assert p.room_solar_w() == {"gaestebad": 120.0}
+
+
+# ---------- every room gets a thermostat ----------
+
+def _discovered(plane_factory):
+    """Run _discover against a fake client and collect the configs published."""
+    import asyncio
+    import json as _json
+    p = plane_factory()
+    sent: dict[str, dict] = {}
+
+    class FakeClient:
+        async def publish(self, topic, payload=None, retain=False, **kw):
+            if payload:
+                try:
+                    sent[topic] = _json.loads(payload)
+                except (ValueError, TypeError):
+                    pass
+
+    p._client = FakeClient()
+    asyncio.run(p._publish_discovery())
+    return sent
+
+
+def test_a_room_without_a_sensor_still_gets_a_thermostat(plane):
+    """REGRESSION 2026-08-10. Kinderzimmer Natalie was the one room nobody
+    could set a temperature for.
+
+    The original gate was right when written - a sensorless room ran the
+    return-temperature fallback, which never reads the room setpoint, so a
+    control would have been inert. The house-average proxy changed that: such
+    a room is now driven by the house mean measured against ITS OWN setpoint,
+    so the control is live and withholding it is the lie.
+    """
+    sent = _discovered(plane)
+    climates = {t: c for t, c in sent.items() if "/climate/" in t}
+    names = {c.get("name") for c in climates.values()}
+    assert "wohnzimmer" in names or "Wohnzimmer" in names
+    # The synthetic config's second room has no room_temp_topic.
+    assert len(climates) == 2, f"expected a thermostat per room, got {climates}"
+
+
+def test_a_sensorless_thermostat_advertises_no_current_temperature(plane):
+    """Honest degradation: `room/<n>/temp` means "this room was measured", and
+    heatctl deliberately never publishes the house-average proxy there. So the
+    thermostat shows a target with no current reading rather than borrowing
+    another room's number."""
+    sent = _discovered(plane)
+    for topic, conf in sent.items():
+        if "/climate/" not in topic:
+            continue
+        if conf.get("name") in ("wohnzimmer", "Wohnzimmer"):
+            assert "current_temperature_topic" not in conf or conf[
+                "current_temperature_topic"].endswith("/room/wohnzimmer/temp")
+
+
+def test_every_thermostat_can_still_be_commanded(plane):
+    sent = _discovered(plane)
+    for topic, conf in sent.items():
+        if "/climate/" in topic:
+            assert conf["temperature_command_topic"].startswith("heatctl/set/setpoint/")
+            assert "min_temp" in conf and "max_temp" in conf

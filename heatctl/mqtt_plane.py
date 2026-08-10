@@ -556,9 +556,28 @@ class ControlPlane:
         # it shows current AND target temperature together and gets a proper
         # thermostat card, which a slider with no notion of "now" cannot.
         #
-        # Only for rooms that actually have a room temperature source. For the
-        # others the room setpoint is inert - they run the return-temperature
-        # fallback, which never reads it - so offering a control would be a lie.
+        # EVERY room gets one, including those with no sensor. REVERSED
+        # 2026-08-10 (owner: "Natalie might not have a sensor, but it still
+        # needs a setpoint controller"), and the old reasoning is kept here
+        # because it was correct when written:
+        #
+        #   "Only for rooms that actually have a room temperature source. For
+        #    the others the room setpoint is inert - they run the return-
+        #    temperature fallback, which never reads it - so offering a control
+        #    would be a lie."
+        #
+        # That stopped being true when the house-average proxy landed. A room
+        # with no sensor is now driven by `house_avg` measured against ITS OWN
+        # setpoint (`<room>_control_source` says which), and its slab target is
+        # computed from that setpoint. The control is live, so withholding it
+        # is now the lie - it left Kinderzimmer Natalie as the one room nobody
+        # could set a temperature for.
+        #
+        # The difference that remains is honest and visible: a sensorless room
+        # gets NO `current_temperature_topic`, because heatctl deliberately
+        # never publishes the house-average proxy on `room/<n>/temp` - that
+        # topic means "this room was measured". So HA shows a target with no
+        # current reading, which is exactly the truth.
         #
         # Bounds come from the same safety clamp that would reject an
         # out-of-range value anyway, so HA cannot even offer an invalid one. And
@@ -573,10 +592,8 @@ class ControlPlane:
         for room in self.cfg["rooms"]:
             n = room["name"]
             uid = f"sp_{n}"
-            if room.get("room_temp_topic"):
-                await disc("climate", uid, {
+            conf = {
                     "name": room.get("label", n),
-                    "current_temperature_topic": f"{self.base}/room/{n}/temp",
                     "temperature_state_topic": f"{self.base}/setpoint/{n}",
                     "temperature_command_topic": f"{self.base}/set/setpoint/{n}",
                     "mode_state_topic": f"{self.base}/mode",
@@ -592,9 +609,10 @@ class ControlPlane:
                     "max_temp": s["setpoint_max_c"],
                     "temp_step": 0.5,
                     "temperature_unit": "C",
-                })
-            else:
-                await undisc("climate", uid)
+            }
+            if room.get("room_temp_topic"):
+                conf["current_temperature_topic"] = f"{self.base}/room/{n}/temp"
+            await disc("climate", uid, conf)
             # The old number entity is superseded by the thermostat above.
             # Clearing it is a one-time migration and harmless when repeated.
             await undisc("number", uid)
