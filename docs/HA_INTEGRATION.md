@@ -23,7 +23,8 @@ mode, not per-room. These need no HA-side configuration at all.
 ## Helpers (created via the HA config-flow API, not YAML)
 | Helper | Type | Purpose |
 |---|---|---|
-| `sensor.system_dew_point_reference` | template | **Highest INDOOR dew point**, Magnus formula over each room's temperature+humidity, falling back to the outdoor station only when no indoor pair is available. Indoor is what governs slab condensation; outdoor is often higher and would forbid cooling. Yields `unknown` only when every source is gone, which is what the safety shutdown keys on. |
+| `sensor.system_dew_point_reference` | template | **Highest INDOOR dew point**, Magnus formula over each room's temperature+humidity, falling back to the outdoor station only when no indoor pair is available. Indoor is what governs slab condensation; outdoor is often higher and would forbid cooling. Yields `unknown` only when every source is gone, which is what the safety shutdown keys on. **The pair list is the load-bearing part - see below.** |
+| `sensor.system_dew_point_pairs` | template | How many rooms are actually behind the reference. 6 is healthy. Added 2026-08-10 because the reference degraded to 2 rooms silently for two weeks; a dew point is plausible at any room count, so only the count shows it. 0 means it has fallen back to the OUTDOOR station, which is drier than indoors and therefore unsafe in the cooling direction. |
 | `binary_sensor.heat_pump_pump_request` | template | Bit 0 of the heat pump's control-flag register, so automations can compare against the actual request bit instead of the pump's output state - avoids rewriting the same register value every tick and wearing the controller's flash. |
 | `sensor.installed_valve_demand` | min_max (max) | Max of the two valve channels that actually have an actuator. Currently **unused** - kept for when the remaining actuators arrive. |
 
@@ -209,3 +210,52 @@ needs them — putting them here would bury the six things that matter.
 
 The power figure is `compressor current × 230 V` and is labelled as an
 estimate. It ignores fans and pump and is not metered.
+
+## The dew-point reference's pair list — 2026-08-10 incident
+
+**Visible condensation on the Badezimmer floor and on the manifold pipework.**
+Root cause was not the safety margin and not heatctl: the template helper's
+room list had never been updated after the new room sensors went in.
+
+```
+listed since 2026-07-26     Gästebad, Wohnzimmer      (two Controme wall units)
+instrumented since ~2026-08-07   Bad, Schlafzimmer, Kind Naomi   NEVER ADDED
+
+reference read              12.0 °C
+Bad's actual dew point      17.3 °C
+supply running at           12.9 °C      → 4.4 K below the dew point in Bad
+```
+
+Bad is a bathroom and sat at 72 % RH against 45–55 % elsewhere, so it was 4–5 K
+wetter than anything in the max() — and it was the room that condensed.
+
+**Why nothing caught it for two weeks.** Every layer behaved correctly on the
+data it was given. The helper's `max()` over a stale list is still a valid dew
+point; heatctl enforced `dew + margin` faithfully; the guard tripped exactly
+when it was told to. A dew point is a plausible number at any room count, so
+no single reading looks wrong. This is the same failure shape as the layer-2
+midnight forecast (D-034's follow-up): **a degraded input that stays inside its
+plausible range.**
+
+The margin was briefly raised 1.0 → 2.0 and **reverted the same hour** (owner):
+the sensor list explains the condensation completely, so the margin was never
+falsified and 1 K of supply headroom is worth ~1 kW of capacity. Do not
+re-raise it as a reflex — fix the inputs.
+
+### Rules for this helper
+
+1. **Adding a room sensor means adding it here.** The pair only counts when
+   BOTH temperature and humidity are live; a room missing one drops out
+   silently.
+2. **Keep `system_dew_point_pairs` in step with the reference's pair list.**
+   It exists solely to make a silent drop visible.
+3. **Arbeitszimmer is currently INCLUDED** (owner, 2026-08-10, "until we
+   stabilize things"), reversing the 2026-07-31 exclusion. That exclusion's
+   reasoning still stands — the fan coil has a condensate drain, so the room is
+   designed to get wet, and including it costs real supply depression. This is
+   a deliberate conservative choice for the unstable period, not a refutation.
+   Revisit when the plant is demonstrably not condensing.
+4. **The manifold itself condensed too, and no sensor measures its cabinet
+   air.** The reference is a max over *rooms*; the manifold is in none of them.
+   Nothing currently protects that surface except the room maximum happening to
+   be conservative enough. See BACKLOG.

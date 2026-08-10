@@ -5292,3 +5292,36 @@ one specifically" - appearing directly in return temperatures.
       Wohnzimmer is 2.9× over on the same arithmetic but spreads its load
       across four circuits and an open-plan ground floor, which is why it
       presents as less severe despite collecting more per m2.
+
+- [ ] **Nothing measures the manifold cabinet's air, and the manifold
+      condensed.** Observed 2026-08-10 alongside the Bad floor. The
+      condensation limit is a max over ROOM dew points, and the manifold is in
+      none of those rooms — it carries the coldest water in the house (VL,
+      before any slab has warmed it) in a space whose humidity is unmeasured.
+      Today it is protected only by the room maximum happening to be
+      conservative enough, which is luck rather than design.
+      A temperature+humidity sensor in the manifold cabinet, added to the
+      reference's pair list, closes it. Until then treat manifold condensation
+      as an unmonitored failure mode, not a solved one.
+
+- [ ] **The dew-point pair list is duplicated between two HA template helpers**
+      (`system_dew_point_reference` and `system_dew_point_pairs`, 2026-08-10).
+      The count is only trustworthy while the two lists agree, and nothing
+      enforces that — a room added to one and not the other gives a count that
+      certifies a reference it does not describe.
+      Proper fix is to compute the dew point in heatctl from the room humidity
+      topics it already subscribes to, which also removes HA from a safety
+      path (docs/HA_INTEGRATION.md records that as a known risk). That is the
+      real target; the twin helpers are the stopgap.
+
+- [ ] **Generalise the lesson: alarm on DEGRADED INPUTS, not just bad outputs.**
+      Three defects this month share one shape — an input that quietly stopped
+      describing reality while staying inside its plausible range:
+      the layer-2 forecast reading midnight instead of now (`q_solar_w` = 0.0
+      for weeks), the dew-point reference running on 2 of 6 rooms, and the
+      energy shadow's `ua_sa` disagreeing with the identified value by 16 %.
+      None of them looked broken. Each needed a *count* or a *provenance* to be
+      visible: `energy/solar_rooms`, `system_dew_point_pairs`,
+      `energy/outdoor_source`. Publish the provenance of every input that feeds
+      a safety limit or a control target, and make the count the thing that is
+      watched.
