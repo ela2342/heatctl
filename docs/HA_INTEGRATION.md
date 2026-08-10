@@ -326,3 +326,34 @@ Note the diff has false positives: entities built dynamically in Jinja
 (`'sensor.heatctl_' ~ room ~ '_slab_target'`) never appear literally. Those are
 present but were **table-only with no trend**, which is exactly the gap worth
 finding — so treat a hit as "check whether it has a graph", not "it is missing".
+
+### The room bridges need a heartbeat, not just a state trigger — 2026-08-10
+
+Symptom: frequent apparent sensor outages on the Shelly rooms, and rooms
+silently dropping to house-average control.
+
+```
+Schlafzimmer   last_reported  2.5 min ago   last_changed  14.5 min ago
+Badezimmer     last_reported  4.5 min ago   last_changed  16.5 min ago
+```
+
+A `state` trigger fires on a **change of value**, not on a report. The Shellys
+report every 2–6 min, but a still room only moves the number every ~15 min —
+the same order as heatctl's `room_temp_max_age_s` of 900 s, and heatctl judges
+freshness by **arrival time**. So a healthy sensor sitting still was
+indistinguishable from a dead one.
+
+**The rule for anything bridged into layer 1: publish periodically, not on
+change.** Freshness downstream means "the source is alive", and only a periodic
+publish can express that. Both older bridges already did this and said so —
+the legacy wall-unit bridge runs `time_pattern: /1`, the dew-point bridge `/2`.
+The three Shelly bridges, written later, did not; they now carry `/2` beside
+the state trigger.
+
+Two details that go with it:
+
+- The payload must read the entity (`states('sensor.…')`), **not**
+  `trigger.to_state.state` — a time trigger has no `to_state`.
+- Keep the `numeric_state` condition. It rejects `unknown`/`unavailable`, so a
+  genuinely dead sensor still stops publishing, still ages out, and still falls
+  back. The heartbeat must not paper over a real failure.
