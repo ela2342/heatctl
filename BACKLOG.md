@@ -5293,16 +5293,22 @@ one specifically" - appearing directly in return temperatures.
       across four circuits and an open-plan ground floor, which is why it
       presents as less severe despite collecting more per m2.
 
-- [ ] **Nothing measures the manifold cabinet's air, and the manifold
-      condensed.** Observed 2026-08-10 alongside the Bad floor. The
-      condensation limit is a max over ROOM dew points, and the manifold is in
-      none of those rooms — it carries the coldest water in the house (VL,
-      before any slab has warmed it) in a space whose humidity is unmeasured.
-      Today it is protected only by the room maximum happening to be
-      conservative enough, which is luck rather than design.
-      A temperature+humidity sensor in the manifold cabinet, added to the
-      reference's pair list, closes it. Until then treat manifold condensation
-      as an unmonitored failure mode, not a solved one.
+- [ ] **The manifold cabinet has temperature but no HUMIDITY, so its dew point
+      is unknowable — and the manifold condensed.** Observed 2026-08-10
+      alongside the Bad floor.
+      **CORRECTION, same day:** the first version of this entry said "nothing
+      measures the manifold cabinet's air". That was wrong — there are three
+      sensors, `manifold_cabinet_air_12/15/16`, reading 19.6-20.2 °C. The gap
+      is humidity, not temperature, and it is the humidity that a dew point
+      needs. Written from memory instead of from the entity list, which is the
+      same mistake this file keeps recording.
+      The limit is a max over ROOM dew points and the manifold is in none of
+      those rooms, while carrying the coldest water in the house (VL, before
+      any slab has warmed it). It is protected only by the room maximum
+      happening to be conservative enough, which is luck rather than design.
+      One humidity sensor in the cabinet, added to the reference's pair list,
+      closes it — the temperature side is already there. Until then treat
+      manifold condensation as an unmonitored failure mode.
 
 - [ ] **The dew-point pair list is duplicated between two HA template helpers**
       (`system_dew_point_reference` and `system_dew_point_pairs`, 2026-08-10).

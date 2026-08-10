@@ -259,3 +259,40 @@ re-raise it as a reflex — fix the inputs.
    air.** The reference is a max over *rooms*; the manifold is in none of them.
    Nothing currently protects that surface except the room maximum happening to
    be conservative enough. See BACKLOG.
+
+## Dashboards — consolidated 2026-08-10
+
+Four overlapping dashboards, all stale to different degrees, reduced to three
+with one job each. The split is the owner's: one for living in the house, two
+for working on it.
+
+| url_path | title | audience | rule |
+|---|---|---|---|
+| `heatctl-overview` | Heizung | end user | setpoints, current readings, forecast. No diagnostics. |
+| `heatctl-plant` | Plant | engineering | **must fit one screen.** If something is added, something goes. |
+| `heatctl-detail` | Plant Detail | engineering | everything, five views, scrolling fine. |
+
+Retired and hidden from the sidebar rather than deleted, pending confirmation
+nothing is lost: `lovelace-test` ("Test") and `dashboard-klimaanlage`
+("Klimaanlage"). `map` and `dashboard-wohnzimmerinfo` are unrelated and
+untouched.
+
+**The one-screenful rule is the whole point of `heatctl-plant`.** A glance
+dashboard that scrolls is a detail dashboard with worse organisation. It is
+built from markdown tables rather than one tile per value because tiles cost
+about six times the vertical space for the same numbers. Its first card is a
+verdict — OK / below dew point / fault — computed rather than left for the
+reader to assemble from six tiles.
+
+**Every dashboard leads with provenance, not just values.** Three defects this
+month were degraded inputs that stayed inside their plausible range, so the
+counts are on the boards next to the numbers they qualify:
+`system_dew_point_pairs` (6/6), `rooms_with_a_solar_estimate`,
+`rooms_with_a_slab_estimate`, `outdoor_source`, and the per-room
+`control_source`. The Diagnose view of `heatctl-detail` collects them under
+"Herkunft der Eingangswerte" with that reasoning written on the card.
+
+Rooms with no assigned windows are **absent** from the optimizer's solar table
+rather than shown as 0 W, matching the layer-2 contract (D-034). Kind Natalie
+is shown with an em-dash on the end-user board — it has no room sensor and is
+regulated on the house average, and saying so is better than a blank.
