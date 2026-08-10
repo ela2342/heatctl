@@ -5325,3 +5325,60 @@ one specifically" - appearing directly in return temperatures.
       `energy/outdoor_source`. Publish the provenance of every input that feeds
       a safety limit or a control target, and make the count the thing that is
       watched.
+
+- [ ] **ONE coupled Kalman filter over the whole house — owner's design
+      direction, 2026-08-10, to revisit properly.** Recorded verbatim because
+      it contradicts a rule the code currently follows:
+
+      > "a large Kalman filter with all the state variables for all rooms,
+      > modeling all transmissions between inside and outside, as well as
+      > between the rooms. I have the sensor for Natalie there, could mount it
+      > if that is what it takes."
+
+      **What it contradicts.** DESIGN.md 7.1 specifies the opposite —
+      "decoupled, not monolithic… one Kalman filter per room… **No giant
+      coupled EKF** — decoupled filters are debuggable, individually
+      validatable, and failure-isolated. Couplings (VL temp, flows) enter as
+      **measured inputs, not shared states**."
+
+      **Why the owner's version has a real argument.** That last clause is the
+      weak point. Inter-room coupling in this house is not a small correction:
+      measured 2026-08-09 the rooms spanned 21.4-26.0 degC, a 4.6 K spread, and
+      Wohnzimmer/Arbeitszimmer are joined by an open Luftraum that is the whole
+      reason the coil room stratifies. Treating a neighbour's temperature as a
+      *measured input* is exact only where that neighbour is actually measured;
+      for an unsensored room it is an estimate being fed into another filter as
+      if it were data, which is the coupling smuggled back in without its
+      covariance. A joint filter carries the cross-covariance honestly.
+      It also makes `UA_nb` identifiable at all: with per-room filters, heat
+      arriving through a party wall is indistinguishable from a wrong `UA_ao`.
+
+      **The decoupled argument is not thereby refuted** — a monolithic filter
+      IS harder to validate, and 7.1's innovation-whiteness gate is much
+      weaker when one bad room can bias twenty states. That gate is the thing
+      to design for, not to discard. Note also that 7.1 is an axiom of the
+      same kind as the layer-1/layer-2 split: asserted in the initial commit,
+      never traced to a measurement or an incident. Do not treat either side
+      as settled doctrine.
+
+      **What it needs, in dependency order:**
+      1. **Mount the Natalie sensor** — the owner has it in hand. That takes
+         air measurements to 7 of 7 rooms, and DESIGN.md 6.1.1 is explicit
+         that "with per-room air sensors the 3-state form is identifiable.
+         Without them it is not." This is the cheap unblocking step and it is
+         worth doing regardless of which filter architecture wins.
+      2. **Shared wall area per room PAIR** for the `UA_nb` terms — the
+         existing item (b) above. Note its warning: the automated extraction
+         FAILED (105.6 m of face pairs against ~42 m implied by room
+         perimeters, because it pairs door leaves and dimension ticks). Do it
+         by hand off the plan.
+      3. **Decide the observability budget before writing code.** 6 slab rooms
+         x 3 states + 1 coil room x 2 = 20 states plus disturbances, against 7
+         air measurements and 10 intermittent circuit returns. A coupled filter
+         does not create information; it only stops wasting it. Rooms that stay
+         unidentifiable should collapse to fewer states rather than run three
+         off one measurement.
+      4. **Keep it in layer 2.** Whatever the filter shape, the control path
+         must not depend on it - `slab_estimate_c` stays algebraic in layer 1
+         and the filter's output arrives as parameters, the same contract the
+         per-room solar term now uses (D-034).
