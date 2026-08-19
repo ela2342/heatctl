@@ -632,7 +632,28 @@ control:
     #
     # Re-enable only once layer 2's forecast can gate it. Holding the mode a
     # human chose is always safe; guessing it from indoor temperature is not.
-    auto_mode: false
+    #
+    # RE-ENABLED 2026-08-19 (owner), and the condition above is NOT met - the
+    # forecast exists in layer 2 but `_pick_mode` still reads indoor deviation
+    # alone. Recorded as a deliberate exception, not a resolution.
+    #
+    # What changed is the season, not the mechanism. The house had been 1-2 K
+    # BELOW setpoint for 46 h (deviation +1.5 to +2.1 K since 08-17 12:00)
+    # while the plant went on cooling, rooms at 21.2-22.3 against 23.0-23.5.
+    # The July failure was the mirror image - flipping to heating on a cool
+    # dawn before a 31 degC day - and the guard against repeating it is the
+    # weather, not the code: the six-day forecast is 22-26 degC highs on
+    # 12-18 degC nights, so a wrong flip costs a few hours, not 16 kWh of
+    # pre-charge. Expect churn near the boundary; mode_deadband_c and
+    # mode_dwell_s are what damp it.
+    #
+    # THE REAL DEFECT IS NOT HERE. auto_mode being off is why nothing acted,
+    # but the over-cooling itself came from the capacity loop resuming the
+    # compressor on condensation margin alone - it never asks whether the
+    # house wants cooling - and the resume path then lowering the setpoint
+    # BELOW the demand-derived value to defeat the unit's 2 K restart dead
+    # zone. See BACKLOG "The plant cooled a house that was 1 K too cold".
+    auto_mode: true
     # Flow floor as MEAN opening across all water-carrying circuits, counting
     # unactuated ones as 100 % (they are open pipe). 40 % is the owner's
     # measured figure - below it the system runs into trouble and eventually
@@ -800,9 +821,12 @@ safety:
   # controller holds a return-water setpoint, so an unsupervised open circuit
   # still receives water at a sane temperature - all that is lost is efficient
   # distribution and per-room control, not safety.
-  # NOT a blanket policy: screed overtemp and below-dew-point cooling still
-  # drive valves CLOSED, because there the supply is *known* bad. See the
-  # policy docstring in heatctl/safety.py before changing either.
+  # NOT a blanket policy: screed overtemp still drives valves CLOSED, because
+  # there the heat is already in the water in the slab and closing removes it.
+  # Below-dew-point cooling no longer does (D-035, 2026-08-19) - closing valves
+  # cannot reach the compressor that is making the cold water, it only starves
+  # the unit into a latching Er03. Condensation is a source-side matter now.
+  # See the policy docstring in heatctl/safety.py before changing either.
   # Hardware limit: the actuators are NC, so loss of signal/power closes them
   # whatever we command - this covers software failure, not power loss.
   failsafe_valve_pct: 100

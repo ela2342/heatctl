@@ -31,6 +31,17 @@ spends capacity we might not get back if it breaches; lowering it protects the
 slab. So increases are slow and rate-limited, decreases are immediate. And
 every write wears the unit's flash (docs/HEATPUMP.md), so the cadence is minutes
 rather than seconds and no-ops never reach the bus.
+
+**THE CEILING DOES NOT BIND DURING A START RAMP.** Measured 2026-08-12: with
+R32 at 30 Hz the compressor still went to 50 Hz within 60 s of a restart, and
+the cooling coil fell from 10.5 to 1.0 degC in 45 s of it - low enough for the
+unit's own `primary_antifreeze` protection. The ceiling grips only once the
+machine has settled, roughly a minute in. Two consequences worth holding on to:
+the first minute after every RESUME is uncontrolled by this loop, and any
+margin measured inside that minute is a transient, not a reading. Nothing here
+can fix the ramp; the exit is not restarting so often, which means not asking
+for water colder than the condensation limit in the first place (see the
+`_clamp` comment block in setpoint.py, and BACKLOG).
 """
 from __future__ import annotations
 
@@ -160,6 +171,25 @@ class CapacityController:
                     None, f"stopped, margin {margin:+.2f} K still too thin "
                           "to restart")
             self._stopped_at = None
+            # RESET THE RAISE CLOCK, or the loop spends a margin it created
+            # itself. Measured on the night of 2026-08-11/12: 22 stop/restart
+            # cycles between 02:12 and 07:15, each one
+            #
+            #   ceiling 30 Hz -> STOP -> water warms (that IS the resume
+            #   condition) -> RESUME -> 45 s later "margin +1.2 K spare",
+            #   ceiling 30 -> 40 -> 45 -> 43 -> 39 -> 33 -> 30 -> STOP
+            #
+            # Without this line `_last_raise` still holds a timestamp from
+            # before the stop, and a stop lasts at least `min_off_s` - so the
+            # raise gate is always already satisfied on the way back up. The
+            # loop then reads the warmth its own stop produced as steady-state
+            # headroom and spends it, into a plant that has not responded yet.
+            # Six flash writes per cycle, and the cycle is self-sustaining.
+            #
+            # Deliberately NOT resetting `_last_lower`: lowering is the
+            # protective direction and must work from the first cycle after a
+            # restart, which is exactly when the supply is falling fastest.
+            self._last_raise = now
             return CapacityDecision(
                 None, f"margin {margin:+.2f} K recovered - restarting", RESUME)
         if current_ceiling is None:

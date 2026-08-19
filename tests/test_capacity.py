@@ -233,3 +233,36 @@ def test_a_stopped_compressor_with_no_supply_reading_stays_stopped(cap):
     d = call(c, supply=None, limit=16.5, ceiling=35.0, hz=0.0, now=9_999.0,
              stopped=True)
     assert d.kind != RESUME
+
+
+def test_a_resume_does_not_immediately_spend_the_margin_its_own_stop_created(cap):
+    """Regression, night of 2026-08-11/12: 22 stop/restart cycles in 5 hours.
+
+    The stop is what warms the water, and warm water IS the resume condition.
+    So on every restart the loop found a large positive margin, read it as
+    steady-state headroom, and raised the ceiling 45 s later - into a plant
+    that had not responded yet. It then had to walk the ceiling back down to
+    the floor and stop again. Six flash writes per cycle, self-sustaining.
+
+    The bug was that RESUME left `_last_raise` holding a timestamp from before
+    the stop, and a stop lasts at least `min_off_s`, so the raise gate was
+    always already satisfied on the way back up.
+    """
+    c = cap(min_hz=35.0, min_off_s=600.0, raise_interval_s=120.0)
+    # Run for a while, then hit the floor and stop.
+    call(c, supply=18.0, limit=16.5, ceiling=45.0, hz=45.0, now=0.0)
+    call(c, supply=16.0, limit=16.5, ceiling=35.0, hz=35.0, now=100.0)   # STOP
+    # Ten minutes off; the water has recovered well past the restart threshold.
+    d = call(c, supply=20.0, limit=16.5, ceiling=35.0, hz=0.0, now=800.0,
+             stopped=True)
+    assert d.resumes
+    # 45 s later, at the ceiling, with that same generous margin still showing.
+    d = call(c, supply=19.8, limit=16.5, ceiling=35.0, hz=35.0, now=845.0)
+    assert d.kind != RAISE, (
+        "raised on the transient its own stop produced - this is the "
+        "2026-08-12 limit cycle")
+    assert d.target_hz is None
+    # And it is the raise INTERVAL holding it, not some other refusal, so the
+    # loop still takes real headroom once the plant has actually settled.
+    d = call(c, supply=19.8, limit=16.5, ceiling=35.0, hz=35.0, now=800.0 + 200.0)
+    assert d.kind == RAISE
