@@ -119,12 +119,29 @@ def test_safety_limits_are_ordered_sanely(real_cfg):
     assert 0 <= s["failsafe_valve_pct"] <= 100
 
 
-def test_default_setpoints_survive_the_safety_clamp(real_cfg):
-    """A default outside the clamp would be silently rewritten at runtime."""
+def test_every_room_setpoint_survives_the_safety_clamp(real_cfg):
+    """A default outside the clamp would be silently rewritten at runtime.
+
+    Widened 2026-08-19 with D-043: setpoints are per ROOM now, so checking the
+    two global defaults no longer covers what the plant actually starts with.
+    Elternschlafzimmer at 19.0 is the one that made this matter - it is well
+    below anything the old pair contained.
+    """
     safety = Safety(real_cfg)
+    fallback = real_cfg["control"]["default_setpoint_c"]
+    assert safety.clamp_setpoint(fallback) == fallback, "the fallback is out of range"
+    for room in real_cfg["rooms"]:
+        sp = room.get("setpoint_c", fallback)
+        assert safety.clamp_setpoint(sp) == sp, f"{room['name']} setpoint {sp} is out of range"
+
+
+def test_no_room_default_is_split_by_mode(real_cfg):
+    """D-006 and D-043: a target is a target. The split defaults froze at
+    start-up and left five rooms on a heating value through a cooling
+    afternoon (2026-08-19)."""
     c = real_cfg["control"]
-    for key in ("default_setpoint_heating_c", "default_setpoint_cooling_c"):
-        assert safety.clamp_setpoint(c[key]) == c[key], f"{key} is out of range"
+    for gone in ("default_setpoint_heating_c", "default_setpoint_cooling_c"):
+        assert gone not in c, f"{gone} came back"
 
 
 def test_pid_gains_are_usable(real_cfg):

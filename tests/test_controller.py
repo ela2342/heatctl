@@ -501,7 +501,9 @@ async def test_telemetry_publishes_temps_valves_and_setpoints(controller):
     assert ctl.plane.topic("temp/rl_hk01") == "24.0"
     assert ctl.plane.topic("valve/valve_hk01") is not None
     assert ctl.plane.topic("mode") == "heating"
-    assert ctl.plane.topic("setpoint/gaestebad") == "21.0"
+    # 22.0 is `default_setpoint_c` in the synthetic config. Was 21.0 while
+    # the default was split by mode and this fixture ran in heating (D-043).
+    assert ctl.plane.topic("setpoint/gaestebad") == "22.0"
     assert ctl.plane.topic("room/gaestebad/temp") == "22.0"
 
 

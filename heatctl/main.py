@@ -68,9 +68,13 @@ class Controller:
         pr, pc = c["pid_room"], c["pid_return"]
         for room in self.rooms:
             n = room["name"]
-            self.room_setpoints[n] = (
-                c["default_setpoint_heating_c"] if self.mode == "heating"
-                else c["default_setpoint_cooling_c"])
+            # PER ROOM, AND NOT PER MODE (D-006, D-043). This used to pick a
+            # heating or cooling default from `self.mode` - but it runs ONCE,
+            # at construction, so the mode in force at start-up froze the
+            # value for the whole run. A later mode change, whether from
+            # auto_mode or an operator, never revisited it.
+            self.room_setpoints[n] = float(
+                room.get("setpoint_c", c["default_setpoint_c"]))
             self.room_pids[n] = PID(pr["kp"], pr["ki"], pr["kd"],
                                     pr["out_min"], pr["out_max"])
             for circ in room["circuits"]:

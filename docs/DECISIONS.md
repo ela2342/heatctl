@@ -1252,3 +1252,40 @@ condition is open; `settle_s` at 300 s is already longer than the criterion.
 
 **The three cabinet-air sensors keep their purpose**: observability, and
 characterising the collapse. They are simply not a flow detector.
+
+## D-043 · One setpoint per room, configured per room
+`control.default_setpoint_heating_c` / `_cooling_c` are gone. Each room carries
+`setpoint_c` in `config.yaml`; `control.default_setpoint_c` (22.0) catches a
+room added without one. Owner, 2026-08-19: *"separate setpoints for heating and
+cooling make absolutely no sense."*
+
+**This is D-006, finally applied to the defaults.** That decision already said a
+target is a target — *"20 °C means 'hold this room at 20'; whether we approach
+it by heating or cooling is decided one level up"* — and the split defaults
+contradicted it for three weeks without anyone noticing, because they only
+surface on rooms that have no external setpoint publisher.
+
+**The split was not merely redundant, it was live-wrong.** `room_setpoints` is
+built once in `Controller.__init__`, so the mode at construction froze the
+value for the whole run and no later mode change revisited it. On 2026-08-19
+the plant restarted in heating, five of seven rooms took 21.0, `auto_mode`
+flipped to cooling at 17:14, and those five spent the afternoon being cooled
+toward a heating default. Measured house deviation **−2.17 K** against them
+versus **−0.74 K** against mode-appropriate values — the second is inside the
+−1.0 deadband, so the mode flip itself was very likely an artefact of the stale
+defaults rather than a fact about the house.
+
+**Values** (owner): Elternschlafzimmer 19.0; Wohnzimmer, both Kinderzimmer and
+Arbeitszimmer 22.0; Gästebad and Badezimmer 23.5.
+
+**What was deliberately NOT changed:** `return_temp_setpoint_heating_c` /
+`_cooling_c`. Those are WATER temperatures and must differ by mode — you cannot
+heat a house with 20 °C water. The names rhyme with the ones removed here and
+the reason does not.
+
+**Still open, and this decision does not fix it:** setpoints do not survive a
+restart (they must not — restart == safe state), and only Gästebad and
+Wohnzimmer have a live publisher. So a value set from the dashboard for the
+other five is lost on the next deploy, and `setpoint_c` is now what they revert
+to. That is an improvement — the revert target is chosen rather than accidental
+— but it is not persistence. See BACKLOG.

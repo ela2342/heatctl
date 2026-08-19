@@ -281,6 +281,7 @@ valves:
 rooms:
   - name: gaestebad
     label: "Gästebad"
+    setpoint_c: 23.5
     floor_area_m2: 3.43   # WC/Du
     circuits: [{sensor: rl_hk01, valve: valve_hk01}]
     # Legacy wall unit, bridged to MQTT by an HA automation (interim - that
@@ -289,6 +290,7 @@ rooms:
     room_temp_topic: "roomtemp/gaestebad"
   - name: wohnzimmer
     label: "Wohnzimmer"
+    setpoint_c: 22.0
     floor_area_m2: 42.11   # Wohnen/Essen
     circuits:
       - {sensor: rl_hk02, valve: valve_hk02}
@@ -301,6 +303,7 @@ rooms:
     room_temp_topic: "roomtemp/wohnzimmer"
   - name: kind_natalie
     label: "Kinderzimmer Natalie"
+    setpoint_c: 22.0
     floor_area_m2: 16.33   # plan "Kind 1": W + S glazing, the room with TWO
                            # windows, which is how the occupant identifies it
     circuits: [{sensor: rl_hk03, valve: valve_hk03}]
@@ -311,22 +314,26 @@ rooms:
     room_temp_topic: "roomtemp/kind_natalie"
   - name: kind_naomi
     label: "Kinderzimmer Naomi"
+    setpoint_c: 22.0
     floor_area_m2: 15.61   # plan "Kind 2": S glazing only, one window
     circuits: [{sensor: rl_hk04, valve: valve_hk04}]
     room_temp_topic: "roomtemp/kind_naomi"   # Shelly H&T G3, via the HA bridge
   - name: badezimmer
     label: "Badezimmer"
+    setpoint_c: 23.5
     floor_area_m2: 8.94   # Bad
     circuits: [{sensor: rl_hk06, valve: valve_hk06}]
     room_temp_topic: "roomtemp/badezimmer"   # Shelly H&T G3, via the HA bridge
   # rl_hk05 = Badezimmer Handtuchhalter, reserve, not installed
   - name: schlafzimmer
     label: "Elternschlafzimmer"
+    setpoint_c: 19.0
     floor_area_m2: 11.08   # Schlafen
     circuits: [{sensor: rl_hk07, valve: valve_hk07}]
     room_temp_topic: "roomtemp/schlafzimmer"   # Shelly H&T G3, via the HA bridge
   - name: arbeitszimmer
     label: "Arbeitszimmer"
+    setpoint_c: 22.0
     floor_area_m2: 31.20   # plan "Arbeit/Gaeste"
     # NOT A SLAB ROOM. It is on the OG and its emitter is a fan coil, so it has
     # neither the floor build-up nor the mass. Both matter: `c_slab_wh` is
@@ -349,11 +356,30 @@ control:
   # return-temperature control. Matches the running plant, which had it set
   # explicitly while the repo relied on the identical default.
   room_temp_max_age_s: 900.0
-  default_setpoint_heating_c: 21.0   # room temp if room sensor present,
-  default_setpoint_cooling_c: 23.0   # otherwise interpreted as return temp target
-  # 23.0 (was 24.0): at 24 the rooms sat below target and commanded 0 %, i.e.
-  # no cooling at all. Only applies to rooms WITHOUT a wall-unit dial - for
-  # Gaestebad and Wohnzimmer the dial overrides this within a minute.
+  # ONE TARGET PER ROOM, NOT ONE PER MODE. Split heating/cooling defaults were
+  # removed 2026-08-19 (owner: "separate setpoints for heating and cooling make
+  # absolutely no sense") - which is D-006 from three weeks earlier, finally
+  # applied to the defaults: a target is a target, and whether the plant
+  # approaches it by heating or cooling is decided one level up.
+  #
+  # They were also actively harmful. `room_setpoints` is built ONCE at
+  # start-up, so the mode in force at that moment froze the default; when
+  # auto_mode flipped the plant on 2026-08-19 the five rooms with no external
+  # setpoint publisher kept the 21.0 heating value through a cooling
+  # afternoon. Measured house deviation -2.17 K against those, -0.74 K against
+  # mode-appropriate ones - so the flip to cooling was very likely caused by
+  # the stale defaults rather than by the house. See D-043.
+  #
+  # Per-room values live with the rooms, in `rooms:` above, and every room
+  # currently names one - so this only catches a room added later without a
+  # target of its own. 22.0 is the owner's figure, matching the majority.
+  default_setpoint_c: 22.0
+  # Applies to rooms WITHOUT a wall-unit dial - for Gaestebad and Wohnzimmer
+  # the dial overrides this within a minute.
+  #
+  # NOTE the two below are WATER temperatures and legitimately differ by mode:
+  # you cannot heat a house with 20 degC water. Do not "simplify" them the way
+  # the room defaults were simplified - different quantity, different reason.
   return_temp_setpoint_heating_c: 22.0
   return_temp_setpoint_cooling_c: 20.0
   # Where the per-circuit return target comes from:

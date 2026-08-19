@@ -63,8 +63,7 @@ BASE_CFG: dict = {
     "control": {
         "mode": "heating",
         "loop_interval_s": 1.0,
-        "default_setpoint_heating_c": 21.0,
-        "default_setpoint_cooling_c": 23.0,
+        "default_setpoint_c": 22.0,
         "return_temp_setpoint_heating_c": 22.0,
         "return_temp_setpoint_cooling_c": 20.0,
         "return_setpoint_source": "fixed",
