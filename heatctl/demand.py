@@ -124,11 +124,21 @@ class DemandController:
         # Only channels actually assigned to a circuit carry water.
         self.circuit_valves = [circ["valve"] for room in cfg["rooms"]
                                for circ in room["circuits"] if circ.get("valve")]
+        # How many rooms can contribute to the house average at all. Gates the
+        # start-up one-shot in `_pick_mode`; a room with no topic never reports
+        # and must not hold the decision hostage.
+        self.expected_rooms = sum(1 for room in cfg["rooms"]
+                                  if room.get("room_temp_topic"))
 
         self._source_on = False
         self._since = 0.0            # when source_request last changed
         self._mode_candidate: str | None = None
         self._candidate_since = 0.0
+        # One-shot: the first auto_mode decision after a start skips the dwell.
+        # See `_pick_mode`. Not persisted - restart == safe state, and here
+        # that means re-deriving the mode from measurement rather than
+        # inheriting a config guess.
+        self._mode_decided = False
 
     # ---------- flow ----------
 
@@ -248,20 +258,61 @@ class DemandController:
             return None, 0
         return sum(devs) / len(devs), len(devs)
 
-    def _pick_mode(self, current: str, dev: float | None, now: float) -> str:
-        """Mode from the house average, with a deadband and a dwell time."""
+    def _pick_mode(self, current: str, dev: float | None, now: float,
+                   rooms_used: int = 0) -> str:
+        """Mode from the house average, with a deadband and a dwell time.
+
+        **The dwell does not apply to the first decision after a start**
+        (owner, 2026-08-19: "auto mode should fire on startup, not wait for an
+        hour for correction"). The dwell protects a mode the plant is already
+        running from a transient average. At start-up there is no such mode -
+        `current` is whatever `control.mode` happens to say, a seed rather than
+        a decision - so an hour of dwell buys nothing and costs an hour of
+        running the wrong way. Measured 2026-08-19: a rebuild at 18:51 came up
+        heating with the house 1.6 K too warm and would have idled until 19:52.
+
+        ARMED ONLY ON A COMPLETE ROOM SET. `rooms_used` must cover every room
+        with a `room_temp_topic`, because room temperatures arrive over the
+        first seconds and a partial average is not the house: Elternschlafzimmer
+        alone reads -5.8 K against its 19.0 target and would flip the plant on
+        its own. If a sensor is dead the one-shot never arms and the dwell
+        applies as before - the safe degradation, and a visible one, since the
+        normal path logs its own decision.
+        """
         if not self.auto_mode or dev is None:
             return current
+        if current == "off":
+            # OFF IS NOT A SEASON, it is an operator stopping the plant, and
+            # auto_mode does not get to overrule it. The dwell path could
+            # already do this after an hour; the start-up one-shot would have
+            # done it within seconds of every restart, which is what made the
+            # hole obvious. Caught by
+            # `test_mode_off_is_the_one_thing_that_stops_the_source`.
+            return current
+        # Every configured room has reported, so the average means something.
+        complete = self.expected_rooms > 0 and rooms_used >= self.expected_rooms
         if dev > self.mode_deadband_c:
             want = "heating"
         elif dev < -self.mode_deadband_c:
             want = "cooling"
         else:
             self._mode_candidate = None
+            # A full reading inside the band IS a decision: the seed mode is
+            # fine. Spend the one-shot, so a later drift out of band is
+            # treated as the in-operation transient it is.
+            self._mode_decided = self._mode_decided or complete
             return current
         if want == current:
             self._mode_candidate = None
+            self._mode_decided = self._mode_decided or complete
             return current
+        if not self._mode_decided and complete:
+            self._mode_decided = True
+            self._mode_candidate = None
+            log.warning("mode -> %s at start-up (house average %+.2f K over "
+                        "%d rooms, no dwell - the mode it replaces was a "
+                        "config default, not a decision)", want, dev, rooms_used)
+            return want
         # Require the condition to persist. Switching the whole plant on a
         # transient average is expensive and slow to undo.
         if self._mode_candidate != want:
@@ -280,7 +331,7 @@ class DemandController:
              now: float) -> Demand:
         dev, n = self.mean_deviation(setpoints, room_temps)
         open_pct = self.open_pct(valves_pct)
-        mode = self._pick_mode(mode, dev, now)
+        mode = self._pick_mode(mode, dev, now, rooms_used=n)
 
         want, reason = self._want_source(mode, dev, open_pct)
 

@@ -169,12 +169,57 @@ def test_mode_is_not_switched_inside_the_deadband(demand):
 
 def test_mode_switches_only_after_the_dwell_time(demand):
     """Switching the whole plant on a transient average is expensive and slow
-    to undo."""
+    to undo.
+
+    The first reading here is deliberately IN BAND: it spends the start-up
+    one-shot (2026-08-19), which by design skips the dwell because the mode it
+    would replace is a config seed rather than a decision. Everything after
+    that is an in-operation switch and the dwell applies in full - which is
+    what this test has always been about.
+    """
     d = demand()
     warm = ({"a": 21.0}, {"a": 24.0})                            # -3 K
-    assert d.step("heating", *warm, {}, 0.0).mode == "heating"
+    assert d.step("heating", {"a": 21.0}, {"a": 21.0}, {}, 0.0).mode == "heating"
+    assert d.step("heating", *warm, {}, 1.0).mode == "heating"
     assert d.step("heating", *warm, {}, 3599.0).mode == "heating"
     assert d.step("heating", *warm, {}, 3601.0).mode == "cooling"
+
+
+def test_the_first_decision_after_a_start_skips_the_dwell(demand):
+    """Owner, 2026-08-19: "auto mode should fire on startup, not wait for an
+    hour for correction."
+
+    The dwell protects a mode the plant is already running. At start-up there
+    is no such mode - `current` is whatever `control.mode` says. Measured that
+    day: a rebuild at 18:51 came up heating with the house 1.6 K too warm and
+    would have idled until 19:52.
+    """
+    d = demand()
+    assert d.step("heating", {"a": 21.0}, {"a": 24.0}, {}, 0.0).mode == "cooling"
+
+
+def test_the_start_up_one_shot_is_spent_even_when_it_changes_nothing(demand):
+    """A complete reading inside the deadband IS a decision - the seed mode is
+    fine. If it did not spend the one-shot, the next drift out of band would
+    be treated as a start-up rather than as the in-operation transient it is,
+    and would skip the dwell it deserves."""
+    d = demand()
+    assert d.step("heating", {"a": 21.0}, {"a": 21.0}, {}, 0.0).mode == "heating"
+    assert d.step("heating", {"a": 21.0}, {"a": 24.0}, {}, 1.0).mode == "heating"
+
+
+def test_the_one_shot_does_not_arm_on_a_partial_room_set(demand, cfg):
+    """Room temperatures arrive over the first seconds, and a partial average
+    is not the house - Elternschlafzimmer alone reads -5.8 K against its 19.0
+    target and would flip the plant on its own. With a room missing, the
+    dwell applies as before: the safe degradation."""
+    cfg["rooms"] = [dict(cfg["rooms"][0]),
+                    {"name": "b", "label": "B", "circuits": [],
+                     "room_temp_topic": "roomtemp/b"}]
+    d = demand()
+    assert d.expected_rooms == 2
+    # Only one of the two has reported.
+    assert d.step("heating", {"a": 21.0}, {"a": 24.0}, {}, 0.0).mode == "heating"
 
 
 def test_a_transient_average_does_not_start_the_dwell_clock_running(demand):
@@ -380,3 +425,19 @@ def test_the_unreachable_branch_also_stops_at_saturation(cfg, demand):
     out, _ = d.enforce_flow_floor({v: 20.0 for v in d.circuit_valves})
     assert set(out.values()) == {50.0}, (
         f"unreachable floor commanded into the dead range: {sorted(set(out.values()))}")
+
+
+def test_auto_mode_never_overrules_an_explicit_off(demand):
+    """Regression, found while adding the start-up one-shot on 2026-08-19.
+
+    `off` is not a season, it is an operator stopping the plant, and
+    `_want_source` treats it as the only route to a stopped source. The dwell
+    path could already overrule it after an hour; the one-shot would have done
+    it within seconds of every restart - so a plant parked off would have come
+    back on by itself on the next deploy.
+    """
+    d = demand()
+    for now in (0.0, 1.0, 10_000.0):
+        out = d.step("off", {"a": 21.0}, {"a": 10.0}, {}, now)   # +11 K, wants heat
+        assert out.mode == "off", f"auto_mode left `off` at t={now}"
+        assert out.source_request is False

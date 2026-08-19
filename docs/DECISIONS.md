@@ -1289,3 +1289,43 @@ Wohnzimmer have a live publisher. So a value set from the dashboard for the
 other five is lost on the next deploy, and `setpoint_c` is now what they revert
 to. That is an improvement — the revert target is chosen rather than accidental
 — but it is not persistence. See BACKLOG.
+
+## D-044 · auto_mode decides at start-up without the dwell
+`mode_dwell_s` no longer applies to the first decision after a start. Owner,
+2026-08-19: *"auto mode should fire on startup, not wait for an hour for
+correction."*
+
+**Why:** the dwell exists so a transient average cannot flip a running plant,
+which is expensive and slow to undo. At start-up there is no running plant to
+protect — `current` is whatever `control.mode` says, a seed rather than a
+decision. Measured that evening: a rebuild at 18:51 came up heating with the
+house 1.6 K too warm, corrected the heat pump to heating, and would have idled
+until 19:52. Every deploy in a transitional season cost up to an hour of
+running the wrong way.
+
+**Armed only on a complete room set.** Room temperatures arrive over the first
+seconds, and a partial average is not the house: Elternschlafzimmer alone reads
+−5.8 K against its 19.0 target and would flip the plant on its own. If a sensor
+is dead the one-shot never arms and the dwell applies as before — the safe
+degradation, and a visible one, because the normal path logs its own decision.
+
+**Spent even when it changes nothing.** A complete reading inside the deadband
+*is* a decision: the seed mode is fine. Not spending it would treat the next
+drift out of band as a start-up and skip a dwell it has earned.
+
+**Not persisted**, deliberately. Restart == safe state, and here that means
+re-deriving the mode from measurement rather than inheriting a config guess.
+
+### The hole this opened, and closed
+
+**`off` is now sticky against auto_mode.** Adding the one-shot made
+`test_mode_off_is_the_one_thing_that_stops_the_source` fail: an explicit `off`
+with a +11 K deviation flipped to heating immediately. The dwell path could
+already do this after an hour — a pre-existing defect nobody had hit — but the
+one-shot would have done it within seconds of every restart, so a plant parked
+off would come back on by itself on the next deploy.
+
+`off` is not a season. It is an operator stopping the plant, and `_want_source`
+treats it as the only route to a stopped source. `_pick_mode` now returns
+`current` unchanged whenever it is `off`, which fixes the immediate path and
+the pre-existing dwell path together.

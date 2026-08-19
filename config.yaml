@@ -726,7 +726,12 @@ control:
     engage_deviation_c: 0.3 # how far off target before the source is worth it
     mode_deadband_c: 1.0    # PLANT-level only - rooms keep one target each.
                             # Without it the plant flaps around the average.
-    mode_dwell_s: 3600      # and the average must persist this long
+    mode_dwell_s: 3600      # and the average must persist this long.
+                            # NOT applied to the first decision after a start
+                            # (D-044): the mode it would replace is this file's
+                            # `mode`, a seed rather than a decision, so the
+                            # dwell buys nothing and costs an hour of running
+                            # the wrong way. Needs a complete room set to arm.
     min_on_s: 600           # anti-short-cycle. The compressor already cycles
     min_off_s: 600          # ~10 min on / ~9 min off unaided.
 
