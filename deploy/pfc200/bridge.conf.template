@@ -1,0 +1,57 @@
+# Bridge to the Home Assistant broker. See docs/PFC200.md and BACKLOG.
+#
+# WHY THE BRIDGE EXISTS AND WHAT IT DOES NOT DO. It is a TRANSPORT change, not
+# an independence gain: while a room's sensor still reaches heatctl through
+# Home Assistant, that room still depends on HA being up. Independence arrives
+# per room, as each Shelly starts publishing here directly. What the bridge
+# buys is that the two migrations - compute onto the PFC, sensors onto this
+# broker - can happen in either order and one room at a time.
+#
+# Hosted on the PFC rather than on HA deliberately: this side's configuration
+# is version-controlled in the heatctl repository, HA's broker configuration is
+# the un-versioned thing docs/HA_INTEGRATION.md exists to compensate for.
+
+connection ha
+address 192.168.178.230:1883
+remote_clientid pfc200-bridge
+cleansession false
+notifications true
+notification_topic bridge/ha/state
+try_private true
+start_type automatic
+restart_timeout 10 30
+
+# --- OUT: what Home Assistant needs from us --------------------------------
+# Telemetry and discovery, so the dashboards keep working once heatctl runs
+# here. `sensors/#` too (owner): HA keeps seeing every room sensor even after
+# the devices stop being HA's, which is what makes a per-room cutover
+# reversible.
+topic # out 2 heatctl/ heatctl/
+topic # out 2 homeassistant/ homeassistant/
+topic # out 2 sensors/ sensors/
+
+# --- IN: what only Home Assistant can give us ------------------------------
+# PERMANENT, and NARROWED to the two topics heatctl actually reads. Bridging
+# rtl_433/# wholesale imported 625 retained topics, most of them fossils from
+# 2022 - including a 13.4 degC outdoor temperature on the very topic that feeds
+# the slab target, against a true 17.2. The add-on publishes these WITHOUT
+# retain, so the fossil is what every new subscriber sees first and what it
+# would keep forever if the station went silent.
+# The WH65B stays on the HA-side rtl_433 path deliberately, as the
+# outdoor-temperature contingency - see the resilience notes in BACKLOG.
+topic 74930c0d-rtl433/devices/Fineoffset-WH65B/210/temperature_C in 2 rtl_433/ rtl_433/
+topic 74930c0d-rtl433/devices/Fineoffset-WH32/245/temperature_C in 2 rtl_433/ rtl_433/
+
+# Operator commands from the dashboard.
+topic set/# in 2 heatctl/ heatctl/
+topic hp/set/# in 2 heatctl/ heatctl/
+
+# TRANSITIONAL, both of them. `roomtemp/#` disappears room by room as each
+# Shelly moves to publishing here; `env/dew_point` disappears when D-045's
+# local computation has agreed with the HA helper for long enough to retire it.
+# Delete these two lines when that is done - leaving them would keep a
+# dependency alive that nothing needs.
+topic roomtemp/# in 2
+topic env/dew_point in 2 heatctl/ heatctl/
+remote_username plcbridge
+remote_password <SET ON THE DEVICE - see docs/PFC200.local.md>

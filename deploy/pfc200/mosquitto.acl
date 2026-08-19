@@ -1,0 +1,39 @@
+# Access control for the heatctl plant broker.
+#
+# Rewritten 2026-08-19. The previous version had two users, neither of which
+# could carry heatctl: `homeassistant` was read-only and `shelly` was confined
+# to one prefix, so nothing could publish `heatctl/#` and Home Assistant could
+# not send `heatctl/set/#`.
+#
+# Principle: each account may write ONLY what it owns, and read only what it
+# needs. heatctl owns its own tree; HA owns the inputs it produces.
+
+# --- the control core -------------------------------------------------------
+# Owns heatctl/# outright: telemetry, state topics, reasons, and the optimizer
+# tree underneath it. Writes Home Assistant discovery. Reads the room sensors,
+# whichever path they arrive by - HA bridge, rtl_433, or a Shelly direct.
+user heatctl
+topic readwrite heatctl/#
+topic write homeassistant/#
+topic read roomtemp/#
+topic read rtl_433/#
+topic read sensors/shellies/#
+
+# --- Home Assistant ---------------------------------------------------------
+# Reads everything heatctl publishes. Writes only the three things it is the
+# source of: operator commands, the dew point, and the room-temperature
+# bridges. It must NOT be able to write heatctl's state topics - a stale
+# retained value there would be indistinguishable from a live measurement.
+user homeassistant
+topic read heatctl/#
+topic read homeassistant/#
+topic read sensors/shellies/#
+topic write heatctl/set/#
+topic write heatctl/hp/set/#
+topic write heatctl/env/#
+topic write roomtemp/#
+
+# --- sensors ----------------------------------------------------------------
+# Write-only, and only its own subtree. Unchanged.
+user shelly
+topic write sensors/shellies/#
