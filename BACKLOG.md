@@ -5942,3 +5942,90 @@ what D-044 was built to avoid.
         Needs a start timestamp in `DemandController`. The unbounded version
         is wrong: a permanently blind model would lose the fast start-up
         decision altogether.
+
+## Where we are, 2026-08-20 ~01:00 — handover
+
+### Plant state at handover
+
+Cooling, 79 Hz, supply 18.5 against a 17.6 limit, no faults. House slab excess
+**+2 594 Wh = +0.30 K of slab, inside the 0.5 K deadband**, so the energy basis
+says *neither* and auto_mode will not move it. It is in cooling because it
+flipped while the excess was still inflated by an unclamped Schlafzimmer
+target; the clamp landed afterwards.
+
+Not unsafe — 0.9 K of condensation margin. It is a *waste* question: cooling at
+79 Hz against a 16.9 °C night that would shed the heat for free, while Gästebad
+and Badezimmer sit 0.6–0.8 K **below** target. Left as-is deliberately rather
+than changed on the assistant's judgement overnight.
+
+**Do not reach for `off`** to park it: D-044 made `off` sticky against
+auto_mode, so it stays off until a human moves it.
+
+### What shipped today
+
+| | |
+|---|---|
+| D-035 | valves are no longer a condensation defence; the compressor is |
+| D-036 | the cooling setpoint has a condensation floor again, no spread term |
+| D-037 | device protections published apart from faults |
+| D-038 | a precondition for one actuator may not disarm another |
+| D-039 | there is no safe amount of condensation |
+| D-040 | Arbeitszimmer stays in the dew-point reference |
+| D-041 | the commanded valve range is 20–50 %, and four things keyed to it |
+| D-042 | "reads ambient" is not evidence of "no flow" |
+| D-043 | one setpoint per room, configured per room |
+| D-044 | auto_mode decides at start-up without the dwell; `off` is sticky |
+| D-045 | heatctl computes its own dew point |
+| D-046 | the mode is decided on energy, and unreachable targets are clamped |
+
+Plus: the PFC200 surveyed and documented, its broker hardened and bridged to
+HA, and Wohnzimmer piloted onto a Shelly publishing direct to the PLC.
+
+### Tomorrow, in the order I would take them
+
+1. **[!] The outdoor station has been silent since 2026-08-19 19:34 UTC.**
+   Physical check, battery most likely. A retained 2022 fossil was masking it
+   until the fossils were cleared. heatctl is insulated (it uses the forecast
+   source) but the three-tier fallback is currently two-tier.
+
+2. **D-044's one-shot can fire before the energy model has answered**, spending
+   itself on the fallback statistic — the one D-046 demoted, and the two
+   disagreed in sign that evening. Needs a *bounded* grace: arm on energy if it
+   arrives within a short window, else fall back and spend it. An unbounded
+   wait is wrong, because a permanently blind model would lose the fast
+   start-up decision entirely.
+
+3. **Decide what the plant should do overnight in shoulder season.** Tonight
+   exposed the real question: with the energy balance in-band and free cooling
+   outdoors, running the compressor at all is the wrong answer, and `off` is a
+   trap because it is sticky. There may be a missing state between "cool" and
+   "off" — circulate but do not run the source.
+
+4. **Elternschlafzimmer's 19.0 is unreachable in summer** and now shows up
+   clamped rather than as a fictional 8 kWh of demand. The clamp stops it
+   corrupting the totals; it does not make the room reachable. That is an
+   envelope problem (4.9 kWh/day of solar into a slab that sheds ~253 W), and
+   D-006's cost — one number cannot express a heating and a cooling bound —
+   has now come due twice.
+
+5. **Continue the sensor migration**, one room at a time, Wohnzimmer having
+   proved the path. Blocked on the Shelly deep-sleep question: the device is
+   mains powered and still sleeps 600 s, only `online` is retained, and its
+   clock is unset right after wake — so neither retained readings nor payload
+   timestamps are available for staleness. Stopping the sleep is the only
+   route left open.
+
+6. **Then heatctl onto the PFC** (Phase B), which is now a small step: the
+   bridge already carries everything both ways, and the pilot proved the
+   config works unchanged from either side.
+
+### Things worth not forgetting
+
+- **`mosquitto_pub` exits 0 on ACL denial.** It produced four false successes
+  today. Verify by reading back what landed, never by exit status.
+- **Absence must be published, not implied.** Three instances today — retained
+  rtl_433 fossils, per-room energy topics, house energy topics. A value that is
+  merely not refreshed is indistinguishable from a current one.
+- **A green test proves nothing until its mutation is red.** Four tests today
+  passed against the very bugs they were written for, usually because they
+  asserted on a path that never ran.
