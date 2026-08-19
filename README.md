@@ -39,6 +39,7 @@ bridge is replaceable and the direct path stays as insurance.
 | The whole-system target architecture | `docs/DESIGN.md` | The destination, not today. Work packages WP-A..WP-I. |
 | WAGO coupler: registers, wiring, watchdog | `docs/HARDWARE.md` | Device truth. |
 | Heat pump: registers, limits, access rules | `docs/HEATPUMP.md` | Device truth. Read before touching heat-pump code. |
+| PFC200 750-8212: the target controller | `docs/PFC200.md` | Device truth. Survey, the watchdog question, and what it costs. |
 | What Home Assistant does, and **what was turned off** | `docs/HA_INTEGRATION.md` | Includes operational state — disabled automations, commented-out config — none of which is discoverable from the running system. |
 | Site addresses, credentials, vendor manuals, **building physics** | `docs/*.local.md` | Git-excluded; this repository is public. Envelope areas, U-values, thermal masses, façade azimuths and per-room geometry live in `docs/BUILDING.local.md` — they identify the site, so they never move into a tracked file. |
 | How one control decision is made | the module docstring in `heatctl/<module>.py` | Rationale lives next to the code it explains. |
@@ -49,8 +50,8 @@ bridge is replaceable and the direct path stays as insurance.
 - An open item → `BACKLOG.md`. Nowhere else.
 - A decision that establishes a principle, or reverses an earlier one → a new
   `D-nnn` in `docs/DECISIONS.md`. Routine work does not belong there.
-- A fact about a device → `docs/HARDWARE.md` or `docs/HEATPUMP.md`, never
-  inline in the code that happens to use it.
+- A fact about a device → `docs/HARDWARE.md`, `docs/HEATPUMP.md` or
+  `docs/PFC200.md`, never inline in the code that happens to use it.
 - Rationale for *how a module works* → that module's docstring.
 
 The failure mode this structure exists to prevent: a decision recorded only in
@@ -88,7 +89,9 @@ For systemd use an `EnvironmentFile`; see `deploy/systemd/README.md`.
 
 ## Deployment
 - Prototype: HA add-on, see `deploy/ha-addon/README.md`
-- Target: systemd on a dedicated machine, see `deploy/systemd/README.md`
+- Target: the WAGO PFC200 750-8212, see `docs/PFC200.md` — it replaces both
+  the coupler and the "dedicated machine" of `deploy/systemd/README.md`,
+  and has no Python, so it runs containerised. Migration plan in BACKLOG.
 
 ## Development
 See `ROADMAP.md` for milestones, `BACKLOG.md` for what is open, and

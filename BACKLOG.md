@@ -5619,3 +5619,115 @@ This is a request to *size* it, not to pad it. The owner reverted a 1.0 → 2.0
 raise on 2026-08-10 because the incident had a complete explanation without it,
 and that reasoning stands: a defensive change needs its own evidence. What is
 missing is the arithmetic, not the margin.
+
+## PFC200 750-8212 — survey and migration strategy, 2026-08-19
+
+The unit that arrived 2026-07-31 is online at `192.168.178.62` with Docker and
+a Mosquitto on a 119 GB SD card. Device facts: `docs/PFC200.md`; access and
+credentials: `docs/PFC200.local.md` (git-excluded).
+
+### The gating question is answered, and the answer is "not cleanly"
+
+The 2026-07-31 entry made everything conditional on whether the PFC200's Modbus
+server offers an equivalent output-zeroing watchdog. It does offer a watchdog,
+configurable without CODESYS via `/etc/config-tools/modbus_config`, with a
+timeout and an **options mask**. But the only one on offer is called
+**`alternative`**, and D-004 chose *Standard* on the 750-352 precisely to avoid
+Alternative's behaviour: Standard evaluates the coding mask, so `0x8020`
+(FC6+FC16) makes a satisfied watchdog mean *outputs are being driven*, which is
+why heatctl needs no heartbeat — its per-cycle valve write **is** the heartbeat.
+
+Whether the `options` mask restores Standard semantics is **unknown**. It is a
+hypothesis about a name. Until it is bench-tested, assume the worst case: a
+heatctl that reads fine and fails to write keeps the watchdog fed while the
+outputs go stale, and the outermost safety net is gone.
+
+Two further facts change the shape of the work:
+
+- **Nothing listens on 502 today.** The Modbus server lives in the PLC runtime
+  and no runtime is selected. `/home/codesys/` exists but is inert.
+- **There is no Python on the device.** heatctl runs containerised here or not
+  at all, which puts dockerd and an SD card in the critical path.
+
+### Proposed order, and the argument for it
+
+**Do not swap the coupler first.** That is the intuitive order and it is the
+wrong one. Swapping first replaces a *proven* failsafe (verified on hardware
+2026-07-26, and it did its job during the 2026-07-31 outage and the 2026-08-08
+switch incident) with an unverified one, while gaining nothing yet — the
+control would still run on the HA host, still across the network. All the risk,
+none of the benefit.
+
+Sequence by reversibility instead.
+
+**Phase A — broker, no plant risk, can be done any time.** The broker cannot
+carry heatctl as configured: `homeassistant` is read-only and `shelly` is
+confined to `sensors/shellies/#`, so nothing can publish `heatctl/#` and HA
+cannot send `heatctl/set/#`. Needs a `heatctl` account with write on its own
+tree, HA write-limited to `set/`, `persistence true` so retained state survives
+a container restart, 9001 closed or configured, and the CA key moved off the
+broker.
+
+**Phase B — move heatctl to the PFC200, keep the 750-352.** Container on the
+PFC, `io.backend: modbus_direct` still pointing at `192.168.178.52:502`,
+control plane on the PFC's own broker. **No plant downtime and rollback in
+seconds** — stop the container, start the HA add-on. What it buys is
+knowledge: whether one ARMv7 core runs the 1 s loop with margin, whether
+Docker-on-SD is acceptable, whether the broker holds. All of that is learned
+while the proven coupler watchdog still guards the outputs.
+
+> **Single-writer rule.** The HA add-on must be *stopped*, not merely idle. Two
+> heatctl instances writing the same valves is the failure this project has
+> already had once with HA automations on register 0.
+
+**Phase C — bench the watchdog.** Runs in parallel with B, on the bench, no
+plant involvement. Select a runtime so 502 listens. Then the only question that
+matters: **does a read-only Modbus client keep `alternative-watchdog` fed?**
+Connect, poll inputs, never write, and see whether the outputs zero. If they do
+not, the watchdog is the wrong kind and heatctl needs an explicit heartbeat
+write — a code change, not a config one, and one that weakens D-004's guarantee
+because a heartbeat can succeed while the real valve write fails. Also settle
+the process image layout (`base_register: 12` is hardcoded and this is the
+third time the map has moved) and the 5 V internal bus budget, with WAGO's
+configurator rather than by eye.
+
+**Phase D — swap the coupler. Only if C clears.** Same backplane, modules carry
+over, IP to the coupler's address, re-verify every register against known live
+sensor values, re-arm the watchdog and **re-run the deliberate trip test** from
+2026-07-26. After this heatctl talks to `127.0.0.1:502` and the control↔I/O
+link stops crossing the network at all — the 2026-08-08 lesson, banked.
+
+**Phase E — later: a native KBUS backend.** `/dev/kbus0` and the WAGO DAL
+libraries are on the device, so a third `IOBackend` beside `modbus_direct` and
+`mqtt_io` can drive the process image with no Modbus, no runtime and no
+CODESYS. No SDK headers are present, so this needs WAGO's SDK or a documented
+ABI. It is the better destination, not the first step.
+
+### Timing
+
+Phase D is the only one that costs plant availability, and it wants a **mild
+shoulder day** — neither a heatwave nor a cold snap. Roughly now to October.
+The 2026-07-31 entry picked its window on forecast and then let it slip; the
+same reasoning applies, so pick a day with low load in both directions and do
+not let it drift into a hot spell.
+
+Phases A and B are season-independent. B is worth doing soon precisely because
+it is reversible: the sooner heatctl has run a few weeks on this hardware, the
+less the coupler swap is carrying.
+
+### Shellys direct to this broker — independent, but not free
+
+One is already there: `shellyhtg3-9070695AA90C`, topic base
+`sensors/shellies/wohnzimmer`. Two measured problems before more rooms move off
+the HA bridge (details in `docs/PFC200.md`):
+
+- The device **deep-sleeps on a 600 s cycle** despite being mains powered.
+- **Only `online` is retained**, not the readings — so a subscriber that
+  connects mid-sleep has no temperature until the next wake, and heatctl would
+  fall back to house-average control silently.
+
+The HA-bridged rooms paper over exactly this with a `/2` heartbeat automation.
+Removing HA from the path removes that helper too, which is the honest cost.
+Also: the payload is JSON (`{"tC":23.7}`), and `room_temp_topic` currently
+expects a bare float for the rtl_433 room — so a JSON-extracting topic form is
+needed regardless.
