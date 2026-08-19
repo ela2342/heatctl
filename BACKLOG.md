@@ -5586,7 +5586,7 @@ trade could be made.
 - Distribution and the valves. They cannot make water colder, so they cannot
   breach the constraint — which is the whole of D-035.
 
-**Three findings.**
+**Two findings.**
 
 ### 1. `dew_point_margin_c: 1.0` is the only buffer, and it is unsized
 
@@ -5607,19 +5607,7 @@ Not changed here. The owner reverted a 1.0 → 2.0 raise on 2026-08-10 because
 the incident had a complete explanation without it, and that reasoning stands —
 this is a request to *size* it, not to pad it.
 
-### 2. `heatpump.allow_writes: false` disables every condensation defence
-
-Same shape as the `capacity.enabled` hazard fixed this morning, one level up.
-`_trim_capacity` returns immediately if `allow_writes` is false, so the
-no-dew-point refusal, the capacity loop and the fallback stop all vanish
-together — while the unit keeps running at whatever P04 it was last given.
-
-It is currently `true`, and it is a commissioning flag rather than something
-that gets toggled in normal operation, so this is not urgent. But after D-035
-there is nothing behind it. Options: refuse to enter cooling mode at all when
-writes are off, or treat it as a hard fault rather than a quiet no-op.
-
-### 3. The last-resort backstop is Er03, and that is not obviously wrong
+### 2. The last-resort backstop is Er03, and that is not obviously wrong
 
 D-035 removed heatctl's *deliberate* valve trip because starving the unit into
 a latching Er03 is worse than the condensation it prevents. But if heatctl
