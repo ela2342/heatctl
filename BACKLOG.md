@@ -5423,3 +5423,110 @@ one specifically" - appearing directly in return temperatures.
       single mismatch count/flag, and consider dropping the ten per-circuit
       readback entities. The ten graphs have already been removed from
       `heatctl-detail`; the register stays as one column in the table.
+
+## Nine-day review, 2026-08-10 → 2026-08-19
+
+Taken from InfluxDB (the App's own log keeps 100 lines, see below). Local
+times; Influx is UTC.
+
+### The manifold has been clean since the incident — the finding that matters
+
+`heatctl_supply_total` (the PT1000 the safety code and the capacity loop both
+read) against `cooling_supply_limit - 1.0` (i.e. the bare dew point), counted
+only while the compressor ran:
+
+| day | run min | below limit | **below dew point** | worst |
+|---|---|---|---|---|
+| 08-09 | 600 | 245 | 0 | — |
+| 08-10 | 640 | 235 | **5** | **3.08 K** |
+| 08-11 … 08-18 | 65–330 | 5–150 | **0** | — |
+
+Five minutes on 08-10, 3.08 K under, and nothing since. That is the visible
+condensation, and the dew-reference fix that morning closed it.
+
+**Do not read the "below limit" column as a breach.** `target_margin_c` is 0,
+so the capacity loop deliberately regulates *at* the limit; sitting a little
+under it for a third of the runtime is what a zero-margin proportional loop
+does, and the limit already carries `dew_point_margin_c: 1.0`.
+
+**Correction worth keeping.** Running the same query against
+`heatctl_leaving_water` instead says 10–90 min/day below dew point, up to
+1.87 K. That series is the *heat pump's own* register at 0.5 K resolution,
+upstream of the manifold; it dips on every restart while the water that
+reaches the slab does not. Two supply sensors, two different answers, and only
+one of them condenses anything — cf. [[names-are-hypotheses]]. I reported the
+alarming number first and had to withdraw it.
+
+### Er03 has not recurred
+
+Three `er03_water_flow` faults, all on 2026-08-10 between 10:20 and 10:34
+local, each ~4.5 min and self-clearing. None in the nine days since. That
+window is the valve trip firing, which is what D-035 removed.
+
+### 22 compressor cycles in five hours, on the unit's own antifreeze protection
+
+Night of 08-11/12, 02:12–07:15 local: `primary_antifreeze` (`0x800C` bit 5)
+raised and cleared 22 times, on a ~19 min period. One cycle, raw:
+
+```
+01:50:08  heatctl writes P04 = 15   (RESUME)
+01:50:19  compressor 14 Hz -> 50 Hz within 60 s
+01:51:44  leaving water 17.5 -> 15.5 in three minutes
+01:57:45  unit modulates down to 30 Hz on its own
+01:58:41  heatctl writes P04 = 30   (STOP), frequency 0 the same second
+01:58:47  primary_antifreeze ON
+02:03:51  primary_antifreeze OFF
+02:08:38  heatctl writes P04 = 15   (RESUME) — and round again
+02:09:51  cooling coil 10.5 -> 1.0 degC in 45 s
+```
+
+Two things this says.
+
+**The coil reaches 1–3 °C on every start.** The unit ramps to 50 Hz in a
+minute regardless of load; at night the floor cannot absorb that, so the
+evaporating pressure collapses and its antifreeze protection sees it. Note
+`Er 23 Leaving Water Over-cold Protection in Cooling Mode` (`0x800A` bit 5) did
+*not* trip — this is the coil, not the water.
+
+**STOP/RESUME is a bang-bang actuator and we are using it as the fine one.**
+`min_off_s` is 600 s and the resume hysteresis is `target_margin_c +
+deadband_c`, so the shortest achievable cycle is roughly what we saw. Against a
+load below the compressor's minimum modulation there is no duty it can hold —
+it can only cycle. With the valve backstop gone (D-035) this loop is the *only*
+condensation actuator, so its coarseness is now load-bearing.
+
+The exit is not a faster loop. `setpoint.py:_clamp` already argues, in the
+comment block D-030 left behind, that **the setpoint is the only real control
+over what reaches the slab** — and it currently commands P04 = 15 while the
+limit is 16.3, i.e. we ask for water colder than the condensation limit and
+then interrupt the machine to stop it arriving. Raising P04 to at or just above
+the limit would let the unit's own thermostat modulate instead of being yanked
+off, at the cost of the capacity the low setpoint was buying. **Not changed:
+this is a design question, and the plant is not currently condensing.**
+
+`primary_antifreeze` is also, note, the only entry in `FAULT_BITS` with no `Er`
+code — the manual lists it under "Fault flags 6" but it reads as a protection
+state. heatctl surfaces it as `binary_sensor.heatctl_heat_pump_fault`, so the
+plant looked faulted 22 times for doing its job. Worth deciding whether the two
+antifreeze bits belong in a separate `protections` series.
+
+### Smaller things found while looking
+
+- **`0x00F4 silent_max_fan_cooling` reads raw 65512** (= −24 signed) against a
+  declared 0..1000, warned on every start. Either the map is wrong or the
+  register holds junk; it is the fan cap that D-nnn's silent-mode work depends
+  on, so it is worth resolving.
+- **The App log is useless for review.** `ha addons logs` returns 100 lines and
+  the once-per-minute `flow floor: valves raised to 55% mean (still, since N s)`
+  line consumes all of them — nine days of history had to come from InfluxDB. A
+  "still" line that repeats unchanged every 60 s should log on the edge and
+  then at a decreasing rate, like the setpoint-saturation alarm already does.
+- **Untidy shutdown.** Stopping the container produces a stack of
+  `RuntimeError: Event loop is closed` tracebacks from `main.py:439`
+  (`plane_task.cancel()` after the loop is gone) and two more from
+  `mqtt_plane.py:204`. Cosmetic — the failsafe path is unaffected — but it
+  makes a real crash on shutdown indistinguishable from a clean stop.
+- **Dew-point pair count ranged 4–6** over the ten days (mean 5.5), so the
+  reference does still narrow occasionally. Not the 2-of-6 of the incident.
+- **Two P04 writes in 600 ms at startup** (`None -> 30`, then `25 -> 30`).
+  Both are flash cycles for one decision (D-013).
