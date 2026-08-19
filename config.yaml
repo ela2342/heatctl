@@ -355,6 +355,10 @@ rooms:
 control:
   mode: heating                # heating | cooling | off (overridable via MQTT)
   loop_interval_s: 1.0
+  # How old a room temperature may be before the room falls back to
+  # return-temperature control. Matches the running plant, which had it set
+  # explicitly while the repo relied on the identical default.
+  room_temp_max_age_s: 900.0
   default_setpoint_heating_c: 21.0   # room temp if room sensor present,
   default_setpoint_cooling_c: 23.0   # otherwise interpreted as return temp target
   # 23.0 (was 24.0): at 24 the rooms sat below target and commanded 0 %, i.e.
