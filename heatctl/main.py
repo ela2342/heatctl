@@ -1196,6 +1196,17 @@ class Controller:
                 # the static fallback.
                 (f"{lim:.1f}" if (lim := self.safety.cooling_supply_limit())
                  is not None else "unknown"))
+        # THE ROOM COUNT IS THE ALARM, not the dew point. A dew point is a
+        # plausible number at any room count, so the value alone cannot show
+        # that rooms have dropped out of it - which is how 2026-08-10 ran a
+        # limit 5 K below the truth until water appeared on the floor. Publish
+        # what the local computation is standing on, and watch the count.
+        dp_local, dp_room, dp_n = self.plane.local_dew_point(
+            self.safety.dew_max_age)
+        await self.plane.publish(
+            "dew_point/local", "unknown" if dp_local is None else f"{dp_local:.1f}")
+        await self.plane.publish("dew_point/rooms", str(dp_n))
+        await self.plane.publish("dew_point/source", dp_room or "none")
         # State side of the HA "number" entities. Retained so HA shows the
         # right value after a restart; retaining STATE is fine, retaining
         # anything under set/ is not (see docs/DESIGN.md 2.2).

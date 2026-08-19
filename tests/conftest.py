@@ -204,6 +204,13 @@ class FakePlane:
     def dew_point(self, max_age_s: float = 900) -> float | None:
         return self.dew
 
+    def local_dew_point(self, max_age_s: float = 900):
+        """(value, wettest room, room count). The double reports NO local
+        computation by default, so tests exercise the external path they were
+        written for; set `local_dew` to exercise the other one."""
+        d = getattr(self, "local_dew", None)
+        return (d, "fake" if d is not None else None, 1 if d is not None else 0)
+
     async def publish(self, suffix: str, payload, retain: bool = False) -> None:
         self.published.append((suffix, str(payload), retain))
 

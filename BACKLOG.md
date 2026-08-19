@@ -5790,6 +5790,11 @@ so it earns more than one source. In descending order of trust:
 
    **Do not count this pair as redundancy.** It is one sensor counted twice,
    which is worse than one sensor, because it looks like two.
+
+   - [ ] **Which bucket scaling is right is unknown.** One of the two rain
+         figures is wrong by 18 %. Nothing uses rain today, so this is filed
+         rather than fixed - but if rain ever feeds anything, settle it against
+         the station's actual model before trusting either number.
 2. **A neighbour's WH24**, per the owner. **Not confirmed from this side:** the
    only Fineoffset ids visible in HA are 210 (ours) and 245 (Arbeitszimmer),
    and the rtl_433 add-on's retained log window shows no second id. Since 210

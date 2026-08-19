@@ -26,7 +26,37 @@ import time
 
 import aiomqtt
 
+from . import dewpoint
+
 log = logging.getLogger("heatctl.mqtt")
+
+
+def extract(payload: str, key: str | None) -> float | None:
+    """A sensor payload as a number: bare, or one field of a JSON object.
+
+    The bare form is what the rtl_433 bridge and the HA room bridges publish.
+    The JSON form is what a Shelly publishes when it talks to the broker
+    directly - `{"id":0,"tC":23.7,"tF":74.6}` on
+    `sensors/shellies/<room>/status/temperature:0`.
+
+    `key` is configured per room, never guessed. Auto-detecting the field would
+    be picking a name out of a payload and hoping, and this project has a rule
+    about that.
+
+    Returns None on anything it cannot read, and the caller logs. Deliberately
+    NOT tolerant of a missing key on a JSON payload: that is a configuration
+    error, and silently falling back to `float(payload)` would turn it into a
+    room that mysteriously never updates.
+    """
+    if key is not None:
+        try:
+            payload = json.loads(payload)[key]
+        except (ValueError, TypeError, KeyError):
+            return None
+    try:
+        return float(payload)
+    except (TypeError, ValueError):
+        return None
 
 
 class ControlPlane:
@@ -49,8 +79,25 @@ class ControlPlane:
 
         self.room_topics = {r["room_temp_topic"]: r["name"]
                             for r in cfg["rooms"] if r.get("room_temp_topic")}
+        # Per-room JSON field, absent for a bare-number publisher. See
+        # `extract`. Keyed by room name, not topic, because the humidity topic
+        # for the same room needs its own.
+        self.room_temp_key = {r["name"]: r.get("room_temp_json_key")
+                              for r in cfg["rooms"]}
         self.room_temps: dict[str, float] = {}
         self.room_temp_ts: dict[str, float] = {}
+
+        # HUMIDITY, for computing the dew point here instead of in Home
+        # Assistant - see heatctl/dewpoint.py for why that matters. Optional
+        # per room and absent everywhere until the Shellys publish direct, so
+        # this degrades to "no local dew point" rather than to a wrong one.
+        self.room_hum_topics = {r["room_humidity_topic"]: r["name"]
+                                for r in cfg["rooms"]
+                                if r.get("room_humidity_topic")}
+        self.room_hum_key = {r["name"]: r.get("room_humidity_json_key")
+                             for r in cfg["rooms"]}
+        self.room_hum: dict[str, float] = {}
+        self.room_hum_ts: dict[str, float] = {}
 
         # Optional. Without it, safety falls back to the static cooling limit.
         self.dew_topic = m.get("dew_point_topic") or None
@@ -146,16 +193,57 @@ class ControlPlane:
         return {r: w for r, w in self._room_solar.items()
                 if now - self._room_solar_ts.get(r, 0.0) <= max_age_s}
 
+    def local_dew_point(self, max_age_s: float = 900,
+                        ) -> tuple[float | None, str | None, int]:
+        """Dew point computed here, from the rooms that report humidity.
+
+        Returns (value, wettest room, contributing room count). The count is
+        published, because a dew point is plausible at any room count and the
+        value alone cannot show that rooms have dropped out - see
+        heatctl/dewpoint.py.
+
+        Both halves of a pair must be individually fresh. Pairing a current
+        temperature with an hour-old humidity would produce a confident number
+        from a measurement nobody took.
+        """
+        now = time.monotonic()
+        pairs: dict[str, tuple[float | None, float | None]] = {}
+        for room, rh in self.room_hum.items():
+            if now - self.room_hum_ts.get(room, 0.0) > max_age_s:
+                continue
+            if now - self.room_temp_ts.get(room, 0.0) > max_age_s:
+                continue
+            pairs[room] = (self.room_temps.get(room), rh)
+        return dewpoint.house_dew_point(pairs)
+
     def dew_point(self, max_age_s: float = 900) -> float | None:
         """Latest dew point if fresh enough, else None.
 
         Freshness is judged by arrival time, so a retained message that stops
         being republished correctly ages out instead of looking current
         forever (docs/DESIGN.md 2.2).
+
+        THE MAXIMUM OF THE EXTERNAL AND THE LOCAL VALUE, when both are fresh.
+        Not a preference between them, and deliberately not "local wins once it
+        exists": during the migration only some rooms publish humidity here, so
+        a local value computed from three of seven rooms is a max over a SUBSET
+        and can only be too low. Too low is the direction that condenses - it
+        is exactly the 2026-08-10 failure, where a reference over two rooms
+        read 12.0 against Bad's actual 17.3.
+
+        Taking the max makes the two sources a max over their union, so
+        whichever is more protective wins and neither can silently relax the
+        limit as rooms move. When the external one is retired the max is over
+        one source and this reduces to the local computation.
         """
-        if self._dew is None or time.monotonic() - self._dew_ts > max_age_s:
-            return None
-        return self._dew
+        fresh = time.monotonic() - self._dew_ts <= max_age_s
+        external = self._dew if (self._dew is not None and fresh) else None
+        local, _room, _n = self.local_dew_point(max_age_s)
+        if external is None:
+            return local
+        if local is None:
+            return external
+        return max(external, local)
 
     async def run(self) -> None:
         while True:
@@ -191,6 +279,8 @@ class ControlPlane:
                     await client.subscribe(f"{self.base}/opt/room/+/solar_w")
                     for topic in self.room_topics:
                         await client.subscribe(topic)
+                    for topic in self.room_hum_topics:
+                        await client.subscribe(topic)
                     if self.dew_topic:
                         await client.subscribe(self.dew_topic)
                     if self.outdoor_topic:
@@ -225,11 +315,21 @@ class ControlPlane:
             return
         room = self.room_topics.get(topic)
         if room is not None:
-            try:
-                self.room_temps[room] = float(payload)
-                self.room_temp_ts[room] = time.monotonic()
-            except ValueError:
+            v = extract(payload, self.room_temp_key.get(room))
+            if v is None:
                 log.warning("bad room temp on %s: %r", topic, payload)
+            else:
+                self.room_temps[room] = v
+                self.room_temp_ts[room] = time.monotonic()
+            return
+        room = self.room_hum_topics.get(topic)
+        if room is not None:
+            v = extract(payload, self.room_hum_key.get(room))
+            if v is None:
+                log.warning("bad room humidity on %s: %r", topic, payload)
+            else:
+                self.room_hum[room] = v
+                self.room_hum_ts[room] = time.monotonic()
             return
         if (topic.startswith(f"{self.base}/opt/room/")
                 and topic.endswith("/solar_w")):
@@ -390,10 +490,16 @@ class ControlPlane:
                 f"{self.disc_prefix}/{component}/heatctl/{uid}/config",
                 b"", retain=True)
 
-        async def sensor(uid: str, name: str, state_topic: str, unit: str,
+        async def sensor(uid: str, name: str, state_topic: str,
+                         unit: str | None,
                          device_class: str | None = None):
-            conf = {"name": name, "state_topic": f"{self.base}/{state_topic}",
-                    "unit_of_measurement": unit, "state_class": "measurement"}
+            conf = {"name": name, "state_topic": f"{self.base}/{state_topic}"}
+            # A TEXT sensor gets neither. `state_class: measurement` on a
+            # non-numeric state makes HA log a warning every update and drops
+            # it from statistics; a unit on a room name is meaningless.
+            if unit is not None:
+                conf["unit_of_measurement"] = unit
+                conf["state_class"] = "measurement"
             if device_class:
                 conf["device_class"] = device_class
             await disc("sensor", uid, conf)
@@ -454,6 +560,16 @@ class ControlPlane:
         # against leaving water it is the whole cooling story on one axis.
         await sensor("cooling_supply_limit", "Cooling supply limit",
                      "cooling_supply_limit", "°C", "temperature")
+        # heatctl's OWN dew point, and what it rests on. Discovered separately
+        # from the HA helper's `system_dew_point_*` so the two can be compared
+        # while both exist - the changeover is only trustworthy if they agree
+        # before the helper is retired.
+        await sensor("dew_point_local", "Dew point (computed here)",
+                     "dew_point/local", "°C", "temperature")
+        await sensor("dew_point_rooms", "Dew point rooms", "dew_point/rooms",
+                     "rooms", None)
+        await sensor("dew_point_source", "Dew point source", "dew_point/source",
+                     None, None)
         # The pre-conditioning delta ACTUALLY IN FORCE, after staleness and the
         # absolute clamp. Discovered because it was invisible: layer 2 published
         # a number, layer 1 consumed it, and nothing showed whether the two

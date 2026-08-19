@@ -1329,3 +1329,47 @@ off would come back on by itself on the next deploy.
 treats it as the only route to a stopped source. `_pick_mode` now returns
 `current` unchanged whenever it is `off`, which fixes the immediate path and
 the pre-existing dwell path together.
+
+## D-045 · heatctl computes the dew point itself
+`heatctl/dewpoint.py` derives the condensation limit's input from the rooms'
+own temperature and humidity, instead of consuming a number Home Assistant
+computed. Same Magnus coefficients as the helper it replaces, so the changeover
+is not also a change of number.
+
+**Why:** it was the only *computation* in the safety path running on a machine
+heatctl is designed to survive without (D-001), feeding a limit that after
+D-035 has exactly one enforcer. It also lived in three hand-maintained copies
+of the same room list, which is how 2026-08-10 happened — the reference still
+named two rooms after five were instrumented, read 12.0 against Bad's 17.3, and
+the first symptom was water on the floor. Once the Shellys publish humidity to
+a broker heatctl already reads, the computation is local and the list is one
+list.
+
+**The combination rule, and it is the load-bearing part.** While migrating,
+only some rooms publish humidity here, so a locally computed value is a maximum
+over a *subset* and can only be **too low** — the 2026-08-10 direction. So
+`ControlPlane.dew_point()` returns the **maximum of the external and the local
+value**, each independently freshness-checked. Not "local wins once it exists".
+Max makes the pair a maximum over their union: whichever is more protective
+wins, neither can silently relax the limit as rooms move, and when the external
+source is retired it reduces to the local computation with no further change.
+
+**Refusal beats a guess.** `dew_point_c` returns None for a missing input, for
+RH outside 1–100 %, and for temperature outside −40..60 °C. A disconnected RH
+channel reads 0 %, and 0 % is not dry air — mutation-tested, accepting it
+yields **−88 °C**, i.e. unlimited licence to make cold water. None means no
+knowledge, which stops the compressor (D-010).
+
+**The room count is the alarm, not the value.** A dew point is plausible at any
+room count, so the number alone can never reveal that rooms dropped out.
+`heatctl/dew_point/rooms` and `/source` are published and discovered alongside
+`/local`, deliberately separate from the HA helper's `system_dew_point_*` so
+the two can be compared while both exist. **Do not retire the helper until they
+have agreed for a while.**
+
+**Payloads:** `room_temp_json_key` / `room_humidity_json_key` are optional per
+room. Absent means a bare number, as the rtl_433 and HA bridges publish;
+present means one field of a JSON object, as a Shelly publishes. Configured,
+never guessed — and a configured key that does not match is an error rather
+than a fallback to `float(payload)`, because the fallback turns a
+misconfiguration into a room that mysteriously never updates.
