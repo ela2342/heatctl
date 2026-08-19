@@ -950,17 +950,27 @@ class Controller:
         # estimable rooms, so it understates by construction; without the count
         # beside it nobody can tell a small deficit from a small sample.
         await self.plane.publish("energy/rooms_valid", str(n_valid))
-        if total is not None:
-            await self.plane.publish("energy/house_excess_wh", f"{total:.0f}")
-        if act is not None:
-            # THE CONTROL-RELEVANT ONE. `house_excess_wh` beside it is the raw
-            # physical state, kept visible because a surplus is exactly what is
-            # worth seeing on an August night.
-            await self.plane.publish("energy/house_actionable_wh", f"{act:.0f}")
-        if blocked is not None:
-            # What the OTHER mode would have to deliver. Published, not acted
-            # on - see house_blocked_wh for why it must not pick the mode.
-            await self.plane.publish("energy/house_blocked_wh", f"{blocked:.0f}")
+        # ABSENCE IS PUBLISHED, NOT IMPLIED - the same fix as the per-room
+        # topics above, and this one matters more: `house_excess_wh` is what
+        # D-046 picks the mode from. Seen 2026-08-20 with every room inside
+        # the post-restart settle window: the topic still read 20851 Wh while
+        # `rooms_valid` said 0. The DECISION was already correct, because it
+        # reads `_last_house_excess_wh` and that is None - but anyone checking
+        # why the plant chose a mode would have been reading a fossil.
+        await self.plane.publish(
+            "energy/house_excess_wh",
+            "unknown" if total is None else f"{total:.0f}")
+        # THE CONTROL-RELEVANT ONE. `house_excess_wh` beside it is the raw
+        # physical state, kept visible because a surplus is exactly what is
+        # worth seeing on an August night.
+        await self.plane.publish(
+            "energy/house_actionable_wh",
+            "unknown" if act is None else f"{act:.0f}")
+        # What the OTHER mode would have to deliver. Published, not acted on -
+        # see house_blocked_wh for why it must not pick the mode.
+        await self.plane.publish(
+            "energy/house_blocked_wh",
+            "unknown" if blocked is None else f"{blocked:.0f}")
 
     def _return_control(self, valve: str, sensor: str, state,
                         return_sp: float, dt: float, now: float) -> float:
