@@ -42,11 +42,8 @@ project is not ignorance, it is **drift between what is written and what runs**.
 5. **Safety never consumes an optimised or identified parameter.** A wrong
    parameter must cost efficiency, never containment. · D-031, D-032, WP-R(e)
 5a. **No loop may request water colder than the condensation limit**, and no
-    floor may request a setpoint the unit refuses to start at. The FLOOR may
-    contain no term the controller moves — that is what latched in D-030. The
-    CAP necessarily does contain one (return water), and is safe only because
-    it relaxes a lower bound instead of raising one: it can permit, never
-    command. · D-036
+    floor may request a setpoint the unit refuses to start at. Neither bound
+    may contain a term the controller itself moves. · D-036
 6. **One writer per actuator.** A second writer is a design error. · D-030
 
 ### Parameters and constants
@@ -1003,24 +1000,6 @@ line, and `tests/test_setpoint_no_condensation.py` holds it.
 floor. The floor does not hold the limit; it removes the regime where success
 at the setpoint *is* a breach. The enforcer is still `_trim_capacity`, acting
 on measured supply every cycle — which after D-035 is the only one there is.
-
-**The cap contains a term the controller moves, and that is allowed here.**
-`running_ceiling` is `return water − P01`, and return water is exactly what
-cooling drives down — the same objection that condemned `+ spread`. The
-difference is direction and authority. `+ spread` ratcheted *restrictively* and
-*forced* the setpoint up against a house asking for cooling, so the loop drove
-itself further into the constraint. The cap can only ever widen the permitted
-range: return ↓ → cap ↓ → floor ↓, and a lower bound that falls commands
-nothing. There is also no feedback-free way to say "the unit will not start",
-because the dead zone is defined against return water. **The asymmetry is the
-whole licence** — if this were ever changed into something that raises a bound,
-it becomes D-030 again.
-
-Worth knowing: in a deeply cooled house the cap can relax the floor all the way
-back to `cooling_min_c` (return 16 → cap 14 against a 14.6 limit). That regime
-is one where the machine is idling on its own dead zone anyway, and measured
-supply still governs via `_trim_capacity` — but the floor is not a guarantee
-there, and should not be described as one.
 
 **The cap is load-bearing, not defensive.** Without it, a humid day (dew point
 20, return 21) floors the setpoint at 21 while the unit will not start above
