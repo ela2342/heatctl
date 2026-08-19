@@ -1545,14 +1545,53 @@ def main() -> None:
                         format="%(asctime)s %(name)s %(levelname)s %(message)s")
     _quiet_pymodbus(level)
     _log_dependency_versions()
-    ctl = Controller(cfg)
-    loop = asyncio.new_event_loop()
+    asyncio.run(_run_until_signalled(Controller(cfg)))
+
+
+async def _run_until_signalled(ctl: "Controller") -> None:
+    """Run the controller until SIGINT/SIGTERM, then let it tear itself down.
+
+    `loop.add_signal_handler(sig, loop.stop)` was the whole shutdown story
+    until 2026-08-19, and it stops the loop *immediately*: `run()` never
+    resumes, so its `finally` - the block that marks us offline on MQTT and
+    stops the I/O backend - never ran at all. What reached the log instead was
+    a screen of `RuntimeError: Event loop is closed` from paho, aiomqtt and
+    asyncio, on every single deploy.
+
+    That is not cosmetic. A real crash during shutdown was indistinguishable
+    from a clean stop, and the plane never published its offline state, so
+    every restart left HA holding stale values with no `unavailable` in
+    between.
+
+    Signalling an Event instead means the cancellation arrives *inside* the
+    coroutine, which is the only way a `finally` gets to run.
+
+    BOUNDED, because s6 follows SIGTERM with SIGKILL: if teardown wedges we
+    lose the tidy exit but not the container's ability to die. The coupler
+    watchdog is what actually makes the plant safe here, not this function
+    (D-004) - it zeroes the outputs a few seconds after writes stop, however
+    we exited.
+    """
+    loop = asyncio.get_running_loop()
+    stop = asyncio.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, loop.stop)
+        loop.add_signal_handler(sig, stop.set)
+
+    task = asyncio.create_task(ctl.run())
+    waiter = asyncio.create_task(stop.wait())
+    await asyncio.wait({task, waiter}, return_when=asyncio.FIRST_COMPLETED)
+    waiter.cancel()
+
+    if task.done():
+        task.result()          # the controller exited on its own - re-raise
+        return
+    task.cancel()
     try:
-        loop.run_until_complete(ctl.run())
-    except (KeyboardInterrupt, RuntimeError):
+        await asyncio.wait_for(task, timeout=10.0)
+    except (asyncio.CancelledError, TimeoutError):
         pass
+    except Exception:
+        log.exception("shutdown did not complete cleanly")
 
 
 if __name__ == "__main__":
