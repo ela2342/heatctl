@@ -32,16 +32,11 @@ class Safety:
         # only to choose between stopping and trusting that guess.
         self.dew_margin = s.get("dew_point_margin_c", 1.0)
         self.dew_max_age = s.get("dew_point_max_age_s", 900)
-        # ASYMMETRIC hysteresis on the condensation guard. Trip immediately,
-        # release only `release_margin` above the limit. See apply().
-        self.dew_release_margin = s.get("dew_point_release_margin_c", 0.3)
-        # How long supply must sit below the dew point CONTINUOUSLY before the
-        # valve backstop fires. 0 restores the pre-2026-08-01 instant trip.
-        # See the long note in apply() - this is what turns the guard from a
-        # noise amplifier into the last stage of a cascade.
-        self.undertemp_dwell_s = float(s.get("undertemp_dwell_s", 180.0))
-        self._undertemp_since: float | None = None
-        self._cooling_tripped = False
+        # `dew_point_release_margin_c` and `undertemp_dwell_s` are NO LONGER
+        # READ (2026-08-10). Both existed solely to tame the valve backstop
+        # that has been removed; they are left in config.yaml with a note
+        # rather than silently dropped, so anyone who remembers tuning them
+        # finds out what happened instead of wondering why they do nothing.
         self._dew: float | None = None
         self._dew_ts = 0.0
         self._dew_logged: float | None = None
@@ -129,17 +124,40 @@ class Safety:
           water at a sane temperature. All that is lost is efficient
           distribution and per-room control - not safety. Driven by
           `safety.failsafe_valve_pct`.
-        * FAIL CLOSED when the supply temperature is *known* to be dangerous:
-          screed overtemp in heating, below-dew-point in cooling. Here opening
-          is the actively harmful choice, and "the heat pump holds a setpoint"
-          no longer applies because the measurement says it is not. These
-          stay at 0 % on purpose - do not "make everything fail open".
-        * FAIL CLOSED IN COOLING when the dew point is unknown, if
-          a dew point. Condensation is the one limit we
-          cannot bound without a measurement, and the damage is wet floors
-          rather than a warm screed the slab mass absorbs. See
-          cooling_supply_limit() for why a static number is not a safe
-          substitute.
+        * FAIL CLOSED when the supply temperature is *known* to be dangerous
+          AND closing actually removes the danger. That is screed overtemp in
+          heating, and only that. Opening is the actively harmful choice there
+          and "the heat pump holds a setpoint" no longer applies, because the
+          measurement says it is not.
+        * CONDENSATION IS **NOT** A VALVE RULE. Removed 2026-08-10 on the
+          owner's instruction: *"the risk of triggering Er03 and leading to an
+          unrecoverable state is too high. Shutting down the compressor is the
+          only legitimate mechanism."*
+
+          The asymmetry with screed overtemp is physical, not stylistic. A hot
+          screed is already hot: shutting the valve stops adding to it and the
+          mass carries the rest. Cold supply is being MADE, continuously, by a
+          compressor that shutting valves cannot reach - it can only remove the
+          load, collapse flow, and starve the unit into Er03, which latches and
+          needs a person at the machine. That converts a wet floor into a dead
+          plant, in summer, possibly for days.
+
+          The source-side cascade is what acts now, and it already existed:
+          `capacity.py` lowers the frequency ceiling immediately on a shrinking
+          margin and STOPS the compressor at the frequency floor - through the
+          setpoint register, which is the one lever that leaves the pump
+          running. Circulation continuing is precisely what warms the loop back
+          above the dew point, so the recovery path is the thing valve-closing
+          used to destroy.
+
+          KNOWN COST, accepted deliberately: if the heat pump is unreachable,
+          nothing can stop it making cold water. That case is real and was
+          measured on 2026-08-01 - eight minutes unreachable with supply 0.1 K
+          under the dew point - and the valve backstop was the only actuator
+          left. It is given up because a latched Er03 is the worse outcome and
+          the far more frequent one. If this is ever revisited, the fix is a
+          flow-preserving partial close, not a return to slamming everything
+          shut.
 
         ORDER MATTERS, and not in the obvious way. The known-bad-supply rules
         are checked BEFORE the fail-open one, because they depend on the
@@ -197,87 +215,24 @@ class Safety:
             # The refusal now lives where it belongs: main.py commands the
             # compressor OFF while the dew point is unknown. Valve position is
             # left exactly as control proposed.
-            if not self.dew_point_known(now):
-                self._undertemp_since = None
-                self._cooling_tripped = False
-                return proposed_pct, None
-            if vl is not None:
-                # THE GUARD TRIPS AT THE DEW POINT, not at the control target
-                # (owner, 2026-07-31: "Trip at 0, target 1K"). These are two
-                # different jobs and stacking them cost a whole margin:
-                #   control target = dew + dew_point_margin_c   (how badly we
-                #                    know the dew point)
-                #   guard trip     = dew                        (the physical
-                #                    boundary, a genuine last resort)
-                # Previously the guard tripped at the target, so the controller
-                # could not aim there without sitting on the trip threshold -
-                # which is what `capacity.target_margin_c` was really buying.
-                limit = self._dew
-                # ASYMMETRIC BY DESIGN. Trip the instant supply goes below the
-                # limit; release only once it is `release_margin` clear of it.
-                #
-                # Measured 2026-07-28 07:32 (D-023). A strict `vl < limit`
-                # compares two INDEPENDENTLY quantised 0.1 K signals, and the
-                # better the plant is controlled the more time supply spends
-                # sitting exactly on the limit - load compensation drives it
-                # there on purpose. One LSB tick in EITHER signal then flips
-                # every owned valve. That morning the trip came from supply
-                # (14.5 -> 14.4) and the release 16 s later came from the DEW
-                # POINT (12.5 -> 12.4, limit 14.5 -> 14.4) with supply
-                # unchanged, so instrumenting only the supply side would have
-                # missed half of it. 16 s against a 150 s actuator stroke
-                # means the valve never reached either commanded position and
-                # its true opening became unknown.
-                #
-                # The asymmetry is the safety-relevant part: closing is the
-                # protective direction and must stay instantaneous, so the
-                # margin may only ever DELAY REOPENING. Do not "simplify" this
-                # into a symmetric band - that would defer the trip.
-                below = (vl < limit or (self._cooling_tripped
-                                        and vl < limit + self.dew_release_margin))
-                # DWELL BEFORE TRIPPING. Added 2026-08-01, owner's call.
-                #
-                # The instant trip above was firing on ONE 0.1 K quantisation
-                # tick in either signal (D-023 records a trip from supply and a
-                # release 16 s later from the dew point moving instead), and
-                # every firing starved the pump into a latched Er03. Against a
-                # 150 s actuator stroke the valve never even reached the
-                # commanded position, so the "protection" was noise in and a
-                # plant outage out.
-                #
-                # Owner, 2026-08-01: *"it's not like a minute or three below
-                # dew point causes immediate harm, if it is a rare event."*
-                # Condensation is a rate process; three minutes deposits
-                # nothing that matters.
-                #
-                # The dwell is not an arbitrary delay - it is what makes this a
-                # CASCADE. The capacity loop cuts frequency within a cycle and
-                # stops the compressor at its floor, so if supply is still
-                # under the dew point after the dwell, the source-side
-                # protection has demonstrably failed and this backstop should
-                # fire. That is the case worth keeping: on 2026-08-01 the heat
-                # pump was unreachable for 8 minutes with supply 0.1 K off the
-                # dew point, and nothing else could have stopped it.
-                #
-                # Set `undertemp_dwell_s: 0` to restore the instant trip.
-                if below:
-                    if self._undertemp_since is None:
-                        self._undertemp_since = _now
-                    if _now - self._undertemp_since >= self.undertemp_dwell_s:
-                        self._cooling_tripped = True
-                        return 0.0, "vl_undertemp"
-                    return proposed_pct, None
-                self._undertemp_since = None
-            self._cooling_tripped = False
-        else:
-            # Mode left cooling; the latch must not survive into the next
-            # cooling period (restart == safe state, and so does a mode flip).
-            # The dwell timer is part of that latch and must reset with it, or
-            # a mode flip would carry accumulated below-limit time into a fresh
-            # cooling period and trip on the first cycle.
-            self._cooling_tripped = False
-            self._undertemp_since = None
-
+            # NO VALVE ACTION FOR CONDENSATION AT ALL. See the policy above.
+            #
+            # What used to live here: an asymmetric trip at the dew point with
+            # a 180 s dwell, tuned hard over two weeks (D-023). The tuning was
+            # sound and it is not why this is gone - the mechanism was wrong.
+            # Every firing starved the pump, and against a 150 s actuator
+            # stroke the valve often never reached the commanded position, so
+            # the "protection" was noise in and a plant outage out.
+            #
+            # The dwell was the tell. It existed because the source-side
+            # cascade nearly always resolves the breach first, so the backstop
+            # only ever fired on the cases the cascade could not reach - and on
+            # those it did more harm than the condensation.
+            #
+            # Kept deliberately: the guard still owns `cooling_supply_limit()`,
+            # which is what `capacity.py` regulates against. The limit is the
+            # useful half; the valve action was not.
+            pass
         # Lost knowledge of this circuit -> fail open (see policy above).
         if not rl_valid:
             return self.failsafe_pct, f"sensor_fault:{circuit_sensor}"

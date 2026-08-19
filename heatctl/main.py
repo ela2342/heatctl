@@ -318,8 +318,16 @@ class Controller:
         2026-07-30, that fan cap was still at its default and enabling silent
         mode without lifting it would have been a high-pressure trip.
         """
-        if not self.capacity.enabled or not self.hp.allow_writes:
+        if not self.hp.allow_writes:
             return
+        # THE CONDENSATION REFUSALS RUN BEFORE THE `capacity.enabled` GATE, and
+        # that ordering became load-bearing on 2026-08-10.
+        #
+        # Until then the valve backstop in Safety.apply was the last resort, so
+        # gating the source-side refusal behind an optimisation flag only cost
+        # efficiency. With the backstop removed (owner: "shutting down the
+        # compressor is the only legitimate mechanism") this IS the protection,
+        # and a safety function must not switch off with a tuning feature.
         # NO DEW POINT -> DO NOT MAKE COLD WATER. This is the source-side half
         # of the change on 2026-08-01; `Safety.apply` used to answer an unknown
         # dew point by slamming every valve shut, which starved the pump into a
@@ -331,6 +339,28 @@ class Controller:
                 await self.hp.set_cooling(
                     None, "dew point unknown - refusing to cool")
             await self.plane.publish("capacity/reason", "dew point unknown")
+            return
+        if not self.capacity.enabled:
+            # FALLBACK OWNER. With the loop disabled nothing else watches the
+            # margin, so stop on a measured breach here instead. Deliberately
+            # only in this branch: when the loop IS enabled it owns STOP and
+            # RESUME together (see `d.stops` / `d.resumes` below), and two
+            # writers on one register would fight over the setpoint.
+            #
+            # Note the asymmetry this leaves: nothing here resumes. Cooling
+            # stays off until the loop is re-enabled or heatctl restarts, which
+            # `_clear_stale_cooling_off` handles. That is the safe direction and
+            # it is loud - the plant visibly stops cooling.
+            limit = self.safety.cooling_supply_limit(now)
+            vl = (None if "vl_total" in state.faults
+                  else state.temps.get("vl_total"))
+            if (self.mode == "cooling" and limit is not None and vl is not None
+                    and vl < limit and not self.hp.cooling_is_off()):
+                log.warning("compressor STOP: supply %.1f below the %.1f limit "
+                            "and the capacity loop is disabled", vl, limit)
+                self.log_event("compressor_stop", "condensation, capacity off")
+                await self.hp.set_cooling(
+                    None, f"supply {vl:.1f} below limit {limit:.1f}")
             return
         flags1 = self.hp.config.get(0x0001)
         fan_cap = self.hp.config.get(hpm.by_name("silent_max_fan_cooling").addr)

@@ -160,20 +160,19 @@ async def test_mode_off_closes_every_valve(controller):
 async def test_safety_overrides_the_control_output(controller):
     """Control proposes, safety decides - end to end through step()."""
     ctl = controller(
-        control={"mode": "cooling"},
+        control={"mode": "heating"},
         temps={"rl_hk01": 24.0, "rl_hk02": 24.0, "rl_hk03": 24.0,
-               "vl_total": 12.0},                # below dew-point guard
+               "vl_total": 50.0},                # screed overtemp -> force 0
         room_temps={"gaestebad": 28.0},          # maximum cooling demand
         dew_point=14.0,                          # limit 16.0
     )
     # Dwell neutralised: this test is about the override PROPAGATING, not
     # about when it fires. The 2026-08-01 trip dwell has its own tests in
     # test_safety.py; leaving it in would make these depend on wall time.
-    ctl.safety.undertemp_dwell_s = 0.0
     ctl.io.touch(time.monotonic())
     await ctl.step(1.0)
     assert ctl.io.last_write["valve_hk01"] == 0.0
-    assert ctl.plane.topic("override/valve_hk01") == "vl_undertemp"
+    assert ctl.plane.topic("override/valve_hk01") == "vl_overtemp"
 
 
 # ---------- RL validity gating (present defect, docs/DESIGN.md 4) ----------
@@ -236,16 +235,15 @@ async def test_the_gate_records_what_safety_wrote_not_what_control_proposed(
     trips on `vl_undertemp` instead, which is the same question it meant to ask.
     """
     ctl = controller(
-        control={"mode": "cooling"},
+        control={"mode": "heating"},
         temps={"rl_hk01": 24.0, "rl_hk02": 24.0, "rl_hk03": 24.0,
-               "vl_total": 12.0},              # condensation guard -> force 0
+               "vl_total": 50.0},              # screed overtemp -> force 0
         room_temps={"gaestebad": 28.0},        # control wants 100 %
         dew_point=14.0,                        # guard trips at 14.0
     )
     # Dwell neutralised: this test is about the override PROPAGATING, not
     # about when it fires. The 2026-08-01 trip dwell has its own tests in
     # test_safety.py; leaving it in would make these depend on wall time.
-    ctl.safety.undertemp_dwell_s = 0.0
     ctl.io.touch(time.monotonic())
     await ctl.step(1.0)
     assert ctl.io.last_write["valve_hk01"] == 0.0
@@ -353,19 +351,25 @@ async def test_safety_overrides_are_logged_once_not_once_per_cycle(controller,
     suspected chain being dew-point trip -> valves shut -> flow collapse ->
     flow interlock, and the first link could be neither confirmed nor refuted.
 
-    One line per REASON, not per valve - a dew-point trip hits every circuit at
+    One line per REASON, not per valve - one supply fault hits every circuit at
     once and that is one fact, not ten.
+
+    RETARGETED 2026-08-10. The trigger was a dew-point trip; that rule is gone
+    (owner: the Er03 risk outweighed it, the compressor is the only legitimate
+    mechanism). Screed overtemp is the remaining forced-shut rule and exercises
+    the identical logging path. The defect this pins - overrides invisible in
+    logs and in HA - is unchanged, and so is the reason it mattered: that same
+    day the Er03 chain could be neither confirmed nor refuted.
     """
     ctl = controller(
         temps={"rl_hk01": 24.0, "rl_hk02": 24.0, "rl_hk03": 24.0,
-               "vl_total": 15.0},          # supply well under the dew point
+               "vl_total": 50.0},          # screed overtemp: 50 > 45 limit
         dew_point=20.0,
-        control={"mode": "cooling"},
+        control={"mode": "heating"},
     )
     # Dwell neutralised: this test is about the override PROPAGATING, not
     # about when it fires. The 2026-08-01 trip dwell has its own tests in
     # test_safety.py; leaving it in would make these depend on wall time.
-    ctl.safety.undertemp_dwell_s = 0.0
     ctl.io.touch(time.monotonic())
 
     with caplog.at_level("INFO", logger="heatctl"):
@@ -378,7 +382,7 @@ async def test_safety_overrides_are_logged_once_not_once_per_cycle(controller,
     lines = [r for r in caplog.records
              if "SAFETY OVERRIDE" in r.getMessage()]
     assert len(lines) == 1, f"{len(lines)} override lines for 50 cycles"
-    assert "vl_undertemp" in lines[0].getMessage()
+    assert "vl_overtemp" in lines[0].getMessage()
 
 
 async def test_flow_floor_is_logged_once_not_once_per_cycle(controller, caplog):
@@ -633,26 +637,31 @@ async def test_safety_still_forces_a_circuit_shut_after_the_flow_floor(controlle
     Both want to move the same valve in opposite directions. The floor opens
     valves to keep the pump alive; safety closes them when the supply is known
     dangerous. If these ever swap order, heatctl would hold a circuit open into
-    below-dew-point water to protect the pump - trading an invisible wet slab
-    for a recoverable fault code. That is the wrong trade, so pin the order.
+    water that is measurably damaging in order to protect the pump.
+
+    RETARGETED 2026-08-10 onto screed overtemp. The original case was
+    below-dew-point supply, and that specific trade has since been decided the
+    OTHER way on purpose: condensation no longer closes valves at all, because
+    starving the pump into a latched Er03 was the worse outcome. Screed
+    overtemp keeps failing closed - there closing genuinely removes the danger -
+    so the ordering invariant still has a live case to defend.
     """
     ctl = controller(
         temps={"rl_hk01": 20.0, "rl_hk02": 20.0, "rl_hk03": 20.0,
-               "vl_total": 10.0},          # supply far below any dew limit
-        dew_point=14.0,                    # limit 16.0 -> supply is bad
-        control={"mode": "cooling"},
+               "vl_total": 50.0},          # screed overtemp: 50 > 45 limit
+        dew_point=14.0,
+        control={"mode": "heating"},
     )
     # Dwell neutralised: this test is about the override PROPAGATING, not
     # about when it fires. The 2026-08-01 trip dwell has its own tests in
     # test_safety.py; leaving it in would make these depend on wall time.
-    ctl.safety.undertemp_dwell_s = 0.0
     ctl.io.touch(time.monotonic())
     await ctl.step(1.0)
     written = ctl.io.last_write
     assert written, "nothing written - test is not checking anything"
     for valve in ("valve_hk01", "valve_hk02", "valve_hk03"):
         assert written[valve] == 0.0, (
-            f"{valve} left open at {written[valve]} % into below-dew-point "
+            f"{valve} left open at {written[valve]} % into an overtemp "
             "supply - the flow floor overrode safety")
 
 
@@ -804,7 +813,7 @@ async def test_resume_clears_the_restart_dead_zone(controller):
     only when the house warmed the return to 22.0. heatctl reported a running
     plant throughout.
     """
-    ctl = controller(control={"mode": "cooling"},
+    ctl = controller(control={"mode": "heating"},
                      temps={"rl_hk01": 24.0, "rl_hk02": 24.0, "rl_hk03": 24.0,
                             "vl_total": 22.0},
                      dew_point=12.0)
@@ -835,7 +844,7 @@ async def test_resume_does_not_lower_the_setpoint_when_it_already_starts(
     only when the dead zone would otherwise block the start. With plenty of
     difference, the previous setpoint must be restored untouched.
     """
-    ctl = controller(control={"mode": "cooling"},
+    ctl = controller(control={"mode": "heating"},
                      temps={"rl_hk01": 24.0, "rl_hk02": 24.0, "rl_hk03": 24.0,
                             "vl_total": 26.0},
                      dew_point=12.0)

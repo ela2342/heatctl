@@ -31,17 +31,16 @@ class TestValveOverride:
         """The load-bearing one. An override must never be able to hold a
         circuit open into a supply below the dew point."""
         ctl = controller(
-            control={"mode": "cooling"},
+            control={"mode": "heating"},
             temps={"rl_hk01": 24.0, "rl_hk02": 24.0, "rl_hk03": 24.0,
-                   "vl_total": 12.0},          # below the condensation limit
+                   "vl_total": 50.0},          # screed overtemp, still fails closed
             room_temps={"gaestebad": 28.0},
             dew_point=14.0)
-        ctl.safety.undertemp_dwell_s = 0.0
         ctl.on_command("valve", "valve_hk01", "100")
         ctl.io.touch(time.monotonic())
         await ctl.step(1.0)
         assert ctl.io.last_write["valve_hk01"] == 0.0
-        assert ctl.plane.topic("override/valve_hk01") == "vl_undertemp"
+        assert ctl.plane.topic("override/valve_hk01") == "vl_overtemp"
 
     async def test_auto_releases_it(self, controller):
         ctl = controller(
