@@ -45,30 +45,10 @@ the precision: it means the soft loop and the hard guard can disagree about
 whether a breach is happening. The heat pump register remains as a FALLBACK
 for when the manifold sensor is faulted, because some reading beats none.
 
-**`max_open` and the saturation heuristic: read this before trusting them.**
-
-This docstring said, until 2026-08-19: "Honest limitation while only two
-circuits are actuated: the other eight are open pipe and cannot throttle, so
-`max_open` barely reflects load and this loop effectively runs on house
-deviation alone. It gets much better when the remaining actuators are fitted."
-
-That stopped being true on 2026-07-31, when actuators went onto circuits 1-4
-and 6-11 - all ten water-carrying circuits (5 is a reserve towel rail, 12 out
-of service). The remaining actuators ARE fitted.
-
-It did not get much better, for a reason nobody predicted. Measured
-2026-08-09 on the balanced manifold, all ten commanded together: 100 % -> 2.0
-l/min, 75 % -> 2.0 unmoved, 50 % -> 1.9, inside the +-0.3 precision. **The top
-half of the actuator range has no authority** - the balancing throttles are
-now the dominant restriction. So `max_open` still barely reflects load above
-~50 %, and this loop still effectively runs on house deviation alone, but the
-cause is the flow characteristic rather than missing hardware and the fix is
-therefore a different one (rescale distribution.py's 5-100 % output onto the
-range that actually moves water; see docs/FLOW_CHARACTERISATION.md).
-
-Worse for this loop specifically: `min_open_pct` is 55, which sits ABOVE the
-saturation point, so whenever the flow floor binds every circuit is pinned in
-dead range and `max_open` carries no information at all.
+**`max_open` under-reports load**, so in practice this loop runs mostly on
+house deviation. Why, and how far, is measured in
+`docs/FLOW_CHARACTERISATION.md` - do not restate the numbers here, they have
+already gone stale once.
 """
 from __future__ import annotations
 
@@ -303,173 +283,19 @@ class SetpointController:
                running_ceiling: float | None = None) -> float:
         if mode == "cooling":
             lo, hi = self.cooling_min_c, self.cooling_max_c
-            # CONDENSATION FLOOR, RESTORED 2026-08-19 - but WITHOUT the spread
-            # term that made the 2026-07-31 version circular. Read the history
-            # below before touching this; it has been wrong in both directions.
+            # CONDENSATION FLOOR: the setpoint may not ask for water colder
+            # than the limit it is supposed to respect. Capped at
+            # `running_ceiling` (return - restart differential) so it can never
+            # request a setpoint the unit refuses to start at.
             #
-            # The defect it answers, measured 2026-08-12: P04 sat at 15 while
-            # the limit was 16.3. We were asking the machine for water colder
-            # than the condensation limit and then interrupting it, twenty-two
-            # times in five hours, to stop that water arriving. The capacity
-            # loop was doing its job; it had been handed a target that
-            # contradicted the constraint it was defending.
-            #
-            # `supply_limit` is dew point + margin and contains NO control
-            # feedback, which is the whole difference from the version D-030
-            # removed. Spread is a consequence of the control action, so a
-            # floor built on it moved whenever the controller moved, and a
-            # single 73 Hz excursion latched a 3.2 K spread into the estimate
-            # and drove the setpoint UP until the machine throttled itself to
-            # its minimum. Dew point does not do that.
-            #
-            # WHAT THIS DOES NOT CLAIM. The setpoint targets RETURN water and
-            # the constraint is on SUPPLY, so at equilibrium supply lands about
-            # one spread BELOW this floor - the floor does not by itself hold
-            # the limit, and it is not a replacement for the capacity loop.
-            # What it removes is the structural contradiction: below this
-            # value, success at the setpoint IS a breach. Closing the last
-            # fraction stays with the loop that measures supply every cycle.
-            #
-            # Strictly warmer than the previous behaviour, never colder, which
-            # in cooling is the safe direction.
+            # D-036 carries the argument, including why the floor is
+            # `supply_limit` and never `supply_limit + spread`, and what
+            # happened the two previous times this was changed (D-030, D-035).
+            # Do not re-derive it here.
             if supply_limit is not None:
                 lo = max(lo, supply_limit)
-            # ...AND CAPPED AT THE SETPOINT THE MACHINE WILL ACTUALLY RUN AT.
-            # `running_ceiling` is `return water - P01 restart differential`;
-            # above it the unit simply idles. It has been a parameter of this
-            # function, unused, since the 2026-07-30 cap was reverted - which
-            # made it exactly the wrong thing to leave lying around, because
-            # the floor restored above can reach it.
-            #
-            # Without this, on a humid day (dew point 20, return 21) the floor
-            # asks for 21 while the machine will not start above 19, and the
-            # plant stops cooling SILENTLY and completely. That is the
-            # 2026-07-30 09:14 incident in a different costume: setpoint
-            # jumped, return water landed inside the dead zone, compressor off,
-            # house +3 K on a 38 degC day. `step()`'s reversal guard catches
-            # the capacity branch but not the efficiency branch, which can jump
-            # straight from 15 to the floor in one write.
-            #
-            # WHY CAPPING IS THE SAFE DIRECTION HERE, which is not obvious:
-            # letting P04 sit below the condensation limit is NOT unprotected.
-            # `_trim_capacity` stops the compressor on MEASURED supply below
-            # the limit, every cycle, and that is the enforcer D-035 left in
-            # place. A setpoint is a request; the measured stop is the fact. So
-            # the choice is between a request we cannot meet and a machine that
-            # will not run at all, and the first one still cools the house
-            # while being watched.
-            #
-            # The conflict must be VISIBLE, not absorbed: `step()` reports
-            # BLOCKED, which drives the setpoint-saturation alarm.
-            #
-            # Re-floored at `cooling_min_c` afterwards: a cold return makes
-            # `running_ceiling` low, and the configured band is not something
-            # the dead zone gets to override. When the two genuinely cross, the
-            # band wins and the machine idles - which is the ONE case where
-            # idling is right, because a return that cold means the house has
-            # all the cooling it asked for.
             if running_ceiling is not None:
                 lo = max(self.cooling_min_c, min(lo, running_ceiling))
-            # ---- HISTORY, kept because this has been wrong twice ----
-            #
-            # THE FIRST VERSION, and why it read as the honest one. The
-            # setpoint targets RETURN water while condensation is about the
-            # water reaching the slab, so the floor "has to be" the
-            # condensation limit PLUS however far below the setpoint the
-            # leaving water actually lands - the machine's measured delta-T,
-            # not a constant. Measured 2026-07-29 the spread moved from 5.8 K
-            # to 2.0 K within an hour on two register writes; no fixed offset
-            # can track that, which is why an earlier attempt to tune one was
-            # withdrawn. The argument is still correct about the PHYSICS and
-            # that is what makes it dangerous - it is wrong about whether the
-            # quantity may be used in a feedback path.
-            #
-            # REMOVED 2026-07-31 with WP-S change C.
-            #
-            # It was `supply_limit + measured spread`, and it was
-            # CIRCULAR: spread is a consequence of the control action, so a
-            # brief 73 Hz excursion latched a 3.2 K spread into the estimate,
-            # raised the floor to 19.7, forced the SETPOINT UP from 19 to 20,
-            # and the machine then throttled itself to its 35 Hz minimum. The
-            # controller sabotaged itself through its own success, and making
-            # the capacity loop more aggressive made it worse.
-            #
-            # THE SECOND VERSION, 2026-07-31 to 2026-08-19: condensation served
-            # ENTIRELY inside the capacity loop, P04 carrying no part of the
-            # constraint. Its stated backstops were that the loop acts on
-            # measured supply every cycle, lowers without a rate limit, stops
-            # the compressor below `min_hz` - "and the valve guard remains
-            # behind that".
-            #
-            # Both halves of that have since failed. The valve guard is gone
-            # (D-035): closing valves cannot reach the compressor making the
-            # cold water, it only starves the unit into a latching Er03. And
-            # the loop alone produced the 2026-08-12 limit cycle, because
-            # STOP/RESUME is a bang-bang actuator with a 600 s minimum off time
-            # and the ceiling does not even bind during a start ramp. An
-            # actuator that coarse cannot hold a 1 K margin against a setpoint
-            # pulling the other way. Hence the floor above.
-            #
-            # There is deliberately NO static backstop beside it. `dew_floor_
-            # offset_c: 4.0` used to sit here behind a max() and won whenever
-            # the measured spread was under 3 K - which is the regime silent
-            # mode and the frequency ceiling exist to produce, so the measured
-            # mechanism was dead exactly when it had something to say. It was
-            # then briefly kept as a "start-up fallback", which was a softened
-            # version of an instruction to remove it. The owner asked three
-            # times. It is gone (D-030, 2026-07-31).
-            #
-            # Note the D-030 argument above is about a STATIC offset and does
-            # not reach the floor restored in 2026-08-19: `supply_limit` is not
-            # a tuned constant sitting behind a max(), it is the live dew point
-            # plus the configured margin, and it moves hour by hour with the
-            # thing it protects against. Where there is no dew point there is
-            # no floor and no cooling either (D-010), so the two cannot
-            # disagree.
-            #
-            # With no dew point the cooling floor falls back to `cooling_min_c`,
-            # which is safe only because a missing dew point stops the
-            # compressor outright one layer up (`_trim_capacity`).
-            # NO CAP HERE. A cap at `return water - restart differential` was
-            # tried on 2026-07-30 and REVERTED the same hour: it let the setpoint
-            # sit low enough that supply fell to 15.3 against a 16.0 limit, and
-            # the hard guard then closed the valves - but only `hk01` and `hk02`
-            # have actuators. The other eight circuits are open pipe and cannot
-            # close, so cold water below the dew point kept flowing into the slab
-            # through them, condensing inside it invisibly. That is exactly the
-            # failure this whole guard exists to prevent.
-            #
-            # The lesson was stated as "**the valve guard is not effective
-            # protection while eight of ten circuits cannot be closed**, so the
-            # SETPOINT is the only real control over what reaches the slab".
-            #
-            # THAT PREMISE EXPIRED THE NEXT DAY and I repeated it here anyway
-            # on 2026-08-19. Actuators went onto circuits 1-4 and 6-11 on
-            # 2026-07-31 (config.yaml `fitted`), so all ten water-carrying
-            # circuits can close; 5 and 12 are a reserve towel rail and an
-            # out-of-service circuit. Do not cite the eight-of-ten figure again.
-            #
-            # The CONCLUSION happens to survive, on different and better
-            # evidence, which is exactly why the bad premise was easy to miss:
-            #   - D-035 removed the valve guard outright, so valves are not a
-            #     condensation actuator regardless of how many are fitted; and
-            #   - the measured contradiction, P04 at 15 against a 16.3 limit,
-            #     stands entirely on its own.
-            # Neither needs the actuator count. The floor is back because of
-            # those two, not because of this paragraph.
-            #
-            # The corner it describes is genuine: at a 15.0 dew point and a
-            # measured 4.5 K spread the minimum safe setpoint is 20.5 while the
-            # maximum runnable one is 19.6. No setpoint satisfies both.
-            #
-            # Dropping the spread term makes the corner RARER, not impossible -
-            # it needs dew point + margin > return - restart_diff, so roughly
-            # dew point > return - 3. That is out of reach on a normal day
-            # (13.6 against a 19.5 return, 2026-08-19) and one bad afternoon
-            # away on a humid one: the 2026-08-10 reading of 17.3 against a
-            # 20.9 return cleared it by 0.6 K. So the corner is HANDLED, by the
-            # `running_ceiling` cap above, not avoided by arithmetic. Reducing
-            # the SPREAD is still the only real exit; see BACKLOG.
         else:
             lo, hi = self.heating_min_c, self.heating_max_c
         # Round the VALUE, but round the BOUNDS outward. A lower bound that

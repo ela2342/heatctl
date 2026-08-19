@@ -41,6 +41,9 @@ project is not ignorance, it is **drift between what is written and what runs**.
    supply**, and passed to whoever needs it. Nothing re-derives it. · D-030
 5. **Safety never consumes an optimised or identified parameter.** A wrong
    parameter must cost efficiency, never containment. · D-031, D-032, WP-R(e)
+5a. **No loop may request water colder than the condensation limit**, and no
+    floor may request a setpoint the unit refuses to start at. Neither bound
+    may contain a term the controller itself moves. · D-036
 6. **One writer per actuator.** A second writer is a design error. · D-030
 
 ### Parameters and constants
@@ -582,6 +585,9 @@ cooling. Constraint memory stops the plant wasting capacity it has; it cannot
 create capacity the dew point forbids.
 
 ## D-030
+**Partially reversed by D-036** — a condensation floor is back in `_clamp`,
+without the spread term that made this one circular.
+
 
 **One owner per actuator; the condensation constraint is evaluated in exactly
 one place. Optimisation moves to layer 2, enforcement stays in layer 1.**
@@ -965,3 +971,41 @@ the 2026-08-01 case (eight minutes of below-limit supply) and it stays open.
 *only* condensation protection, so in `main.py` the refusals run above it and
 the disabled branch carries its own compressor stop. Turning off an
 optimisation must not turn off a safety function.
+
+## D-036 · The cooling setpoint carries a condensation floor again
+**Partially reverses D-030.** `_clamp` floors P04 at `supply_limit` (dew point
++ margin) and caps that floor at `running_ceiling` (return water − P01 restart
+differential).
+
+**Why:** measured 2026-08-12, P04 sat at 15 while the limit was 16.3. We were
+asking the machine for water colder than the condensation limit and then
+interrupting it — twenty-two times in five hours — to stop that water
+arriving. The capacity loop was defending a constraint its own target
+contradicted.
+
+**Why it is not D-030's floor.** That one was `supply_limit + measured spread`
+and was CIRCULAR: spread is a consequence of the control action, so a brief
+73 Hz excursion latched 3.2 K into the estimate, drove the setpoint *up* from
+19 to 20 against a house that wanted cooling, and the machine throttled itself
+to its minimum. `supply_limit` is dew point + a configured margin and contains
+no control feedback, so it cannot latch. **No spread term, ever** — that is the
+line, and `tests/test_setpoint_no_condensation.py` holds it.
+
+**What it does not claim.** P04 targets *return* water and the constraint is on
+*supply*, so at equilibrium supply still lands about one spread below this
+floor. The floor does not hold the limit; it removes the regime where success
+at the setpoint *is* a breach. The enforcer is still `_trim_capacity`, acting
+on measured supply every cycle — which after D-035 is the only one there is.
+
+**The cap is load-bearing, not defensive.** Without it, a humid day (dew point
+20, return 21) floors the setpoint at 21 while the unit will not start above
+19, and the plant stops cooling silently and completely — the 2026-07-30 09:14
+failure, where the house climbed 3 K on a 38 °C day. `running_ceiling` had been
+an unused parameter of `_clamp` ever since that cap was reverted; restoring a
+floor is what made it reachable again. When floor and cap cross, the cap wins
+and the shortfall is reported (`BLOCKED` → the setpoint-saturation alarm),
+because a request we cannot meet still cools the house while being watched,
+whereas a machine that will not run does not.
+
+**Related:** D-010 (no dew point, no cooling), D-030 (what was removed), D-035
+(why the valve guard is not behind this any more).

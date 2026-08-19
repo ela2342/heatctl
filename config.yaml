@@ -661,16 +661,10 @@ control:
     # far heatctl may THROTTLE - a reason to hold valves open - and never a
     # reason to stop the source.
     #
-    # STALE PARAGRAPHS REMOVED 2026-08-19. Two earlier copies of this note sat
-    # here saying "the mean sits near 79 % because seven of nine circuits have
-    # no actuator" and "near 82 % because eight of ten circuits cannot throttle
-    # at all". Both expired on 2026-07-31 when actuators went onto circuits 1-4
-    # and 6-11 - every water-carrying circuit now has one. They were quoted as
-    # current fact three weeks later, so they are gone rather than demoted.
-    # ALL TEN CAN THROTTLE. What they cannot do is throttle in the top half of
-    # their range (2026-08-09: 100 % -> 2.0 l/min, 75 % -> 2.0, 50 % -> 1.9),
-    # which is a different problem with a different fix - and it means
-    # `min_open_pct: 55` below is very likely commanding into dead range.
+    # The 55 needs re-deriving against the balanced manifold - on the 2026-08-09
+    # evidence it sits ABOVE the saturation point, so this floor may be
+    # commanding into dead range. Measurement and open action in
+    # docs/FLOW_CHARACTERISATION.md.
     # Flow floor, as MEAN valve opening. 40 is the owner's estimate, and the
     # datasheet happens to agree: the BLP08P1V1MR32 wants 0.16-0.40 l/s, and
     # 0.16/0.40 is exactly 40 %. Do not read that as confirmation - the two
