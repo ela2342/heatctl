@@ -42,8 +42,11 @@ project is not ignorance, it is **drift between what is written and what runs**.
 5. **Safety never consumes an optimised or identified parameter.** A wrong
    parameter must cost efficiency, never containment. · D-031, D-032, WP-R(e)
 5a. **No loop may request water colder than the condensation limit**, and no
-    floor may request a setpoint the unit refuses to start at. Neither bound
-    may contain a term the controller itself moves. · D-036
+    bound on that floor may contain a term the controller itself moves. If the
+    only runnable setpoint condenses, the plant does not run. · D-036, D-039
+5b. **There is no safe amount of condensation.** The screed is
+    vapour-permeable; the damage is interstitial and cumulative. "Briefly" and
+    "slightly" are not mitigations. · D-039
 6. **One writer per actuator.** A second writer is a design error. · D-030
 
 ### Parameters and constants
@@ -122,7 +125,9 @@ mode is a deliberate seasonal choice.
 ## D-007 · Cooling condensation response is source-side, not circulation-stop
 Raise the chilling setpoint; do not stop circulation. **Why:** the pump reacts
 quickly to setpoint changes and a few minutes of supply below dew point is not
-critical given the screed's mass. **Cost:** valve-side protection alone is
+critical given the screed's mass. **← THIS CLAUSE IS WRONG; see D-039.** The
+screed is vapour-permeable, so the condensation is interstitial, invisible and
+cumulative, and the mass lengthens the wet period instead of excusing it. **Cost:** valve-side protection alone is
 partial while most circuits are unactuated open pipe.
 **Confirmed and hardened by D-035**, which removed valve-side condensation
 protection entirely — for a better reason than this one. The "unactuated open
@@ -1001,15 +1006,26 @@ floor. The floor does not hold the limit; it removes the regime where success
 at the setpoint *is* a breach. The enforcer is still `_trim_capacity`, acting
 on measured supply every cycle — which after D-035 is the only one there is.
 
-**The cap is load-bearing, not defensive.** Without it, a humid day (dew point
-20, return 21) floors the setpoint at 21 while the unit will not start above
-19, and the plant stops cooling silently and completely — the 2026-07-30 09:14
-failure, where the house climbed 3 K on a 38 °C day. `running_ceiling` had been
-an unused parameter of `_clamp` ever since that cap was reverted; restoring a
-floor is what made it reachable again. When floor and cap cross, the cap wins
-and the shortfall is reported (`BLOCKED` → the setpoint-saturation alarm),
-because a request we cannot meet still cools the house while being watched,
-whereas a machine that will not run does not.
+**THE CAP WAS REMOVED THE SAME DAY (D-039), and the paragraph that argued for
+it is kept below because the argument was wrong in an instructive way.**
+
+It said: without a cap at `running_ceiling`, a humid day (dew point 20, return
+21) floors the setpoint at 21 while the unit will not start above 19, and the
+plant stops cooling silently — the 2026-07-30 09:14 failure, house +3 K on a
+38 °C day. So let the cap win when the two cross, and report the shortfall,
+because "a request we cannot meet still cools the house while being watched,
+whereas a machine that will not run does not."
+
+Every factual claim there is true. The conclusion is still forbidden, because
+the water the capped setpoint produces is below the dew point by construction —
+supply lands about one spread under the setpoint, and the cap sets the setpoint
+at the top of the runnable range, not above the limit. So the cap buys comfort
+with condensation, and D-039 says that is not a purchase anyone may make. It
+also re-creates the 2026-08-12 limit cycle in that regime: run, breach, get
+stopped by `_trim_capacity`, warm, run again.
+
+The July incident it was answering is real, and the answer to it is that
+idling must be LOUD, not that it must be avoided. `step()` returns `BLOCKED`.
 
 **Related:** D-010 (no dew point, no cooling), D-030 (what was removed), D-035
 (why the valve guard is not behind this any more).
@@ -1063,3 +1079,75 @@ would have disarmed the loop that works, and the empirical evidence (silent
 mode demonstrably binding, zero Er05 high-pressure trips) says the fan is fine
 whatever the register says. Settle the register, then tighten the gate; do not
 tighten a gate you cannot yet read. See BACKLOG.
+
+## D-039 · There is no safe amount of condensation
+Owner, 2026-08-19, restating something already said: **the screed is permeable
+to water vapour, so condensation can occur *inside* the slab, and that grows
+mould.** No exposure budget exists — not "briefly", not "slightly", not "on the
+manifold only".
+
+**Supersedes D-007's cost line**, which read *"a few minutes of supply below
+dew point is not critical given the screed's mass"*. That sentence assumed the
+damage is surface water that evaporates when the water warms up. Interstitial
+condensation does not evaporate on that schedule, is invisible, and
+accumulates. Thermal mass is exactly the wrong intuition: it makes the slab
+slow to warm back through the dew point, so mass lengthens the wet period
+rather than shortening it.
+
+**What this settles, and it had already been settled — I re-opened it anyway.**
+On 2026-08-19 I put "bounded exposure" to the owner as an option and asked
+which they preferred. It was never available. D-003 classifies sub-dew-point
+supply as *known-bad supply*, the same category as screed overtemp; D-010
+rejects a static floor for insufficient conservatism; D-035 makes the
+compressor the only legitimate actuator. The doctrine was recorded four times.
+Recording it a fifth time with the physical reason attached, so that the next
+person tempted to trade it away meets the mould before the trade.
+
+**Immediate consequence:** the `running_ceiling` cap added to `_clamp` earlier
+the same day is removed. Its purpose was to keep cooling running when the only
+runnable setpoint is one whose equilibrium supply lies below the dew point —
+i.e. to buy comfort with condensation. Under this decision that is not a
+trade-off, it is out of bounds. See D-036.
+
+**What it costs, stated plainly so nobody rediscovers it as a bug:** on a humid
+afternoon the plant will refuse to cool. Floor cooling cannot dehumidify — the
+fan coil has a drain, the slab does not — so when the dew point rises within
+about 3 K of return water there is no setpoint that both runs and stays dry,
+and the correct output is to idle until return water rises. `step()` returns
+`BLOCKED`, which drives the setpoint-saturation alarm. **Idling is correct;
+idling silently is the 2026-07-30 09:14 failure**, and the alarm is the whole
+of the mitigation.
+
+**The real answer is hardware, not control.** Cooling capacity on humid days
+needs a machine that can remove moisture. See BACKLOG.
+
+## D-040 · Arbeitszimmer is in the dew-point reference, permanently
+All six instrumented rooms feed `sensor.system_dew_point_reference`.
+
+**Reverses the exclusion of 2026-08-06**, which argued: the fan coil has a
+condensate drain, so that room may run below its own dew point, and including
+it would hold the whole plant's supply ~3 K warmer to protect a surface
+designed to get wet (measured that day: Arbeitszimmer 16.5 against 13.4–13.6
+downstairs).
+
+**Three reasons it does not hold.**
+
+1. **D-039.** There is no safe amount of condensation anywhere the water goes,
+   so the reference must cover every room whose air can meet a cold surface.
+2. **The drain catches the coil, not the pipework.** `hk11` carries the same
+   supply water to the coil through the most humid room in the house, at supply
+   temperature, and nothing collects what condenses off a pipe. The exclusion
+   protected the emitter and forgot the distribution.
+3. **The room is the most condensation-prone in the building** — on the OG,
+   coupled to the Wohnzimmer by the open Luftraum, so warm moist air gathers
+   there. That was recorded as true in the same comment that excluded it.
+
+**Cost, and it is the real one:** supply runs warmer whenever Arbeitszimmer is
+the wettest room, which costs cooling capacity downstairs. Under D-039 that is
+the price, not a bug. If it becomes intolerable the answer is to dry that room,
+not to stop measuring it.
+
+**Already true in practice since 2026-08-10**, when the owner said "add all
+Shellys *and* the Arbeitszimmer too, until we stabilize things" — this removes
+the "until" and the stale exclusion note that had contradicted the running
+system in `config.yaml` for nine days.

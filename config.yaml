@@ -92,26 +92,10 @@ mqtt:                          # control-plane broker (telemetry, setpoints, She
   # A sensor that does not follow the diurnal swing is indoors. Check that
   # before concluding anything from a sensor's name.
   #
-  # ARBEITSZIMMER IS NOW EXCLUDED FROM THE REFERENCE, DELIBERATELY (owner,
-  # 2026-08-06). **This reverses the paragraph that used to stand here**, which
-  # argued the opposite and was written after the 2026-07-31 removal was undone
-  # as a mistake. Both the old text and the old removal were about the same
-  # question and reached opposite answers, so read the dates before acting.
-  #
-  # What changed is not the physics but the hydraulics: the fan coil has a
-  # CONDENSATE DRAIN, so condensation there is collected rather than damaging.
-  # The room may therefore run below its own dew point, and including it in the
-  # max() would hold the whole plant's supply ~3 K warmer to protect a surface
-  # that is designed to get wet. Measured 2026-08-06: Arbeitszimmer's dew point
-  # was 16.5 against 13.4-13.6 for the ground floor, so it would have set the
-  # limit for every slab circuit in the house.
-  #
-  # WHAT IS STILL TRUE, and is the reason the old paragraph was persuasive:
-  # that room is genuinely the most condensation-prone in the building - it is
-  # on the OG, coupled to the Wohnzimmer by the open Luftraum so warm moist air
-  # collects there, and it holds a cold surface in a moving airstream. The
-  # exclusion is safe ONLY because of the drain. If the fan coil is ever fed
-  # from a separate circuit, or the drain blocks, this decision must be revisited.
+  # ALL SIX INSTRUMENTED ROOMS ARE IN THE REFERENCE, Arbeitszimmer included.
+  # The list lives in three HA template helpers and they must stay identical;
+  # computing it in heatctl instead is the real fix (BACKLOG). D-040 argues the
+  # inclusion.
   dew_point_topic: "heatctl/env/dew_point"
 
   # OUTDOOR AIR for the slab-target feedforward (docs/DESIGN_ENERGY_DEMAND.md).

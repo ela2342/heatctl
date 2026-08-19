@@ -284,18 +284,16 @@ class SetpointController:
         if mode == "cooling":
             lo, hi = self.cooling_min_c, self.cooling_max_c
             # CONDENSATION FLOOR: the setpoint may not ask for water colder
-            # than the limit it is supposed to respect. Capped at
-            # `running_ceiling` (return - restart differential) so it can never
-            # request a setpoint the unit refuses to start at.
+            # than the limit it is supposed to respect. NOT capped at what the
+            # unit will start at - if the only runnable setpoint condenses,
+            # the answer is not to run (D-039).
             #
             # D-036 carries the argument, including why the floor is
             # `supply_limit` and never `supply_limit + spread`, and what
-            # happened the two previous times this was changed (D-030, D-035).
-            # Do not re-derive it here.
+            # happened the three previous times this was changed (D-030,
+            # D-035, D-039). Do not re-derive it here.
             if supply_limit is not None:
                 lo = max(lo, supply_limit)
-            if running_ceiling is not None:
-                lo = max(self.cooling_min_c, min(lo, running_ceiling))
         else:
             lo, hi = self.heating_min_c, self.heating_max_c
         # Round the VALUE, but round the BOUNDS outward. A lower bound that

@@ -147,52 +147,53 @@ class TestNoBreachBranch:
             assert not hasattr(c, gone), f"{gone} survived the removal"
 
 
-class TestTheFloorCannotParkTheCompressor:
-    """The condensation floor must never ask for a setpoint the unit ignores.
+class TestTheFloorIsNotCappedAtWhatTheMachineWillRun(object):
+    """SUPERSEDES `TestTheFloorCannotParkTheCompressor`, same day.
 
-    Added 2026-08-19 with the floor itself. `running_ceiling` had been an
-    unused parameter of `_clamp` ever since the 2026-07-30 cap was reverted,
-    and restoring a floor above it is what made it reachable again.
+    That class asserted the floor is capped at `running_ceiling` so the
+    setpoint can never exceed what the unit will start at. The cap was written
+    to avoid the 2026-07-30 09:14 failure, where a jumped setpoint parked
+    return water inside the dead zone and the house climbed 3 K on a 38 degC
+    day - a real incident, and the cap did prevent it.
+
+    It is still disallowed, because it answers that incident by running the
+    plant in the one regime where every runnable setpoint condenses. Supply
+    lands about one spread below the setpoint, so at the capped value
+    `return - P01` the water reaching the slab is below the dew point by
+    construction. D-039: there is no safe amount of that.
+
+    What replaces the cap is not a mechanism but an accepted outcome - the
+    machine idles until return water rises far enough to permit cooling again,
+    and `step()` reports BLOCKED so the wait is visible rather than silent.
+    Silence was the actual defect in July.
     """
 
-    def test_the_floor_is_capped_at_the_setpoint_the_machine_will_run_at(self):
-        """A humid day: dew point 20, limit 21, return 21 with a 2 K dead zone.
-
-        The floor wants 21; above 19 the compressor simply will not start. Ask
-        for 21 and the plant stops cooling silently and completely - the
-        2026-07-30 09:14 failure, where the house climbed 3 K on a 38 degC day.
-        """
+    def test_the_floor_may_exceed_what_the_unit_will_start_at(self):
+        """A humid day: dew point 20, limit 21, return 21 with a 2 K dead
+        zone. The floor asks for 21 and the unit will not start above 19.
+        That is the intended answer, not a bug to be capped away."""
         c = _ctl()
         assert c._clamp("cooling", 15.0, dew_point=20.0, supply_limit=21.0,
-                        running_ceiling=19.0) == 19.0
+                        running_ceiling=19.0) == 21.0
 
-    def test_the_cap_never_drags_the_floor_below_the_configured_band(self):
-        """A cold return makes `running_ceiling` low. The band still wins -
-        and idling is correct there, because a return that cold means the
-        house already has the cooling it asked for."""
+    def test_the_running_ceiling_never_lowers_the_floor(self):
+        """Whatever else `running_ceiling` is used for, it may not be a route
+        to a colder setpoint - that is the cap coming back by another name."""
         c = _ctl()
-        assert c._clamp("cooling", 5.0, dew_point=16.0, supply_limit=17.0,
-                        running_ceiling=8.0) == 15.0
+        with_ceiling = c._clamp("cooling", 15.0, dew_point=16.0,
+                                supply_limit=17.0, running_ceiling=8.0)
+        without = c._clamp("cooling", 15.0, dew_point=16.0, supply_limit=17.0)
+        assert with_ceiling == without == 17.0
 
-    def test_without_a_running_ceiling_the_floor_still_applies(self):
-        """No return reading is not a reason to drop the condensation floor."""
-        c = _ctl()
-        assert c._clamp("cooling", 15.0, dew_point=20.0, supply_limit=21.0,
-                        running_ceiling=None) == 21.0
+    def test_the_house_is_told_when_the_plant_cannot_cool(self):
+        """The floor blocking the capacity branch must raise `demand_unmet`.
 
-    def test_the_efficiency_branch_cannot_jump_the_setpoint_into_the_dead_zone(self):
-        """End to end, and the branch `step()`'s reversal guard does NOT cover.
-
-        The capacity branch is protected - a target above `current` when it
-        asked for colder returns BLOCKED. The efficiency branch asks for
-        warmer, so no reversal is detected and the jump would be written.
+        Idling is the correct behaviour; idling QUIETLY is the 2026-07-30
+        failure. This is the whole mitigation, so it gets a test.
         """
         c = _ctl()
-        d = c.step(mode="cooling", deviation=0.0, max_open=10.0, current=15.0,
-                   dew_point=20.0, supply_temp=19.0, supply_limit=21.0,
-                   running_ceiling=19.0, now=10_000.0)
-        # Assert the branch actually FIRED before asserting what it did. The
-        # `is None or ...` form this replaces was green against the bug.
-        assert d.target is not None, f"branch did not fire: {d.reason}"
-        assert d.target <= 19.0, (
-            "the floor jumped the setpoint past the restart dead zone")
+        d = c.step(mode="cooling", deviation=-2.0, max_open=100.0,
+                   current=21.0, dew_point=20.0, supply_temp=21.5,
+                   supply_limit=21.0, running_ceiling=19.0, now=10_000.0)
+        assert d.demand_unmet, (
+            f"plant cannot cool and did not say so: {d.reason}")

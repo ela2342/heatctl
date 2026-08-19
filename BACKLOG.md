@@ -5567,3 +5567,68 @@ high-pressure trips**, which is the failure a throttled condenser produces.
 
 Until one of those happens, `silent_ok` is not a safety property and should not
 be described as one.
+
+## Cooling-path audit against D-039, 2026-08-19
+
+Prompted by having twice in one day proposed mechanisms that traded the
+condensation constraint for comfort without noticing. Checking every place the
+trade could be made.
+
+**Clean:**
+
+- `capacity.py` STOP/RESUME. Resumes only at `target_margin_c + deadband_c`
+  above the limit (0.25 K), stops on any breach, and since D-038 the stop is
+  reachable without a usable frequency ceiling.
+- The setpoint floor. Uncapped since D-039; it may now ask for a setpoint the
+  unit will not start at, which is the point.
+- `_trim_capacity`'s no-dew-point refusal, and its fallback stop when
+  `capacity.enabled` is false. Both run above the optimisation gate.
+- Distribution and the valves. They cannot make water colder, so they cannot
+  breach the constraint — which is the whole of D-035.
+
+**Three findings.**
+
+### 1. `dew_point_margin_c: 1.0` is the only buffer, and it is unsized
+
+`target_margin_c` is 0, so the capacity loop aims *at* dew + 1.0 and tolerates
+±`deadband_c` (0.25) around it. Every other mechanism keys off the same limit.
+So the entire defence against D-039's cumulative, invisible damage is one
+empirical constant, and `safety.py` says so plainly: *"The margin is EMPIRICAL:
+it matches the margin the existing HA supervisory loop has run at without
+condensation... Sizing it properly is a BACKLOG.md item."*
+
+It has to cover, at minimum: PT1000 error at the manifold, the dew-point
+sensors' own RH error (the dominant term — 3 % RH is roughly 0.5 K of dew
+point), the spread of dew point *between* rooms and the unmeasured spaces
+between them, and the control loop's own overshoot. That is plausibly more
+than 1.0 K, and nobody has added it up.
+
+Not changed here. The owner reverted a 1.0 → 2.0 raise on 2026-08-10 because
+the incident had a complete explanation without it, and that reasoning stands —
+this is a request to *size* it, not to pad it.
+
+### 2. `heatpump.allow_writes: false` disables every condensation defence
+
+Same shape as the `capacity.enabled` hazard fixed this morning, one level up.
+`_trim_capacity` returns immediately if `allow_writes` is false, so the
+no-dew-point refusal, the capacity loop and the fallback stop all vanish
+together — while the unit keeps running at whatever P04 it was last given.
+
+It is currently `true`, and it is a commissioning flag rather than something
+that gets toggled in normal operation, so this is not urgent. But after D-035
+there is nothing behind it. Options: refuse to enter cooling mode at all when
+writes are off, or treat it as a hard fault rather than a quiet no-op.
+
+### 3. The last-resort backstop is Er03, and that is not obviously wrong
+
+D-035 removed heatctl's *deliberate* valve trip because starving the unit into
+a latching Er03 is worse than the condensation it prevents. But if heatctl
+dies, the coupler watchdog zeroes the outputs, the NC actuators close, flow
+collapses and the unit trips Er03 anyway — the same mechanism, reached by a
+different route.
+
+That is not a contradiction and should not be "fixed". The distinction is who
+is deciding: a live controller has better options and must use them; a dead
+controller has none, and a latching fault that needs a human is the correct
+outcome when nothing is watching. Worth stating so nobody removes the watchdog
+on D-035 grounds.
