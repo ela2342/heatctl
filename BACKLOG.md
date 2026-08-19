@@ -5586,9 +5586,9 @@ trade could be made.
 - Distribution and the valves. They cannot make water colder, so they cannot
   breach the constraint — which is the whole of D-035.
 
-**Two findings.**
+**One finding.**
 
-### 1. `dew_point_margin_c: 1.0` is the only buffer, and it is unsized
+### `dew_point_margin_c: 1.0` is the only buffer, and it is unsized
 
 `target_margin_c` is 0, so the capacity loop aims *at* dew + 1.0 and tolerates
 ±`deadband_c` (0.25) around it. Every other mechanism keys off the same limit.
@@ -5603,20 +5603,14 @@ point), the spread of dew point *between* rooms and the unmeasured spaces
 between them, and the control loop's own overshoot. That is plausibly more
 than 1.0 K, and nobody has added it up.
 
-Not changed here. The owner reverted a 1.0 → 2.0 raise on 2026-08-10 because
-the incident had a complete explanation without it, and that reasoning stands —
-this is a request to *size* it, not to pad it.
+**No urgency, and the evidence says so.** Owner, 2026-08-19: *"empirically it
+seemed fine"* — and the measurement agrees. Over the nine days to 2026-08-19
+the manifold supply went below the dew point for five minutes total, all on
+08-10 and all explained by the stale two-room reference. Zero since it was
+fixed. So 1.0 K has held in practice against everything the plant has actually
+met.
 
-### 2. The last-resort backstop is Er03, and that is not obviously wrong
-
-D-035 removed heatctl's *deliberate* valve trip because starving the unit into
-a latching Er03 is worse than the condensation it prevents. But if heatctl
-dies, the coupler watchdog zeroes the outputs, the NC actuators close, flow
-collapses and the unit trips Er03 anyway — the same mechanism, reached by a
-different route.
-
-That is not a contradiction and should not be "fixed". The distinction is who
-is deciding: a live controller has better options and must use them; a dead
-controller has none, and a latching fault that needs a human is the correct
-outcome when nothing is watching. Worth stating so nobody removes the watchdog
-on D-035 grounds.
+This is a request to *size* it, not to pad it. The owner reverted a 1.0 → 2.0
+raise on 2026-08-10 because the incident had a complete explanation without it,
+and that reasoning stands: a defensive change needs its own evidence. What is
+missing is the arithmetic, not the margin.
