@@ -5454,8 +5454,8 @@ does, and the limit already carries `dew_point_margin_c: 1.0`.
 1.87 K. That series is the *heat pump's own* register at 0.5 K resolution,
 upstream of the manifold; it dips on every restart while the water that
 reaches the slab does not. Two supply sensors, two different answers, and only
-one of them condenses anything — cf. [[names-are-hypotheses]]. I reported the
-alarming number first and had to withdraw it.
+one of them condenses anything. I reported the alarming number first and had
+to withdraw it.
 
 ### Er03 has not recurred
 
@@ -5514,8 +5514,8 @@ antifreeze bits belong in a separate `protections` series.
 
 - **`0x00F4 silent_max_fan_cooling` reads raw 65512** (= −24 signed) against a
   declared 0..1000, warned on every start. Either the map is wrong or the
-  register holds junk; it is the fan cap that D-nnn's silent-mode work depends
-  on, so it is worth resolving.
+  register holds junk; it is the fan cap the silent-mode work depends on (see
+  `_trim_capacity`'s `silent_ok` check), so it is worth resolving.
 - **The App log is useless for review.** `ha addons logs` returns 100 lines and
   the once-per-minute `flow floor: valves raised to 55% mean (still, since N s)`
   line consumes all of them — nine days of history had to come from InfluxDB. A
