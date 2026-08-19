@@ -192,15 +192,6 @@ class CapacityController:
             self._last_raise = now
             return CapacityDecision(
                 None, f"margin {margin:+.2f} K recovered - restarting", RESUME)
-        if current_ceiling is None:
-            return CapacityDecision(None, "ceiling unknown")
-        if not silent_ok:
-            # Refuse rather than proceed: the ceiling only binds in silent mode,
-            # and silent mode with the default fan cap throttles the condenser
-            # to 7.5 % of what it needs. Acting here without both in place would
-            # either do nothing or damage the unit.
-            return CapacityDecision(
-                None, "silent mode or fan cap not configured", BLOCKED)
         if supply_temp is None or supply_limit is None:
             # No measurement of the constrained quantity means no basis to
             # spend capacity. Holding is safe; the setpoint loop still runs.
@@ -208,6 +199,31 @@ class CapacityController:
 
         margin = supply_temp - supply_limit
         err = margin - self.target_margin_c
+
+        # THE STOP PATH DOES NOT NEED THE CEILING, and used to be gated behind
+        # it anyway. Both gates below are about R32: it only binds in silent
+        # mode, and silent mode with the default fan cap throttles the
+        # condenser to 7.5 % of what it needs, so driving it without both in
+        # place would either do nothing or damage the unit. All true - and none
+        # of it is a reason to refuse to STOP, which is a setpoint write to a
+        # different register entirely.
+        #
+        # It became load-bearing with D-035: this stop is now the only
+        # condensation enforcement there is, so anything that turns silent mode
+        # off - or an unreadable `0x00F4`, which is the live state - would have
+        # silently taken it out with no other layer behind it. A precondition
+        # for one actuator must not disarm another.
+        ceiling_usable = silent_ok and current_ceiling is not None
+        if err < -self.deadband_c and not ceiling_usable:
+            self._stopped_at = now
+            return CapacityDecision(
+                None, f"margin {margin:+.2f} K below target and no usable "
+                      "frequency ceiling - stopping the compressor", STOP)
+        if current_ceiling is None:
+            return CapacityDecision(None, "ceiling unknown")
+        if not silent_ok:
+            return CapacityDecision(
+                None, "silent mode or fan cap not configured", BLOCKED)
 
         # LOWER: the first move is immediate - the protective direction must
         # never wait for a timer. Follow-ups wait `lower_settle_s` so the plant

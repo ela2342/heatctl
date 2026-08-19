@@ -450,3 +450,38 @@ async def test_setting_a_bit_on_leaves_the_register_otherwise_alone():
     hp = _BitHP({0x0001: 0b0000_0011})
     assert await hp.set_control_bit("silent_mode", True, "test")
     assert hp.writes[0][1] == 0b0010_0011     # bit 5 set, bits 0-1 kept
+
+
+# ---------- faults vs protections (D-037) ----------
+
+def test_the_antifreeze_bits_are_protections_not_faults():
+    """Regression, night of 2026-08-11/12.
+
+    `primary_antifreeze` raised and cleared 22 times in five hours while the
+    unit throttled itself through a limit cycle. It drove
+    `binary_sensor.heatctl_heat_pump_fault`, a `problem`-class entity, so the
+    plant reported 22 faults for doing exactly what it is supposed to do.
+
+    They are the only two entries in the manual's fault block with no Er code,
+    which is the tell: an Er is a failure, these are the machine protecting
+    itself and clearing without help.
+    """
+    assert set(hm.PROTECTION_BITS.values()) == {
+        "primary_antifreeze", "secondary_antifreeze"}
+    for name in hm.PROTECTION_BITS.values():
+        assert name not in hm.FAULT_BITS.values(), (
+            f"{name} is still a fault; fault_any will alarm on it")
+
+
+def test_every_remaining_fault_carries_an_er_code():
+    """The rule that keeps the split honest as bits are added. Anything
+    without an Er number is the device limiting itself, not failing."""
+    for name in hm.FAULT_BITS.values():
+        assert name.startswith("er"), (
+            f"{name} has no Er code - is it a protection?")
+
+
+def test_faults_and_protections_do_not_overlap_or_collide():
+    assert not set(hm.FAULT_BITS) & set(hm.PROTECTION_BITS)
+    for addr, _bit in (*hm.FAULT_BITS, *hm.PROTECTION_BITS):
+        assert addr in hm.FAULT_REGS, f"0x{addr:04X} is not polled"

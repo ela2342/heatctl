@@ -411,6 +411,9 @@ class HeatPump:
         if mode is not None:
             await self.plane.publish("hp/mode_name", hm.MODES.get(mode, str(mode)))
 
+        # FAULTS AND PROTECTIONS ARE PUBLISHED APART (D-037). A fault wants a
+        # human; a protection is the unit throttling itself and clearing on its
+        # own. Rolling both into `fault_any` made the alarm mean nothing.
         active = [name for (addr, bit), name in hm.FAULT_BITS.items()
                   if (self.status.get(addr, 0) >> bit) & 1]
         for name in set(hm.FAULT_BITS.values()):
@@ -418,6 +421,15 @@ class HeatPump:
                                      "1" if name in active else "0")
         await self.plane.publish("hp/fault_any", "1" if active else "0")
         await self.plane.publish("hp/faults", ",".join(sorted(active)) or "none")
+
+        limiting = [name for (addr, bit), name in hm.PROTECTION_BITS.items()
+                    if (self.status.get(addr, 0) >> bit) & 1]
+        for name in set(hm.PROTECTION_BITS.values()):
+            await self.plane.publish(f"hp/protection/{name}",
+                                     "1" if name in limiting else "0")
+        await self.plane.publish("hp/protection_any", "1" if limiting else "0")
+        await self.plane.publish("hp/protections",
+                                 ",".join(sorted(limiting)) or "none")
 
     # ---------- plausibility ----------
 
@@ -570,6 +582,22 @@ class HeatPump:
         await self.plane.discover("sensor", "hp_faults", {
             "name": "Heat pump active faults",
             "state_topic": f"{self.plane.base}/hp/faults",
+            "entity_category": "diagnostic",
+        })
+        # NOT `device_class: problem`. A running protection is information, not
+        # an alarm - it says the unit is holding itself back, which is worth
+        # seeing on a graph next to frequency and worth nobody's attention at
+        # 03:00. Whether it should ever alarm is a question about how OFTEN it
+        # runs, and that is a job for a trend, not a binary sensor.
+        await self.plane.discover("binary_sensor", "hp_protection_any", {
+            "name": "Heat pump protection active",
+            "state_topic": f"{self.plane.base}/hp/protection_any",
+            "payload_on": "1", "payload_off": "0",
+            "entity_category": "diagnostic",
+        })
+        await self.plane.discover("sensor", "hp_protections", {
+            "name": "Heat pump active protections",
+            "state_topic": f"{self.plane.base}/hp/protections",
             "entity_category": "diagnostic",
         })
         await self.plane.discover("sensor", "hp_mode_name", {

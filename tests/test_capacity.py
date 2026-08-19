@@ -266,3 +266,36 @@ def test_a_resume_does_not_immediately_spend_the_margin_its_own_stop_created(cap
     # loop still takes real headroom once the plant has actually settled.
     d = call(c, supply=19.8, limit=16.5, ceiling=35.0, hz=35.0, now=800.0 + 200.0)
     assert d.kind == RAISE
+
+
+def test_a_breach_stops_the_compressor_even_with_no_usable_ceiling(cap):
+    """The stop must not be gated behind the ceiling's preconditions.
+
+    `silent_ok` and a known `current_ceiling` are requirements of R32, the
+    frequency ceiling. STOP is a setpoint write to a different register. They
+    were checked first anyway, so anything that disabled silent mode also
+    disabled the stop - and after D-035 that stop is the only condensation
+    enforcement left, with nothing behind it.
+
+    The live trigger for finding this: `0x00F4` reads an out-of-range 65512, so
+    `silent_ok` is currently true only because a garbage value happens to
+    compare large.
+    """
+    c = cap(min_hz=35.0)
+    d = call(c, supply=15.0, limit=16.5, ceiling=45.0, hz=45.0, silent=False)
+    assert d.kind == STOP and d.stops, (
+        "a measured breach did not stop the compressor because silent mode "
+        "was off")
+
+    c = cap(min_hz=35.0)
+    d = call(c, supply=15.0, limit=16.5, ceiling=None, hz=45.0, silent=True)
+    assert d.kind == STOP and d.stops, (
+        "a measured breach did not stop the compressor because the ceiling "
+        "register had not been read yet")
+
+
+def test_a_healthy_margin_with_no_usable_ceiling_still_just_blocks(cap):
+    """The new stop path must not fire on anything but a breach - otherwise a
+    missing register read would stop the plant on a perfectly good margin."""
+    d = call(cap(), supply=18.0, limit=16.0, silent=False)
+    assert d.kind == BLOCKED and d.target_hz is None

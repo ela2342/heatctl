@@ -124,6 +124,10 @@ Raise the chilling setpoint; do not stop circulation. **Why:** the pump reacts
 quickly to setpoint changes and a few minutes of supply below dew point is not
 critical given the screed's mass. **Cost:** valve-side protection alone is
 partial while most circuits are unactuated open pipe.
+**Confirmed and hardened by D-035**, which removed valve-side condensation
+protection entirely — for a better reason than this one. The "unactuated open
+pipe" cost above expired on 2026-07-31 when every water-carrying circuit got an
+actuator; do not cite it.
 
 ---
 
@@ -1009,3 +1013,53 @@ whereas a machine that will not run does not.
 
 **Related:** D-010 (no dew point, no cooling), D-030 (what was removed), D-035
 (why the valve guard is not behind this any more).
+
+## D-037 · Device protections are published apart from faults
+`primary_antifreeze` and `secondary_antifreeze` (`0x800C` bits 4-5) move from
+`FAULT_BITS` to `PROTECTION_BITS`, onto `hp/protection/*` and
+`hp/protection_any`. `hp/fault_any` — the `problem`-class entity — now carries
+only Er-coded failures.
+
+**Why:** on the night of 2026-08-11/12 the plant reported 22 faults in five
+hours while the heat pump was doing exactly what it is designed to do:
+throttling itself as the cooling coil approached its antifreeze threshold on
+each restart. An alarm that fires when nothing is wrong is worse than no alarm,
+because it teaches everyone to ignore the one that matters.
+
+**The tell, and the rule it gives us:** these are the only two entries in the
+manual's fault block with no Er code. An Er number is a failure; a bit without
+one is the device limiting itself and clearing without help.
+`test_every_remaining_fault_carries_an_er_code` enforces that going forward, so
+a new bit cannot quietly land on the wrong side.
+
+**Deliberately not a `problem` entity.** A running protection is information —
+it belongs on a trend beside frequency, not in a notification at 03:00.
+Whether it should ever alarm is a question about how *often* it runs, which a
+binary sensor cannot answer.
+
+**Cost:** anything watching `hp/fault_any` for these two stops seeing them. No
+control path did — the split is observability only.
+
+## D-038 · A precondition for one actuator may not disarm another
+`CapacityController.step` checked `silent_ok` and `current_ceiling` before
+reaching the STOP path, so anything that made the frequency ceiling unusable
+also stopped the compressor from being stopped. The breach check now runs
+first; STOP is reachable without a usable ceiling.
+
+**Why:** both gates are about `0x00F1` (R32), which only binds in silent mode
+and needs the condenser fan cap raised. STOP is a setpoint write to a different
+register and needs neither. The two were adjacent in one function and got one
+guard between them.
+
+**Why it matters now rather than in July:** after D-035 this stop is the only
+condensation enforcement in the system. Before, the valve trip sat behind it.
+
+**Live relevance, not hypothetical:** `0x00F4` (the fan cap) reads raw 65512
+against a declared 0..1000, so `silent_ok` is currently true only because
+`fan_cap >= capacity_fan_min` compares a garbage value and 65512 is large. The
+gate meant to confirm the condenser is not throttled is passing by accident. It
+was **left passing on purpose** — flipping it to reject the implausible value
+would have disarmed the loop that works, and the empirical evidence (silent
+mode demonstrably binding, zero Er05 high-pressure trips) says the fan is fine
+whatever the register says. Settle the register, then tighten the gate; do not
+tighten a gate you cannot yet read. See BACKLOG.

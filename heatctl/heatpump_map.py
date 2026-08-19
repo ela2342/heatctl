@@ -177,10 +177,18 @@ FAULT_BITS = {
     (0x800B, 2): "er33_exceed",
     (0x800B, 3): "er42_cooling_coil",
     (0x800B, 7): "er67_low_pressure",
-    (0x800C, 4): "secondary_antifreeze",
-    (0x800C, 5): "primary_antifreeze",
     (0x800D, 6): "er64_dc_fan_1",
     (0x800D, 7): "er65_compressor",
+}
+
+# Same registers, NOT faults. The manual files these under "Fault flags 6" and
+# they are the only two entries in the block with no Er code - because they are
+# not failures, they are the unit protecting itself, and it clears them without
+# help. Treating them as faults made the plant look broken 22 times on the
+# night of 2026-08-11/12 while it was doing its job. See D-037.
+PROTECTION_BITS = {
+    (0x800C, 4): "secondary_antifreeze",
+    (0x800C, 5): "primary_antifreeze",
 }
 FAULT_REGS = range(0x8007, 0x800E)
 

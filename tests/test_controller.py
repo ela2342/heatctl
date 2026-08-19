@@ -319,6 +319,7 @@ async def test_an_unknown_dew_point_stops_the_source_not_the_valves(controller):
     ctl.io.touch(time.monotonic())
     ctl.capacity.enabled = True
     ctl.hp.allow_writes = True
+    ctl.hp._config_seen = True     # see _ResumeHP: no writes before the first read
 
     calls: list[tuple[float | None, str]] = []
 
@@ -778,7 +779,12 @@ class _ResumeHP:
         import heatctl.heatpump_map as hpm
         self.allow_writes = True
         self.enabled = True
-        self._config_seen = False
+        # True: a running plant has read its config. `_trim_capacity` refuses
+        # to write before the first config read (three blind flash writes on
+        # start-up, 2026-08-19), so False here made the stub model a heat pump
+        # that has only just been reached - which is not what these tests are
+        # about.
+        self._config_seen = True
         self.calls: list[tuple[float | None, str]] = []
         self.status = {hpm.by_name("return_water").addr: int(return_c * 10),
                        hpm.by_name("compressor_freq").addr: 0}

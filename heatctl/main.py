@@ -179,6 +179,7 @@ class Controller:
         # transition from a continuing one.
         self._flow_floor_since: float | None = None
         self._flow_floor_logged = 0.0
+        self._flow_floor_interval = 60.0
         # Safety-override log throttling, keyed by reason - see _log_overrides().
         self._override_since: dict[str, float] = {}
         self._override_logged: dict[str, float] = {}
@@ -320,6 +321,25 @@ class Controller:
         """
         if not self.hp.allow_writes:
             return
+        # NO WRITES BEFORE THE FIRST CONFIG READ. Without this, start-up on
+        # 2026-08-19 went:
+        #
+        #   09,302  0x0090: None -> 30   (OFF: dew point unknown)
+        #   11,275  "P04 was left at the OFF sentinel by a previous run"
+        #   11,386  0x0090: 30  -> 20    (clearing a stale OFF)
+        #   11,673  0x0090: 20  -> 30    (OFF: dew point unknown)
+        #
+        # Three flash cycles for one decision, and the middle one is
+        # `_clear_stale_cooling_off` clearing an OFF *this function wrote two
+        # seconds earlier* while reporting it as a previous run's. `None ->`
+        # is the tell: with no config read there is no current value, so
+        # `set_cooling` cannot recognise a no-op and every write lands.
+        #
+        # Waiting costs a second or two of not stopping a compressor at
+        # start-up, against the plant state the unit was already holding. The
+        # config read is the first thing the heat pump task does.
+        if not self.hp._config_seen:
+            return
         # THE CONDENSATION REFUSALS RUN BEFORE THE `capacity.enabled` GATE, and
         # that ordering became load-bearing on 2026-08-10.
         #
@@ -365,7 +385,8 @@ class Controller:
         flags1 = self.hp.config.get(0x0001)
         fan_cap = self.hp.config.get(hpm.by_name("silent_max_fan_cooling").addr)
         silent_ok = (flags1 is not None and bool(flags1 >> 5 & 1)
-                     and fan_cap is not None and fan_cap >= self.capacity_fan_min)
+                     and fan_cap is not None
+                     and fan_cap >= self.capacity_fan_min)
         ceiling_reg = hpm.by_name("silent_max_freq_cooling_hz")
         ceiling = self.hp.config.get(ceiling_reg.addr)
         freq = self.hp.status.get(hpm.by_name("compressor_freq").addr)
@@ -465,9 +486,27 @@ class Controller:
         finally:
             # Order matters: mark ourselves offline while the client is still
             # connected, only then tear the plane down.
+            #
+            # AWAIT THE CANCELLATIONS. Without this, shutdown printed a screen
+            # of `RuntimeError: Event loop is closed` from paho, aiomqtt and
+            # asyncio internals: the tasks were told to stop and the loop then
+            # closed underneath them mid-teardown. Nothing was actually broken,
+            # which is the problem - a real crash on shutdown looked exactly
+            # like a clean one, and this ran on every deploy.
+            #
+            # `return_exceptions=True` because CancelledError is the expected
+            # outcome here, not a failure; anything else is logged rather than
+            # raised, since we are already on the way out and the coupler
+            # watchdog is the thing that actually makes this safe.
             await self.plane.stop()
-            plane_task.cancel()
-            hp_task.cancel()
+            for task in (plane_task, hp_task):
+                task.cancel()
+            done = await asyncio.gather(plane_task, hp_task,
+                                        return_exceptions=True)
+            for task, outcome in zip(("plane", "heatpump"), done):
+                if isinstance(outcome, Exception) and not isinstance(
+                        outcome, asyncio.CancelledError):
+                    log.warning("%s task raised on shutdown: %r", task, outcome)
             await self.io.stop()
 
     async def step(self, dt: float) -> None:
@@ -652,23 +691,41 @@ class Controller:
                 # fully predictable condition must cost one line, not one line
                 # per second, or it destroys the evidence for whatever happens
                 # next.
+                # A FIXED 60 s WAS NOT ENOUGH, and the paragraph above says why
+                # without following through: the ring holds ~100 lines, so one
+                # line a minute still means the log covers 100 minutes and
+                # nothing older. Reviewing the nine days to 2026-08-19 was
+                # impossible from it - every line was this one - and the
+                # history had to come out of InfluxDB instead.
+                #
+                # So the interval DOUBLES while the condition persists, 60 s up
+                # to an hour. A state that has held for eight hours is not news
+                # eight hours later; the transition is the event, the repeats
+                # only prove it is still true. Reset on release, so the next
+                # onset is loud again.
                 now = time.monotonic()
                 if (self._flow_floor_since is None
-                        or now - self._flow_floor_logged > 60):
+                        or now - self._flow_floor_logged
+                        >= self._flow_floor_interval):
                     if self._flow_floor_since is None:
                         self._flow_floor_since = now
+                        self._flow_floor_interval = 60.0
                         log.info("flow floor: valves raised to %.0f%% mean",
                                  raised)
                     else:
+                        held = now - self._flow_floor_since
+                        self._flow_floor_interval = min(
+                            3600.0, self._flow_floor_interval * 2)
                         log.info("flow floor: valves raised to %.0f%% mean "
-                                 "(still, since %.0f s)", raised,
-                                 now - self._flow_floor_since)
+                                 "(still, since %.0f s; next report in %.0f s)",
+                                 raised, held, self._flow_floor_interval)
                     self._flow_floor_logged = now
             else:
                 if self._flow_floor_since is not None:
                     log.info("flow floor released (was binding for %.0f s)",
                              time.monotonic() - self._flow_floor_since)
                 self._flow_floor_since = None
+                self._flow_floor_interval = 60.0
 
         # MANUAL OVERRIDE, applied after distribution and the flow floor so
         # it beats the control chain, and BEFORE safety so it never beats a

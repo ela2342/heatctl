@@ -5530,3 +5530,40 @@ antifreeze bits belong in a separate `protections` series.
   reference does still narrow occasionally. Not the 2-of-6 of the incident.
 - **Two P04 writes in 600 ms at startup** (`None -> 30`, then `25 -> 30`).
   Both are flash cycles for one decision (D-013).
+
+## `0x00F4` reads 65512 and the silent-mode gate passes on it
+
+Known since 2026-08-08 (`_check_ranges` docstring); restated here because
+D-038 made it load-bearing rather than merely untidy.
+
+The register is declared `0..1000` and reads raw **65512**. `silent_ok` in
+`_trim_capacity` tests `fan_cap >= capacity_fan_min`, so it passes — 65512 is a
+large number. The gate exists to confirm the condenser fan is not throttled
+before driving a frequency ceiling, and it is currently answering that question
+by accident.
+
+**Left passing deliberately.** Making it reject the implausible value was
+written and reverted the same hour on 2026-08-19: `silent_ok = False` sends
+`CapacityController.step` down the BLOCKED path, and before D-038 that also
+removed the compressor STOP — the only condensation enforcement left after
+D-035. Tightening a gate on a register nobody can read would have disarmed a
+loop that demonstrably works.
+
+**The evidence that the fan is actually fine**, and it is not the register:
+silent mode binds (measured repeatedly 2026-07-30 → 2026-08-12; the compressor
+tracks R32 within a few Hz once settled), and there have been **zero Er05
+high-pressure trips**, which is the failure a throttled condenser produces.
+
+**What would settle it**
+
+- [ ] Read `0x00F4` as **signed**: 65512 is −24. Its neighbour `0x00F0`
+      (`powerful_freq_boost_cooling_hz`) *is* a signed −30..30 trim, so the
+      block may be trims rather than absolute speeds and the map may be wrong
+      about the type, not just the range.
+- [ ] Failing that, write a known good value and read it back. A register that
+      accepts and holds a value while having no effect is a shape this unit has
+      form for (R13 accepts 50 and runs at 80; `docs/HEATPUMP.md`).
+- [ ] Only then tighten the gate to reject out-of-range readings.
+
+Until one of those happens, `silent_ok` is not a safety property and should not
+be described as one.
