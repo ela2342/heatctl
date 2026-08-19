@@ -1373,3 +1373,60 @@ present means one field of a JSON object, as a Shelly publishes. Configured,
 never guessed — and a configured key that does not match is an error rather
 than a fallback to `float(payload)`, because the fallback turns a
 misconfiguration into a room that mysteriously never updates.
+
+## D-046 · The mode is decided on energy, and unreachable targets are clamped
+Two changes to one problem. Owner, 2026-08-19: *"Could we express that in terms
+of energy demand? We already have most of the plumbing."*
+
+### Energy, not mean temperature deviation
+
+`_pick_mode` now uses the house slab excess, expressed in kelvin of whole slab
+(`mode_deadband_slab_k`, 0.5). Mean deviation survives only as the fallback for
+when the energy model is blind.
+
+**Why: kelvins do not add across rooms and watt-hours do.** An unweighted mean
+lets one small room outvote the house, and it did — measured that evening,
+Elternschlafzimmer alone contributed −4.6 K of a −6.5 K total, so the plant was
+cooling three rooms that wanted warming. Slab excess is additive and physical:
+room size, solar gain and thermal mass carry their true weight with no
+weighting scheme to argue about.
+
+**The two bases disagreed in sign.** Mean deviation −1.06 K said cool; the slab
+balance said the house was 10 095 Wh short, −1.16 K of slab, i.e. heat. The
+owner spotted this from the room list before either number was consulted.
+
+**This is the step where `energy.py` stops being a shadow.** Its docstring says
+"it does not close a loop", and this closes one. Mitigated deliberately: the
+decision is slow (deadband plus an hour of dwell), it consumes the PREVIOUS
+cycle's figure so the shadow keeps running last where a fault in it cannot
+delay control, and a blind model falls back rather than failing. `None` is not
+read as zero — zero would say "exactly on target" and silently freeze the mode.
+
+### Unreachable slab targets are clamped to the condensation limit
+
+`slab_target_c` answers a physics question and will answer with a number no
+plant may produce. Elternschlafzimmer, setpoint 19.0 against an east window,
+wanted a slab at **7.78 °C** — nine kelvin below the dew point, which D-039
+forbids absolutely.
+
+The unreachable part is not merely useless, it is **actively misleading**,
+because `excess` is measured against the target: that room reported 8 344 Wh of
+cooling demand, **82 % of the whole house's**, for work no legal control action
+can perform. Any consumer that sums demand — the mode decision above all — is
+then steered by an impossibility.
+
+`EnergyDemand.room` takes `slab_floor_c` and clamps. It is a **floor, not a
+setpoint**: a reachable target is never raised, or the clamp would invent
+demand. Physically sound because the slab cannot get colder than the coldest
+water the plant may make. What survives the clamp is the demand that could
+actually be served; a room that still cannot reach setpoint says so by staying
+off target rather than by inflating a total.
+
+**Cost:** the house figure now understates true discomfort in rooms with
+impossible targets — deliberately. It measures what the plant can *do*, not
+what the setpoints *ask*. Elternschlafzimmer at 19.0 in August remains
+unreachable and that is an envelope problem, not a control one.
+
+**Not covered:** Arbeitszimmer has no slab (fan coil,  in config.yaml), so it
+contributes nothing to either side of this balance. Its demand is invisible to
+the mode decision. Recorded rather than solved.

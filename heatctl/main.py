@@ -126,6 +126,10 @@ class Controller:
         self.capacity_fan_min = float(
             (cfg['control'].get('capacity') or {}).get('fan_cap_min', 400))
         self._sp_blocked = False        # edge detector for the saturation alarm
+        # House slab excess from the previous cycle, for the mode decision.
+        # None until the energy shadow has run once, and None again whenever
+        # it goes blind - `_pick_mode` then falls back to mean deviation.
+        self._last_house_excess_wh: float | None = None
         # ROOM TEMPERATURE STALENESS. 300 s was right for sensors reporting
         # every minute; the Shelly H&T G3 units fitted 2026-08-06 report every
         # 6-12 minutes, so a 300 s window would call them stale a third of the
@@ -574,7 +578,14 @@ class Controller:
         await self.plane.publish("setpoint_delta/active", f"{delta:+.2f}")
 
         self._last_demand = self.demand.step(
-            self.mode, targets, room_temps, state.valves_pct, now)
+            self.mode, targets, room_temps, state.valves_pct, now,
+            # LAST CYCLE'S energy balance, deliberately. The shadow runs at the
+            # END of the cycle so a fault in it cannot delay a control
+            # decision, and that ordering is worth more than freshness here: a
+            # one-second lag on a decision guarded by an hour of dwell is
+            # nothing. See D-046.
+            excess_wh=self._last_house_excess_wh,
+            capacity_wh=self.energy.slab_capacity_wh())
 
         # Apply the mode the house asked for. Gated on auto_mode alone, NOT on
         # source_demand.enabled: choosing the season and choosing whether to
@@ -877,7 +888,14 @@ class Controller:
                 room_t = house_mean
             e = self.energy.room(n, targets[n], outdoor, rl, vl,
                                  rl_valid=rl is not None, room_c=room_t,
-                                 mode=self.mode)
+                                 mode=self.mode,
+                                 # The slab cannot be colder than the coldest
+                                 # water we may make (D-046). None in heating,
+                                 # where the target is above room temperature
+                                 # and the clamp could never bind anyway.
+                                 slab_floor_c=(
+                                     self.safety.cooling_supply_limit(now)
+                                     if self.mode == "cooling" else None))
             rooms.append(e)
             base = f"energy/{n}"
             await self.plane.publish(f"{base}/valid", "1" if e.valid else "0")
@@ -898,6 +916,10 @@ class Controller:
                                          f"{e.blocked_wh:.0f}")
 
         total = self.energy.house_excess_wh(rooms)
+        # Hand to the mode decision on the next cycle. None when the model is
+        # blind, which is the signal to fall back rather than a zero - a zero
+        # would read as "the house is exactly on target".
+        self._last_house_excess_wh = total
         act = self.energy.house_actionable_wh(rooms)
         blocked = self.energy.house_blocked_wh(rooms)
         n_valid = sum(1 for r in rooms if r.valid)

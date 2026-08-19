@@ -226,6 +226,20 @@ class EnergyDemand:
         self._ntu: dict[str, float] = {}
         self._q_sol: dict[str, float] = {}
 
+    def slab_capacity_wh(self) -> float:
+        """Total slab heat capacity, Wh/K, over the rooms that HAVE a slab.
+
+        Lets a house energy figure be read as a slab temperature: 8691 Wh of
+        excess is 1 K of whole-slab. That is the unit a mode deadband should
+        be expressed in - Wh is not intuitive and does not survive a change of
+        floor area, kelvin does.
+
+        Excludes fan-coil rooms, matching `has_slab`, so the divisor covers
+        exactly the rooms the numerator can come from.
+        """
+        return sum(self.c_slab_wh_per_m2 * a for n, a in self.areas.items()
+                   if self.has_slab(n))
+
     def has_slab(self, name: str) -> bool:
         """Does this room store energy in a floor slab we can aim at?"""
         return self.emitters.get(name, "slab") == "slab"
@@ -264,7 +278,8 @@ class EnergyDemand:
     def room(self, name: str, setpoint_c: float, outdoor_c: float | None,
              rl_c: float | None, vl_c: float | None,
              rl_valid: bool = True, room_c: float | None = None,
-             mode: str = "off") -> RoomEnergy:
+             mode: str = "off",
+             slab_floor_c: float | None = None) -> RoomEnergy:
         """One room's slab state. Never raises; returns an invalid result.
 
         Refuses rather than guesses on every missing input. A feedforward
@@ -288,6 +303,32 @@ class EnergyDemand:
             q_int_w=self.q_int_w * share,
             room_c=room_c, c_air_wh=self.c_air_wh * share,
             tau_recover_h=self.tau_recover_h)
+
+        # CLAMP THE TARGET TO WHAT MAY LEGALLY BE REACHED (D-046).
+        #
+        # `slab_target_c` answers a physics question - what slab temperature
+        # would hold this room at setpoint - and it will happily answer with a
+        # number no plant may produce. Measured 2026-08-19: Elternschlafzimmer,
+        # setpoint 19.0 against an east window's solar gain, wanted a slab at
+        # 7.78 degC. That is nine kelvin below the dew point. Approaching it
+        # would condense inside a vapour-permeable screed, which D-039 says has
+        # no safe amount.
+        #
+        # The unreachable part is not merely useless, it is ACTIVELY
+        # MISLEADING, because `excess` is measured against this target: the
+        # room reported 8344 Wh of cooling demand, 82 % of the whole house's,
+        # for work no legal control action can perform. Anything downstream
+        # that sums demand - the mode decision above all - is steered by a
+        # number that describes an impossibility.
+        #
+        # Clamping to the condensation limit is conservative in the right
+        # direction and physically sound: the slab cannot get colder than the
+        # coldest water the plant is allowed to make. What remains after the
+        # clamp is the demand that could actually be served, and a room that
+        # still cannot reach setpoint says so by staying off target rather
+        # than by inflating a total.
+        if slab_floor_c is not None and target < slab_floor_c:
+            target = slab_floor_c
 
         if not self.has_slab(name):
             # The target still stands - it says what water this room wants -

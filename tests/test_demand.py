@@ -441,3 +441,61 @@ def test_auto_mode_never_overrules_an_explicit_off(demand):
         out = d.step("off", {"a": 21.0}, {"a": 10.0}, {}, now)   # +11 K, wants heat
         assert out.mode == "off", f"auto_mode left `off` at t={now}"
         assert out.source_request is False
+
+
+# ---------- the mode decision on energy, not temperature (D-046) ----------
+
+class TestModeFromSlabExcess:
+    """Kelvins do not add across rooms; watt-hours do. Measured 2026-08-19,
+    the two bases disagreed IN SIGN."""
+
+    CAP = 8691.0        # Wh/K, the house slab
+
+    def test_the_energy_basis_overrides_the_mean_deviation(self, demand):
+        """THE REAL CASE. Mean deviation -1.06 K said cool. The slab balance
+        said the house was 10 095 Wh short - 1.16 K of slab - i.e. heat.
+        Three rooms wanted warming and were being cooled because one small
+        room with an unreachable target dominated an unweighted mean.
+        """
+        d = demand()
+        out = d.step("cooling", {"a": 21.0}, {"a": 22.06}, {}, 0.0,
+                     excess_wh=-10095.0, capacity_wh=self.CAP)
+        assert out.mode == "heating"
+
+    def test_a_positive_excess_still_asks_for_cooling(self, demand):
+        d = demand()
+        out = d.step("heating", {"a": 21.0}, {"a": 21.0}, {}, 0.0,
+                     excess_wh=+9000.0, capacity_wh=self.CAP)
+        assert out.mode == "cooling"
+
+    def test_inside_the_slab_deadband_nothing_moves(self, demand):
+        """0.5 K of slab is ~4 300 Wh. Below that the house is close enough
+        that flipping the whole plant is not worth it."""
+        d = demand()
+        out = d.step("heating", {"a": 21.0}, {"a": 25.0}, {}, 0.0,
+                     excess_wh=-2000.0, capacity_wh=self.CAP)
+        assert out.mode == "heating", "a 4 K deviation must not override the energy view"
+
+    def test_it_falls_back_to_deviation_when_the_model_is_blind(self, demand):
+        """`energy_shadow_blind` is a real state - no outdoor temperature, or
+        no room estimable. Losing mode selection entirely would be worse than
+        using the cruder statistic."""
+        d = demand()
+        out = d.step("heating", {"a": 21.0}, {"a": 24.0}, {}, 0.0,
+                     excess_wh=None, capacity_wh=self.CAP)
+        assert out.mode == "cooling"
+
+    def test_a_blind_model_is_not_a_zero(self, demand):
+        """None must not read as 'the house is exactly on target', which would
+        silently freeze the mode wherever it happened to be."""
+        d = demand()
+        want_none, _ = d._mode_wanted(-3.0, None, self.CAP)
+        want_zero, _ = d._mode_wanted(-3.0, 0.0, self.CAP)
+        assert want_none == "cooling"          # fell back to deviation
+        assert want_zero is None               # genuinely in band
+
+    def test_off_still_wins_over_the_energy_basis(self, demand):
+        d = demand()
+        out = d.step("off", {"a": 21.0}, {"a": 21.0}, {}, 0.0,
+                     excess_wh=+50000.0, capacity_wh=self.CAP)
+        assert out.mode == "off" and out.source_request is False

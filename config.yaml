@@ -743,6 +743,18 @@ control:
     # true of this one.
     min_open_pct: 41.0
     engage_deviation_c: 0.3 # how far off target before the source is worth it
+    # THE MODE DECISION IS MADE ON ENERGY, NOT TEMPERATURE (D-046). This is
+    # the deadband in KELVIN OF WHOLE SLAB: house slab excess divided by the
+    # slab's heat capacity (8691 Wh/K), so 0.5 K is about 4300 Wh. Kelvin
+    # rather than Wh because Wh is unreadable and does not survive a change of
+    # floor area.
+    mode_deadband_slab_k: 0.5
+    # FALLBACK ONLY, used when the energy model cannot answer - no outdoor
+    # temperature, or no room estimable (`energy_shadow_blind`). Kelvins do not
+    # add across rooms, so this statistic lets one small room outvote the
+    # house; on 2026-08-19 it did, and the plant cooled three rooms that
+    # wanted warming. Kept because losing mode selection entirely would be
+    # worse than using the cruder number.
     mode_deadband_c: 1.0    # PLANT-level only - rooms keep one target each.
                             # Without it the plant flaps around the average.
     mode_dwell_s: 3600      # and the average must persist this long.

@@ -413,3 +413,56 @@ class TestSolarParameterLifetime:
                         mode="cooling")
         assert sunny.valid and shaded.valid
         assert sunny.target_c < shaded.target_c
+
+
+# ---------- the slab target is clamped to what may be reached (D-046) ------
+
+def test_an_unreachable_slab_target_is_clamped_to_the_condensation_limit(cfg):
+    """THE REAL CASE, 2026-08-19. Elternschlafzimmer at setpoint 19.0 against
+    an east window's solar gain wanted a slab at 7.78 degC - nine kelvin below
+    the dew point, and D-039 says there is no safe amount of condensation
+    inside a vapour-permeable screed.
+
+    The unreachable part is not merely useless. `excess` is measured against
+    this target, so the room reported 8 344 Wh of cooling demand - 82 % of the
+    whole house - for work no legal control action can perform, and anything
+    summing demand is steered by an impossibility.
+    """
+    for r in cfg["rooms"]:
+        r.setdefault("floor_area_m2", 20.0)
+    m = EnergyDemand(cfg)
+    name = cfg["rooms"][0]["name"]
+    hot = m.room(name, setpoint_c=19.0, outdoor_c=30.0, rl_c=22.0, vl_c=20.0,
+                 room_c=24.0, mode="cooling", slab_floor_c=None)
+    clamped = m.room(name, setpoint_c=19.0, outdoor_c=30.0, rl_c=22.0,
+                     vl_c=20.0, room_c=24.0, mode="cooling",
+                     slab_floor_c=17.6)
+    assert hot.target_c < 17.6, "test premise: the raw target must be unreachable"
+    assert clamped.target_c == 17.6
+    assert clamped.excess_wh < hot.excess_wh, (
+        "clamping must REDUCE the demand attributed to this room")
+
+
+def test_the_clamp_never_raises_a_reachable_target(cfg):
+    """It is a floor, not a setpoint. A room whose target is already above the
+    limit must be untouched - otherwise the clamp would invent demand."""
+    for r in cfg["rooms"]:
+        r.setdefault("floor_area_m2", 20.0)
+    m = EnergyDemand(cfg)
+    name = cfg["rooms"][0]["name"]
+    a = m.room(name, setpoint_c=23.0, outdoor_c=5.0, rl_c=26.0, vl_c=30.0,
+               room_c=22.0, mode="heating", slab_floor_c=None)
+    b = m.room(name, setpoint_c=23.0, outdoor_c=5.0, rl_c=26.0, vl_c=30.0,
+               room_c=22.0, mode="heating", slab_floor_c=17.6)
+    assert a.target_c > 17.6 and b.target_c == a.target_c
+
+
+def test_slab_capacity_covers_only_rooms_that_have_one(cfg):
+    """The divisor must cover exactly the rooms the numerator can come from,
+    or a house figure read as kelvin-of-slab is wrong by the fan-coil rooms."""
+    for r in cfg["rooms"]:
+        r.setdefault("floor_area_m2", 20.0)
+    m = EnergyDemand(cfg)
+    expected = sum(m.c_slab_wh_per_m2 * a for n, a in m.areas.items()
+                   if m.has_slab(n))
+    assert m.slab_capacity_wh() == expected > 0

@@ -97,6 +97,10 @@ class DemandController:
         # the plant flaps between heating and cooling around the average.
         self.mode_deadband_c = float(d.get("mode_deadband_c", 1.0))
         self.mode_dwell_s = float(d.get("mode_dwell_s", 3600.0))
+        # ENERGY BASIS for the mode decision, in kelvin of whole slab. See
+        # `_pick_mode`. Kelvin rather than Wh because Wh is unreadable and does
+        # not survive a change of floor area.
+        self.mode_deadband_slab_k = float(d.get("mode_deadband_slab_k", 0.5))
 
         # Engage the source once the house is at least this far off target.
         self.engage_deviation_c = float(d.get("engage_deviation_c", 0.3))
@@ -258,8 +262,48 @@ class DemandController:
             return None, 0
         return sum(devs) / len(devs), len(devs)
 
+    def _mode_wanted(self, dev: float | None, excess_wh: float | None,
+                     capacity_wh: float | None) -> tuple[str | None, str]:
+        """Which mode the house wants, and on what basis.
+
+        **ENERGY FIRST (D-046).** Mean temperature deviation is the wrong
+        statistic for this decision, and the reason is arithmetic: kelvins do
+        not add across rooms and watt-hours do. An unweighted mean lets one
+        small room outvote the rest of the house, and on 2026-08-19 it did -
+        Elternschlafzimmer alone contributed -4.6 K of a -6.5 K total, so the
+        plant cooled three rooms that wanted warming.
+
+        The slab excess is additive and physical: room size, solar gain and
+        thermal mass all carry their true weight with no weighting scheme to
+        argue about. Measured the same evening, the two bases DISAGREED IN
+        SIGN - mean deviation said cool, the energy balance said the house was
+        10 kWh short, i.e. heat.
+
+        Expressed in kelvin of whole slab so the deadband is readable.
+
+        Falls back to the deviation when the energy model cannot answer -
+        every room unestimable, a missing outdoor temperature. That is a real
+        state (`energy_shadow_blind`), and losing mode selection entirely
+        would be worse than using the cruder statistic.
+        """
+        if excess_wh is not None and capacity_wh:
+            slab_k = excess_wh / capacity_wh
+            if slab_k > self.mode_deadband_slab_k:
+                return "cooling", f"slab {slab_k:+.2f} K"
+            if slab_k < -self.mode_deadband_slab_k:
+                return "heating", f"slab {slab_k:+.2f} K"
+            return None, f"slab {slab_k:+.2f} K in band"
+        if dev is None:
+            return None, "no basis"
+        if dev > self.mode_deadband_c:
+            return "heating", f"house {dev:+.2f} K (no energy model)"
+        if dev < -self.mode_deadband_c:
+            return "cooling", f"house {dev:+.2f} K (no energy model)"
+        return None, f"house {dev:+.2f} K in band (no energy model)"
+
     def _pick_mode(self, current: str, dev: float | None, now: float,
-                   rooms_used: int = 0) -> str:
+                   rooms_used: int = 0, excess_wh: float | None = None,
+                   capacity_wh: float | None = None) -> str:
         """Mode from the house average, with a deadband and a dwell time.
 
         **The dwell does not apply to the first decision after a start**
@@ -291,11 +335,8 @@ class DemandController:
             return current
         # Every configured room has reported, so the average means something.
         complete = self.expected_rooms > 0 and rooms_used >= self.expected_rooms
-        if dev > self.mode_deadband_c:
-            want = "heating"
-        elif dev < -self.mode_deadband_c:
-            want = "cooling"
-        else:
+        want, basis = self._mode_wanted(dev, excess_wh, capacity_wh)
+        if want is None:
             self._mode_candidate = None
             # A full reading inside the band IS a decision: the seed mode is
             # fine. Spend the one-shot, so a later drift out of band is
@@ -309,9 +350,9 @@ class DemandController:
         if not self._mode_decided and complete:
             self._mode_decided = True
             self._mode_candidate = None
-            log.warning("mode -> %s at start-up (house average %+.2f K over "
-                        "%d rooms, no dwell - the mode it replaces was a "
-                        "config default, not a decision)", want, dev, rooms_used)
+            log.warning("mode -> %s at start-up (%s, %d rooms, no dwell - the "
+                        "mode it replaces was a config default, not a "
+                        "decision)", want, basis, rooms_used)
             return want
         # Require the condition to persist. Switching the whole plant on a
         # transient average is expensive and slow to undo.
@@ -321,17 +362,20 @@ class DemandController:
             return current
         if now - self._candidate_since < self.mode_dwell_s:
             return current
-        log.info("mode -> %s (house average %+.2f K for %.0f s)",
-                 want, dev, now - self._candidate_since)
+        log.info("mode -> %s (%s for %.0f s)",
+                 want, basis, now - self._candidate_since)
         self._mode_candidate = None
         return want
 
     def step(self, mode: str, setpoints: dict[str, float],
              room_temps: dict[str, float], valves_pct: dict[str, float],
-             now: float) -> Demand:
+             now: float, excess_wh: float | None = None,
+             capacity_wh: float | None = None) -> Demand:
         dev, n = self.mean_deviation(setpoints, room_temps)
         open_pct = self.open_pct(valves_pct)
-        mode = self._pick_mode(mode, dev, now, rooms_used=n)
+        mode = self._pick_mode(mode, dev, now, rooms_used=n,
+                               excess_wh=excess_wh,
+                               capacity_wh=capacity_wh)
 
         want, reason = self._want_source(mode, dev, open_pct)
 
