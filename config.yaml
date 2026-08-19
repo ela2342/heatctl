@@ -173,14 +173,16 @@ sensors:
     # previously mislabelled "Return circuit 12" and disabled; 15/16 were
     # "Reserve".
     #
-    # WHY THIS MATTERS RATHER THAN BEING COSMETIC. D-009 says a circuit with no
-    # flow stops measuring its circuit and starts measuring this cabinet, and
-    # `rl_gate.py` currently detects that with a TIMER (`settle_s`). Measured
-    # against five months of pre-heatctl history (2025-10..2026-02), every
-    # circuit collapsed from 4.6-9.7 K above cabinet air to within ~1 K of it
-    # when flow stopped, and took 2-3 HOURS to recover afterwards - against a
-    # `settle_s` of 300 s. A direct cabinet reading lets the gate test the
-    # condition it actually cares about instead of a proxy for it.
+    # WHY THIS MATTERS RATHER THAN BEING COSMETIC. Measured against five months
+    # of pre-heatctl history (2025-10..2026-02), every circuit collapsed from
+    # 4.6-9.7 K above cabinet air to within ~1 K of it when flow stopped. That
+    # is D-009's mechanism, confirmed on all ten circuits.
+    #
+    # IT DOES NOT LICENSE THE CONVERSE, and a paragraph here used to say it did
+    # - that a direct `|rl - ambient|` reading would let the gate "test the
+    # condition it actually cares about". It would not; see D-042. These
+    # sensors are for observability and for characterising the collapse, not
+    # for deciding whether a circuit is flowing.
     #
     # THREE of them, so the reference survives one failing and a median can
     # reject an outlier. They are not interchangeable with each other blindly:
@@ -708,11 +710,10 @@ control:
   # pipe always flows. See heatctl/rl_gate.py and docs/DESIGN.md section 4.
   rl_gating:
     enabled: true
-    # Must stay at or above distribution.open_threshold_pct (20 % since
-    # D-041). Below that a circuit passes nothing, and trusting its return
-    # sensor is the D-009 lock-out this gate exists to prevent. 25 is the
-    # threshold plus a little; how much flow RL actually needs is not measured.
-    min_opening_pct: 25.0
+    # 0.5 l/min for three minutes is the strongest claim the evidence supports
+    # (owner, 2026-08-19; D-042). Through D-041's calibration
+    # flow = 2.0*(cmd-20)/30, so 0.5 l/min is a command of 27.5 %.
+    min_opening_pct: 27.5
     settle_s: 300           # valve stroke PLUS transport time through the
                             # loop - water must actually arrive at the sensor
     flush_interval_s: 3600  # a held-closed circuit is re-opened this often

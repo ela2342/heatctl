@@ -70,7 +70,9 @@ project is not ignorance, it is **drift between what is written and what runs**.
     register map, `config.yaml`, the entity registry — read it before asserting
     what a sensor or room *is*.
 13. **A predicted effect is not confirmation** if any change of that shape
-    would produce it. Test the mechanism, not the outcome.
+    would produce it. Test the mechanism, not the outcome. An implication runs
+    one way: `no flow ⟹ reads ambient` never gives `reads ambient ⟹ no flow`.
+    · D-042
 14. **Every safety rule gets a test**, the test asserts the *direction* of
     failure, and regression tests are mutation-verified — a test that passes
     against the bug is worse than none.
@@ -1203,3 +1205,50 @@ demand**. The whole range now lands on the part that moves water.
 **Not changed:** the failsafe and frost overrides still command 100, and the
 RL flush still flushes at 100. Both want maximum stroke rather than a
 hydraulic optimum, and neither is on the distribution path.
+
+## D-042 · "Reads ambient" is not evidence of "no flow"
+D-009's implication runs one way only:
+
+    no flow  ⟹  the return sensor drifts toward manifold cabinet air
+
+The converse — *reads cabinet air, therefore no flow* — is **invalid and must
+not be built**. Owner, 2026-08-19: *"we have seen the return flow temperature
+match the ambient temperature by chance, we've seen that even without flow, it
+takes a while for the temperature to reach an equilibrium with the
+surroundings."*
+
+**Both error directions are real, and the dangerous one dominates.**
+
+- *False stagnant*: a flowing circuit whose return happens to sit near cabinet
+  air. Likeliest exactly when the plant runs on small spreads — shoulder season
+  and cooling. Cost: an unnecessary hold and flush. Tolerable.
+- *False flowing*: a circuit that stopped minutes ago has not equilibrated yet
+  and still reads several K off cabinet. Cost: **the gate trusts a stagnant
+  sensor**, which is the silent D-009 lock-out the gate exists to prevent.
+
+So an `|rl − ambient|` test is not merely unsound, it is worse than the timer
+it was proposed to replace: the timer's failures are conservative, this one's
+are permissive. The BACKLOG item proposing it is withdrawn.
+
+**This is standing principle 13** — *a predicted effect is not confirmation if
+any change of that shape would produce it* — and it is worth recording that the
+rule already existed and a planned work item violated it anyway. The five-month
+archive study that measured the collapse is sound and unaffected; what it
+established is the forward implication, which is what D-009 needed.
+
+**The strongest claim available**, and now what `rl_gate.py` implements:
+**a return temperature is valid if flow has been above 0.5 l/min for at least
+three minutes.** Positive, on a quantity we command rather than one we observe.
+Via D-041 that is `min_opening_pct: 27.5`, and `settle_s` stays at 300 s — the
+three minutes plus an allowance for valve travel, since the clock starts at the
+command. Nothing is claimed about circuits below the threshold: they are
+*unknown*, which is the honest state and the one the fail-open path handles.
+
+**Inherited uncertainty:** 27.5 % depends on D-041's provisional linearity
+between 20 and 50 %. And three minutes of flow means the sensor is reading
+moving water, not that the loop has reached steady state — at 0.5 l/min a
+circuit displaces only ~1.5 L in that time. Whether control needs the stronger
+condition is open; `settle_s` at 300 s is already longer than the criterion.
+
+**The three cabinet-air sensors keep their purpose**: observability, and
+characterising the collapse. They are simply not a flow detector.

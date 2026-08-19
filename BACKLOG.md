@@ -3979,11 +3979,16 @@ does not change the 20x error, but it changes the remedy: the reading is a
 lagged truth rather than noise, so it is characterisable and could be
 compensated rather than merely waited out.
 
-- [ ] **Replace the `settle_s` timer with a direct `|rl - ambient|` test.**
-      Three cabinet-air sensors are now fitted (inputs 12/15/16, see
-      config.yaml) so the reference exists and survives one failing. A direct
-      test measures the condition the gate cares about instead of a proxy, and
-      it needs no per-circuit constants - which matters because:
+- [~] **WITHDRAWN 2026-08-19 (D-042): replace the `settle_s` timer with a
+      direct `|rl - ambient|` test.** The proposal inverts a valid implication.
+      "No flow, so the sensor drifts to ambient" does not give "reads ambient,
+      so no flow" - the owner has seen a *flowing* return match cabinet air by
+      chance, and a stagnant one takes far longer than a control cycle to get
+      there. Both errors are real and the permissive one is the dangerous one:
+      a circuit that stopped minutes ago still reads "flowing", so the test
+      would trust exactly the stagnant sensor the gate exists to distrust.
+      This is standing principle 13 - a predicted effect is not confirmation.
+      The rest of the item stood on a true observation and is kept:
       **the circuits differ by ~2.5x** (at h=1: rl_7 0.39 vs rl_2 0.95, and
       3/4/7 show nothing at all in the first hour). One global constant is
       either far too short for the slow circuits or wasteful for the fast ones.

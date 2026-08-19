@@ -10,6 +10,14 @@ at all and equilibrates toward the manifold cabinet's ambient - which is
 dominated by the flow and return headers running past it, i.e. it drifts
 toward roughly the system water temperature.
 
+**READ THAT IMPLICATION IN ONE DIRECTION ONLY (D-042).** "No flow, therefore
+the sensor drifts to ambient" is true and is the whole basis of this file.
+"Reads ambient, therefore no flow" is not, and this gate must never be
+rewritten to use it: a flowing return can sit at cabinet temperature by
+coincidence, and a stagnant one takes far longer than a control cycle to get
+there. So the rule below is stated FORWARDS - on flow we commanded, never on
+temperature we observed.
+
 That produces LOCK-OUT, not oscillation, and lock-out is the worse of the
 two because it is silent:
 
@@ -31,9 +39,13 @@ is the *only* control path there is.
 The consequence for the design below: the periodic FLUSH is the load-bearing
 part, not the hold. Holding alone would preserve the lock-out.
 
-The rule implemented here: RL means something only after the valve has been
-commanded meaningfully open for long enough that water has actually travelled
-the loop. Otherwise the circuit is held, and re-measured periodically by
+The rule implemented here, in the owner's words (2026-08-19) and as strong as
+the evidence allows: **RL is valid if flow has been above 0.5 l/min for at
+least three minutes.** `min_opening_pct` is that flow expressed as a command
+through D-041's calibration, and `settle_s` is the three minutes plus an
+allowance for the valve to travel - the clock starts at the command, not at
+first flow. Nothing is claimed about circuits below the threshold; they are
+unknown, which is the honest state and is what the fail-open path handles. Otherwise the circuit is held, and re-measured periodically by
 flushing. This is the minimal mitigation named in ROADMAP.md Milestone 1; the
 full scheduled flush-and-remeasure design is docs/DESIGN.md section 4.
 
@@ -79,14 +91,15 @@ class RLGate:
     def __init__(self, cfg: dict):
         g = dict(cfg["control"].get("rl_gating") or {})
         self.enabled = bool(g.get("enabled", True))
-        # MUST NOT SIT BELOW `distribution.open_threshold_pct`, which is 20 %
-        # since D-041 - the command at which water starts to move at all. It
-        # was 15 while that threshold was believed to be the 5 % electrical
-        # deadband, so the gate would have trusted the return sensor on a
-        # circuit passing nothing, which is the exact D-009 lock-out it exists
-        # to prevent. Still a guess above that bound: how much flow RL needs to
-        # mean something is not measured.
-        self.min_opening = float(g.get("min_opening_pct", 25.0))
+        # 0.5 l/min, the owner's threshold, through D-041's calibration:
+        # flow = 2.0 * (cmd - 20) / 30, so 0.5 l/min is a command of 27.5 %.
+        # Inherits D-041's provisional linearity between 20 and 50 %.
+        #
+        # It was 15 - three times the believed 5 % ELECTRICAL deadband - which
+        # against a real hydraulic threshold of 20 % sat below the point where
+        # water moves at all, so the gate would have trusted a sensor on a
+        # circuit passing nothing.
+        self.min_opening = float(g.get("min_opening_pct", 27.5))
         # Valve stroke PLUS hydraulic transport through the loop: water has to
         # travel the circuit before RL means anything (docs/DESIGN.md 4.1.5).
         self.settle_s = float(g.get("settle_s", 300.0))
