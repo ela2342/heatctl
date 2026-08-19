@@ -338,3 +338,45 @@ def test_flow_floor_counts_open_pipe_circuits_as_already_flowing(cfg):
     # hk02/hk03 are open pipe -> 100 each -> mean already 68 % >= 40 %.
     assert out == cmd
     assert raised is None
+
+
+# ---------- the flow floor must not credit dead range (D-041) ----------
+
+def test_the_flow_floor_never_raises_a_circuit_past_saturation(cfg, demand):
+    """Opening a valve beyond the point where flow stops increasing buys no
+    water, so crediting it is fictitious flow - in the one calculation whose
+    job is to stay clear of Er03.
+
+    Before D-041 this loop raised toward a hardcoded 100, which was harmless
+    only while `full_open_pct` was also 100. The owner's calibration puts
+    saturation at 50 % command, so a floor satisfied by commanding 80 % would
+    have reported flow the plant was not passing.
+    """
+    cfg["control"]["distribution"] = {"open_threshold_pct": 20.0,
+                                      "full_open_pct": 50.0}
+    d = demand(min_open_pct=41.0)
+    # A SPREAD set, not a uniform one. Scaling a uniform set toward a 41 %
+    # mean lands every circuit on 41 and never reaches the clipping path at
+    # all - the first version of this test was green against the bug for
+    # exactly that reason.
+    vs = d.circuit_valves
+    valves = {v: (45.0 if i % 2 else 20.0) for i, v in enumerate(vs)}
+    out, proxy = d.enforce_flow_floor(dict(valves))
+    assert out, "floor did not act on a set well below it"
+    worst = max(out.values())
+    assert worst <= 50.0, (
+        f"raised a circuit to {worst} %, past the 50 % saturation point - "
+        "that is flow on paper only")
+    assert proxy is not None and proxy <= 50.0
+
+
+def test_the_unreachable_branch_also_stops_at_saturation(cfg, demand):
+    """The escape hatch had its own hardcoded 100. A floor that cannot be met
+    should open everything to the point where opening still does something,
+    and then say so - not command into dead range and look satisfied."""
+    cfg["control"]["distribution"] = {"open_threshold_pct": 20.0,
+                                      "full_open_pct": 50.0}
+    d = demand(min_open_pct=90.0)                     # impossible by design
+    out, _ = d.enforce_flow_floor({v: 20.0 for v in d.circuit_valves})
+    assert set(out.values()) == {50.0}, (
+        f"unreachable floor commanded into the dead range: {sorted(set(out.values()))}")

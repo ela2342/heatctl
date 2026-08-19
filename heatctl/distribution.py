@@ -42,11 +42,10 @@ NOT handled here, deliberately:
     may still close a circuit. If safety closes enough of them that flow is
     genuinely lost, the escalation is the source-side last resort, not
     reopening valves into a known-bad supply.
-  * Actuator deadband. `open_threshold_pct`/`full_open_pct` map the result
-    onto the actuator's *effective* range (docs/DESIGN.md 4.1.2). Both are
-    unmeasured - two actuators, no flow meters - so they default to an
-    identity mapping. Note "normalise to fully open" only means what it says
-    once `full_open_pct` is a measured number.
+  * The effective range. `open_threshold_pct`/`full_open_pct` map the result
+    onto the commands that actually move water - 20 to 50 % since D-041, which
+    also lists what else is keyed to those two. "Normalise to fully open"
+    means `full_open_pct`, not the number 100.
 """
 from __future__ import annotations
 

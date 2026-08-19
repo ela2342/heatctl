@@ -50,6 +50,9 @@ project is not ignorance, it is **drift between what is written and what runs**.
 6. **One writer per actuator.** A second writer is a design error. · D-030
 
 ### Parameters and constants
+6a. **`open_threshold_pct` and `full_open_pct` bound the whole command range**,
+    and `min_open_pct`, `enforce_flow_floor` and `rl_gating.min_opening_pct`
+    are all defined against them. Moving one alone breaks the plant. · D-041
 7. **No derived constant is ever a literal.** A number in the code is a
    parameter or it is a bug; derived quantities are computed at runtime. · D-031
 8. **Every parameter carries value, uncertainty, kind and provenance**, in one
@@ -1151,3 +1154,52 @@ not to stop measuring it.
 Shellys *and* the Arbeitszimmer too, until we stabilize things" — this removes
 the "until" and the stale exclusion note that had contradicted the running
 system in `config.yaml` for nine days.
+
+## D-041 · The commanded range is 20–50 %, and everything keyed to it moves too
+Owner's calibration, 2026-08-19: **2–5 V spans 0–100 % of useful opening**, so
+on the 0–10 V output `open_threshold_pct: 20`, `full_open_pct: 50`. On the
+balanced manifold that is 0 → 2.0 l/min per circuit, taken as linear between.
+
+**Provisional and labelled as such.** It is a calibration from the 2026-08-09
+pass, not a measured curve, and the pass commanded all ten circuits together —
+a configuration `distribution.py` never produces, since D-017 normalises to a
+spread. A differential sweep is deferred (`docs/FLOW_CHARACTERISATION.md`).
+
+**Supersedes the reasoning for `full_open_pct: 100`**, which was not wrong so
+much as about a different quantity. The Alpha 5 APV's travel detection
+auto-adapts its control-voltage range for full **stroke** — true, and it cannot
+know whether the last half of that stroke moves any water. Owner: *"it can't
+distinguish whether that valve travel has an influence on flow at all."* On the
+balanced manifold it does not; the rotameter throttle is the restriction above
+~50 %.
+
+**What this fixes is resolution, not allocation.** `distribution.py` computes
+`frac ∈ [0,1]` and maps it onto the command range; the relative split between
+circuits is unchanged. But with saturation at 50 % and the old 5→100 mapping,
+every circuit with `frac ≥ 0.474` received identical flow — so D-017's
+normalisation delivered **no differentiation at all across the top half of
+demand**. The whole range now lands on the part that moves water.
+
+**Three things had to move with it, and each would have been a defect alone.**
+
+1. **`min_open_pct: 55 → 41`.** 55 is unreachable once commands cap at 50, so
+   `enforce_flow_floor` would have hit its "unreachable" branch every cycle
+   and forced everything open — the opposite of the intent. 41 is also the
+   first *derived* value this constant has had: balancing plus linearity makes
+   mean opening proportional to total flow, `20·(mean−20)/30` l/min, so 41 %
+   holds 14.0 l/min against an Er03 floor near 9.6.
+2. **`enforce_flow_floor` no longer credits opening above saturation.** It
+   raised circuits toward a hardcoded 100, which was harmless only while
+   `full_open_pct` was 100 too. Past 50 that is flow on paper, in the one
+   calculation whose job is to stay clear of Er03. It now reads
+   `full_open_pct` from the distribution block, including for the open-pipe
+   credit in `open_pct`.
+3. **`rl_gating.min_opening_pct: 15 → 25`.** 15 was chosen as 3× the believed
+   5 % deadband. Against a real threshold of 20 % it sat *below* the point
+   where water moves, so the gate would have trusted the return sensor on a
+   circuit passing nothing — precisely the D-009 stagnant-sensor lock-out it
+   exists to prevent.
+
+**Not changed:** the failsafe and frost overrides still command 100, and the
+RL flush still flushes at 100. Both want maximum stroke rather than a
+hydraulic optimum, and neither is on the distribution path.

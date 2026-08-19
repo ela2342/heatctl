@@ -37,9 +37,9 @@ normalise against. We have neither.
   the passes below.
 - **Flow starts somewhere between 15 % and 20 %** on hk01–03, at the operating
   point of pass 1. Zero is an unambiguous reading, so the lower bound is solid.
-- Configured `open_threshold_pct` is **5.0**, from the Möhlenhoff datasheet.
-  That is the *electrical* dead band (0–0.5 V ignored). The **hydraulic**
-  threshold is at least three times higher.
+- The Möhlenhoff datasheet's **5 %** is the *electrical* dead band (0–0.5 V
+  ignored), not the hydraulic one, which is at least three times higher. It
+  was the configured `open_threshold_pct` until D-041 replaced it with 20.
 
 ## What is NOT settled
 
@@ -164,15 +164,37 @@ not restricting" from "Δp made up for it". It does **not** affect the practical
 answer, which is what distribution needs: *commanding 75 % instead of 100 %
 does not change what the plant delivers.*
 
-**Consequence for `distribution.py`.** It maps its entire output across
-`open_threshold_pct`=5 → `full_open_pct`=100. With flow starting near 15–20 %
+**Consequence for `distribution.py`.** It mapped its entire output across
+`open_threshold_pct`=5 → `full_open_pct`=100 (20 → 50 since D-041). With flow starting near 15–20 %
 and saturating by ~50 %, roughly **two thirds of the commanded range is inert** —
 dead at the bottom, saturated at the top. This is the first measurement that
 should actually reach `config.yaml`, because it was taken on the balanced
 manifold and the balance makes it common to all circuits.
 
-  - [ ] Re-derive `full_open_pct` toward ~50 and re-measure the threshold on
-        the balanced manifold before setting `open_threshold_pct`.
-  - [ ] Re-derive `min_open_pct` (55 %) — on this evidence it sits *above* the
-        saturation point, so the flow floor may be commanding into the dead
-        upper range and achieving nothing it could not achieve at ~50 %.
+  - [x] **Done 2026-08-19 on the owner's calibration, not on a sweep (D-041).**
+        *"Just assume 2-5 V gives 0-100 % opening, which with our balancing
+        translates into 0-2 l/min flow."* So `open_threshold_pct: 20`,
+        `full_open_pct: 50`, linear between, 0 → 2.0 l/min per circuit.
+        `min_open_pct: 55 → 41`, which is `20·(mean−20)/30 = 14.0 l/min`
+        against an Er03 floor near 9.6. `rl_gating.min_opening_pct: 15 → 25`,
+        because 15 sat below the threshold where water moves at all.
+
+## Still open
+
+  - [ ] **A differential sweep.** Everything above was measured with all ten
+        circuits commanded together, and `distribution.py` never produces
+        that — D-017 normalises to a spread, which is the configuration where
+        pressure coupling is strongest (throttling nine raises Δp across the
+        tenth). So the 20 % threshold and the 50 % saturation point are
+        established for uniform commands and assumed for the differential
+        case that actually runs.
+
+        The pass: hold nine circuits at a low fixed command, sweep the tenth
+        5/10/15/20/25/30/40/50/60/80/100 reading its rotameter, then repeat on
+        one other circuit to check the answer is common. ~20 readings.
+        Deferred by the owner on time grounds, 2026-08-19.
+
+  - [ ] **Whether linearity between 20 % and 50 % holds.** Assumed, not
+        measured. It is what makes mean opening proportional to total flow,
+        which is what makes `min_open_pct` a derived number rather than a
+        guess — so it is load-bearing for D-041's arithmetic.

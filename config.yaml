@@ -400,16 +400,22 @@ control:
     # once full_open_pct is a measured number, and there is a deadband at the
     # bottom that probably mirrors one at the top. Needs the actuators fitted
     # plus a characterisation run - see docs/DESIGN.md 4.5.
-    # MEASURED from the datasheet, not guessed (D-022). Moehlenhoff Alpha 5
-    # APV 42505-00: 0-0.5 V is ignored to reject hum on long cables, so 5 %
-    # of the 0-10 V range does nothing at all. Above that the drive is active.
-    open_threshold_pct: 5.0
-    # 100 is correct for a PHYSICAL reason, not merely the safe default: the
-    # APV variant has valve-travel detection and auto-adapts its active
-    # control-voltage range, regulating internally for maximum stroke minus
-    # over-travel. The upper deadband is real and the device already
-    # compensates for it - do not subtract it a second time.
-    full_open_pct: 100.0
+    # HYDRAULIC threshold, not the electrical one (D-041). Owner's
+    # calibration on the balanced manifold: 2-5 V spans 0-100 % of useful
+    # opening, so 2 V = 20 % of the 0-10 V output is where water starts to
+    # move. The datasheet's 0-0.5 V input deadband - the old 5.0 here - is a
+    # property of the drive electronics and is three to four times too low to
+    # describe the valve's effect on flow.
+    open_threshold_pct: 20.0
+    # 5 V = 50 %, where the circuit already passes all the water it will pass
+    # (D-041). Provisional: the owner's calibration, not a measured curve.
+    #
+    # The auto-adapt argument that put 100 here is not wrong, it is about a
+    # different quantity - travel detection adapts to the valve's STROKE, and
+    # cannot know whether the last half of that stroke moves any water. On the
+    # balanced manifold it does not: the rotameter throttle is the restriction
+    # above ~50 %.
+    full_open_pct: 50.0
 
   # Load compensation: house demand -> water temperature setpoint. The third
   # level of the cascade, and the one that decides efficiency - water colder
@@ -669,21 +675,22 @@ control:
     # point, it was essentially ON it. Every heat-pump reset re-faulted within
     # minutes because heatctl immediately throttled back to ~39 %.
     #
-    # 55 is a MARGIN, not a measurement - treat it as provisional. Two things
-    # found the same day say the underlying quantity is wrong, not just the
-    # value:
-    #   * The proportional valves have very low authority. Measured at the
-    #     manifold flow indicators, an 18 % command still passes 1.5-2.0 l/min
-    #     against a per-circuit maximum above 3 l/min - over half the flow at
-    #     under a fifth of the command. So mean-commanded-percent is not
-    #     proportional to flow in even a rough sense.
-    #   * Consequently total flow is governed mostly by how many circuits are
-    #     near-SHUT, not by the mean. A mean-based floor is the wrong shape for
-    #     the failure it guards against, and can be satisfied while individual
-    #     circuits are starved.
-    # The flow-based limit in BACKLOG is the fix; until then this is a blunt
-    # guard chosen to keep the plant running, and it binds continuously.
-    min_open_pct: 55.0
+    # DERIVED, for the first time (D-041). Balancing made every circuit worth
+    # 2.0 l/min at full, and the 20-50 % calibration makes flow linear in
+    # command between them, so with distribution's output clamped to that same
+    # range the mean opening is now PROPORTIONAL to total flow:
+    #
+    #     total l/min = 20 * (mean_pct - 20) / 30
+    #
+    # Er03 sits near 9.6 l/min, i.e. mean 34.4 %. 41 % gives 14.0 l/min
+    # (0.84 m3/h), mid-range of the unit's documented 0.58-1.44.
+    #
+    # This retires the objection that used to stand here - that a mean-based
+    # floor was the wrong SHAPE, because flow was governed by how many circuits
+    # were near-shut rather than by the mean. That was true of the unbalanced
+    # manifold, where per-circuit maxima differed by more than 2x. It is not
+    # true of this one.
+    min_open_pct: 41.0
     engage_deviation_c: 0.3 # how far off target before the source is worth it
     mode_deadband_c: 1.0    # PLANT-level only - rooms keep one target each.
                             # Without it the plant flaps around the average.
@@ -701,9 +708,11 @@ control:
   # pipe always flows. See heatctl/rl_gate.py and docs/DESIGN.md section 4.
   rl_gating:
     enabled: true
-    min_opening_pct: 15.0   # PROVISIONAL - the Alpha 5 deadband is not yet
-                            # measured (docs/HARDWARE.md). Below this we
-                            # assume no meaningful flow.
+    # Must stay at or above distribution.open_threshold_pct (20 % since
+    # D-041). Below that a circuit passes nothing, and trusting its return
+    # sensor is the D-009 lock-out this gate exists to prevent. 25 is the
+    # threshold plus a little; how much flow RL actually needs is not measured.
+    min_opening_pct: 25.0
     settle_s: 300           # valve stroke PLUS transport time through the
                             # loop - water must actually arrive at the sensor
     flush_interval_s: 3600  # a held-closed circuit is re-opened this often

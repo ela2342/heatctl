@@ -79,11 +79,14 @@ class RLGate:
     def __init__(self, cfg: dict):
         g = dict(cfg["control"].get("rl_gating") or {})
         self.enabled = bool(g.get("enabled", True))
-        # NOT the actuator deadband - that is 5 % (Umin, D-022) and lives in
-        # `distribution.open_threshold_pct`. This is a different question:
-        # how far open before there is enough FLOW for RL to mean anything.
-        # Still a conservative guess; only plant data can settle it.
-        self.min_opening = float(g.get("min_opening_pct", 15.0))
+        # MUST NOT SIT BELOW `distribution.open_threshold_pct`, which is 20 %
+        # since D-041 - the command at which water starts to move at all. It
+        # was 15 while that threshold was believed to be the 5 % electrical
+        # deadband, so the gate would have trusted the return sensor on a
+        # circuit passing nothing, which is the exact D-009 lock-out it exists
+        # to prevent. Still a guess above that bound: how much flow RL needs to
+        # mean something is not measured.
+        self.min_opening = float(g.get("min_opening_pct", 25.0))
         # Valve stroke PLUS hydraulic transport through the loop: water has to
         # travel the circuit before RL means anything (docs/DESIGN.md 4.1.5).
         self.settle_s = float(g.get("settle_s", 300.0))

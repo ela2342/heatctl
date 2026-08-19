@@ -104,6 +104,14 @@ class DemandController:
         # owner's measured figure - below it the system runs into trouble and
         # eventually the pump's own Er03 water-flow failsafe.
         self.min_open_pct = float(d.get("min_open_pct", 40.0))
+        # THE COMMAND AT WHICH A CIRCUIT IS ALREADY PASSING ALL THE WATER IT
+        # WILL PASS. Read from the distribution block because it is the same
+        # physical fact, and the floor is meaningless without it: this loop
+        # credits opening as if it bought flow, so crediting anything above
+        # saturation is fictitious flow, in the one calculation whose whole job
+        # is to stay clear of Er03. See D-041.
+        self.flow_full_open_pct = float(
+            (cfg["control"].get("distribution") or {}).get("full_open_pct", 100.0))
         # Anti-short-cycle. The compressor already cycles ~10 min on / ~9 min
         # off unaided; this must not make that worse.
         self.min_on_s = float(d.get("min_on_s", 600.0))
@@ -127,14 +135,16 @@ class DemandController:
     def open_pct(self, valves_pct: dict[str, float]) -> float | None:
         """Mean opening across all water-carrying circuits, 0..100.
 
-        Unactuated circuits count as 100: they are open pipe. This is a flow
-        PROXY, not a measurement - there is no flow meter. It is the same
-        quantity the owner's 40 % rule of thumb refers to.
+        Unactuated circuits count as `flow_full_open_pct`, not 100: they are
+        open pipe, which passes the same water a saturated actuated circuit
+        does. Crediting them 100 on a scale where 50 is already full flow would
+        make the proxy read high exactly where it is used to prevent Er03.
+        This is a flow PROXY, not a measurement - there is no flow meter.
         """
         vals = []
         for name in self.circuit_valves:
             if name in self.unactuated:
-                vals.append(100.0)
+                vals.append(self.flow_full_open_pct)
             elif name in valves_pct:
                 vals.append(valves_pct[name])
         return sum(vals) / len(vals) if vals else None
@@ -185,18 +195,19 @@ class DemandController:
 
         n_unact = len([v for v in self.circuit_valves if v in self.unactuated])
         # Sum of actuated openings needed for the mean to reach the floor.
-        need = self.min_open_pct * n_total - 100.0 * n_unact
+        need = (self.min_open_pct * n_total
+                - self.flow_full_open_pct * n_unact)
         have = sum(commanded[v] for v in actuated)
         if need <= have:
             return commanded, None
 
         out = dict(commanded)
-        if need >= 100.0 * len(actuated):
+        if need >= self.flow_full_open_pct * len(actuated):
             # Even wide open cannot make the floor. Open everything and let
             # the source-side handle it - see BACKLOG. Still the right
             # direction, and the most flow we can offer.
             for v in actuated:
-                out[v] = 100.0
+                out[v] = self.flow_full_open_pct
             log.warning("flow floor %.0f%% unreachable: all %d actuated "
                         "circuits forced open", self.min_open_pct, len(actuated))
             return out, self.open_pct(out)
@@ -210,14 +221,15 @@ class DemandController:
                     out[v] = need / len(free)
                 break
             k = need / have_free
-            clipped = [v for v in free if out[v] * k > 100.0]
+            clipped = [v for v in free
+                       if out[v] * k > self.flow_full_open_pct]
             if not clipped:
                 for v in free:
                     out[v] = out[v] * k
                 break
             for v in clipped:
-                out[v] = 100.0
-                need -= 100.0
+                out[v] = self.flow_full_open_pct
+                need -= self.flow_full_open_pct
                 free.remove(v)
         return out, self.open_pct(out)
 
