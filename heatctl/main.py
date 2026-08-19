@@ -900,20 +900,26 @@ class Controller:
             base = f"energy/{n}"
             await self.plane.publish(f"{base}/valid", "1" if e.valid else "0")
             await self.plane.publish(f"{base}/reason", e.reason)
-            if e.target_c is not None:
-                await self.plane.publish(f"{base}/slab_target",
-                                         f"{e.target_c:.2f}")
-            if e.slab_c is not None:
-                await self.plane.publish(f"{base}/slab", f"{e.slab_c:.2f}")
-            if e.excess_wh is not None:
-                await self.plane.publish(f"{base}/excess_wh",
-                                         f"{e.excess_wh:.0f}")
-            if e.actionable_wh is not None:
-                await self.plane.publish(f"{base}/actionable_wh",
-                                         f"{e.actionable_wh:.0f}")
-            if e.blocked_wh is not None:
-                await self.plane.publish(f"{base}/blocked_wh",
-                                         f"{e.blocked_wh:.0f}")
+            # PUBLISH "unknown" RATHER THAN LEAVING THE OLD VALUE. Skipping
+            # the publish leaves whatever was last sent standing, so a room
+            # the model has just declared INVALID keeps displaying a confident
+            # number beside `valid 0`. Found live on 2026-08-19:
+            # Elternschlafzimmer lost its return sensor, and its `excess_wh`
+            # went on reading 8996 Wh - stale, computed against a target that
+            # had since moved - while `valid` said 0 and the house total had
+            # already dropped the room. Same "stale looks fresh" family as the
+            # retained rtl_433 fossils, and it now feeds a control decision.
+            def _n(v, fmt="{:.2f}"):
+                return "unknown" if v is None else fmt.format(v)
+
+            await self.plane.publish(f"{base}/slab_target", _n(e.target_c))
+            await self.plane.publish(f"{base}/slab", _n(e.slab_c))
+            await self.plane.publish(f"{base}/excess_wh",
+                                     _n(e.excess_wh, "{:.0f}"))
+            await self.plane.publish(f"{base}/actionable_wh",
+                                     _n(e.actionable_wh, "{:.0f}"))
+            await self.plane.publish(f"{base}/blocked_wh",
+                                     _n(e.blocked_wh, "{:.0f}"))
 
         total = self.energy.house_excess_wh(rooms)
         # Hand to the mode decision on the next cycle. None when the model is

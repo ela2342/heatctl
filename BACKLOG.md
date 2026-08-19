@@ -5895,3 +5895,50 @@ the device is gone, waiting fifteen minutes to agree is a choice nobody made.
 REST via the HA bridge) and a new-world one (Shelly on the PLC broker), so
 every one of these can be proven against a room that still has a working
 fallback before any other room moves.
+
+## Three things the energy-mode work turned up, 2026-08-19
+
+### [!] Elternschlafzimmer has lost its return temperature
+
+`heatctl/energy/schlafzimmer/reason` reads **`no return temp`**, so `rl_hk07`
+is absent, not merely distrusted (that would say `rl not valid`). The room is
+therefore excluded from `house_excess_wh` entirely — the house figure is a sum
+over the *valid* rooms, deliberately understating rather than extrapolating.
+
+Consequences while it lasts: the room the whole mode discussion was about
+contributes nothing to the decision, and its per-room energy figures are
+meaningless. Needs a look at the sensor, not at the code.
+
+### Per-room energy topics went stale instead of going unknown — fixed
+
+The publisher skipped a topic when its value was `None`, which leaves the last
+value standing. So Elternschlafzimmer displayed a confident `excess_wh 8996`
+next to `valid 0`, computed against a target that had since moved, while the
+house total had already dropped the room. Now publishes `unknown`.
+
+Same family as the retained rtl_433 fossils found the same evening, and worth
+naming as a pattern: **absence must be published, not implied.** A value that
+is merely not refreshed is indistinguishable from a current one.
+
+### D-044's start-up one-shot can fire before the energy model has answered
+
+Observed immediately after deploying D-046:
+
+```
+mode -> cooling at start-up (house -1.04 K (no energy model), 7 rooms, no dwell)
+```
+
+`_last_house_excess_wh` is `None` until the energy shadow has run once, so the
+one-shot — which fires as soon as the room set is complete — can spend itself
+on the fallback statistic. That is the very statistic D-046 demoted, and on
+that evening the two disagreed **in sign**.
+
+Not fatal: the dwell path prefers energy, so it self-corrects after
+`mode_dwell_s`. But an hour in the wrong mode after every restart is most of
+what D-044 was built to avoid.
+
+  - [ ] Make the one-shot wait for the energy basis, bounded — arm on energy
+        if it arrives within a short grace, otherwise fall back and spend it.
+        Needs a start timestamp in `DemandController`. The unbounded version
+        is wrong: a permanently blind model would lose the fast start-up
+        decision altogether.
