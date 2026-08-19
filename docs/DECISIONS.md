@@ -143,6 +143,8 @@ shut — silent **lock-out**, not oscillation. Handled by `heatctl/rl_gate.py`,
 where the periodic *flush* is the load-bearing part, not the hold.
 
 ## D-010 · No fresh dew point means no cooling
+**Partially superseded by D-035** — the limit stands, but it is enforced by
+stopping the compressor, not by closing valves.
 **Why:** the static `vl_min_cooling_c` is not conservative — a 26 °C room at
 60 % RH has a dew point of 17.6 °C, above the 16.0 it permits. It looks like a
 safe floor and is not one. Also covers the case the HA automation cannot: if
@@ -155,7 +157,9 @@ recorded in `docs/HA_INTEGRATION.md` as safety-critical.
 return sensor. Checking fail-open first meant one faulted return sensor forced
 its circuit open while the supply was measurably below the dew point —
 condensation protection defeated by an unrelated fault. Frost still outranks
-everything.
+everything. **Still binding after D-035**, though the example no longer is: the
+remaining known-bad-supply rule is screed overtemp, and the ordering argument
+is the same one.
 
 ## D-012 · Register `0x0000` bit 0 is the unit's POWER, not the water pump
 **Supersedes** an assumption inherited from the roadmap, which the HA automation
@@ -923,3 +927,41 @@ would make a silent fallback impossible to notice.
 the sun and the other a property of pipework. Merging solar would credit a room
 with its morning gain all night. Layer 2 dying clears every room to zero, which
 understates cooling need and never invents one.
+
+## D-035 · Condensation is defended at the source only; valves stay out of it
+**Partially reverses D-010's actuator, not its limit.** Below-dew-point supply
+used to force every valve closed. It no longer does. Owner, 2026-08-19: *"the
+risk of triggering Er03 and leading to an unrecoverable state is too high (as
+you've seen, sometimes Er03 recovers, but not always). Shutting down the
+compressor is the only legitimate mechanism."*
+
+**Why:** the cold water is being *made*, continuously, by a compressor the
+valves cannot reach. Closing them does not stop production — it removes the
+load, collapses flow through the unit, and starves it into Er03, a **latching**
+fault that has needed a physical reset more than once. The rule therefore
+traded a slow, visible, self-correcting hazard (a cold slab, warming as soon as
+the source stops) for a fast, latching one that needs someone on site. The
+dwell timer it needed before firing was the tell: a genuine
+protect-against-instantaneous-damage rule does not wait.
+
+**What replaces it was already running.** `capacity.py` stops the compressor at
+the frequency floor rather than pushing supply below the margin, and that stop
+— not the valve trip — is what recovered the plant on 2026-08-10.
+`Safety.cooling_supply_limit()` is deliberately **kept**: the limit was never
+wrong, only the actuator chosen to enforce it. D-010's other half stands
+unchanged — no fresh dew point still means no cooling, now enforced by refusing
+to run the compressor.
+
+**Screed overtemp still fails CLOSED** (D-003's exception). Closing genuinely
+removes *that* danger, because the heat is already in the water in the slab.
+The two rules look symmetric and are not; see the policy docstring in
+`safety.py`.
+
+**Cost, accepted and not designed around:** if the heat pump is unreachable,
+nothing stops it making cold water. The valves previously would have. That is
+the 2026-08-01 case (eight minutes of below-limit supply) and it stays open.
+
+**Consequence for `capacity.enabled`:** it is a tuning flag that now gates the
+*only* condensation protection, so in `main.py` the refusals run above it and
+the disabled branch carries its own compressor stop. Turning off an
+optimisation must not turn off a safety function.
