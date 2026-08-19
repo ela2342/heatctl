@@ -5731,3 +5731,162 @@ Removing HA from the path removes that helper too, which is the honest cost.
 Also: the payload is JSON (`{"tC":23.7}`), and `room_temp_topic` currently
 expects a bare float for the rtl_433 room — so a JSON-extracting topic form is
 needed regardless.
+
+## Resilience: depend on as little as possible, duplicate what remains
+
+Owner, 2026-08-19, setting the design goal for the PFC200 era. Recorded here
+because it is the frame the migration decisions get judged against, not a work
+item on its own — the individual pieces below are.
+
+The principle has two halves and they pull in opposite directions, which is
+why it is worth stating: **remove dependencies where you can, and where you
+cannot, have two of them.** A single dependency that cannot be removed is
+where redundancy is worth its cost.
+
+### Redundant paths from the sensors to the controller
+
+- **The PFC200 has two Ethernet ports and supports spanning tree.** Connect
+  them to two network segments, each carrying WLAN access points whose
+  coverage overlaps, and a room sensor has two radio-and-wire paths to the
+  controller. STP handles the loop this deliberately creates — which is worth
+  noting against 2026-08-08, when an *accidental* loop on a dumb switch took
+  out the coupler and the heat-pump gateway together for half an hour. The
+  same topology that failed by accident works when it is managed.
+- Today the control↔I/O path and the heat-pump path share one segment and one
+  unmanaged switch. That is the single point of failure the 08-08 entry
+  identified and nothing has changed it yet.
+
+### Redundant radio for the 433 MHz sensors
+
+- **Decouple rtl_433 from Home Assistant** and let it publish to the broker
+  directly. Today the outdoor temperature and Arbeitszimmer reach heatctl only
+  if the HA host is up, for no reason other than where the decoder happens to
+  run.
+- **Several rtl-sdr frontends**, on the redundant segments above, so a dead
+  dongle or a bad antenna position costs nothing. Duplicate decodes of the
+  same transmission are a deduplication problem, which is a much better
+  problem than a missing one.
+
+### Redundancy for the outdoor temperature specifically
+
+`UA_ao * (T_set - AT)` makes this the largest single term in the slab target,
+so it earns more than one source. In descending order of trust:
+
+1. Our own WH65B/WH24 at id 210 — **one physical station**, reported by
+   rtl_433 under two model names, so it is one source and not two.
+
+   Proved on the rain gauge, at the owner's prompting, because agreeing
+   temperatures prove nothing (any two thermometers in one garden agree). A
+   *cumulative* counter is the discriminating measurement, and the two totals
+   look nothing alike: WH65B 2857.25, WH24 3374.7. They are the same count at
+   two bucket scalings — 0.254 mm (0.01 in) and 0.3 mm:
+
+       2857.25 / 0.254 = 11249.0 tips
+       3374.7  / 0.300 = 11249.0 tips        ratio 1.181101 vs 1.181102
+
+   Identical to six decimal places. One rain gauge, two unit conventions. The
+   UV field differs for the same reason (2.0 vs 1.0), and the 32 s gap in
+   `utc` is the two decoders matching different packets from the same station.
+
+   **Do not count this pair as redundancy.** It is one sensor counted twice,
+   which is worse than one sensor, because it looks like two.
+2. **A neighbour's WH24**, per the owner. **Not confirmed from this side:** the
+   only Fineoffset ids visible in HA are 210 (ours) and 245 (Arbeitszimmer),
+   and the rtl_433 add-on's retained log window shows no second id. Since 210
+   is our own station decoded twice, a genuine second source must carry a
+   different id — identify it before counting on it, and give it a name in
+   `config.yaml` so nobody later mistakes it for ours.
+3. **The heat pump's own ambient register.** Crude — mounted on the unit, so
+   it reads high from compressor exhaust and evening sun, measured 1.8–2.1 K
+   over through the afternoon with a 45.6 °C excursion on 2026-08-04. Good
+   enough for a rough heat-demand estimate and nothing finer. Already wired as
+   the fallback; the value of writing it down here is that it is the *third*
+   line, not the second.
+
+**Decided 2026-08-19: the WH65B does not move to the PFC broker.** It stays on
+the HA-side rtl_433 path for now, precisely as this contingency. So the bridge
+keeps a permanent inbound leg rather than a transitional one.
+
+### The thing this does not yet answer
+
+**The PFC200 itself, and its SD card, become single points of failure** the
+moment control moves onto them — and an SD card is a wear-out part on a
+thirty-year horizon, carrying docker-root and heatctl's SQLite. A spare unit,
+a restorable image, and a documented rebuild are the obvious shape, but none of
+it exists. Contingency for that is its own backlog item, deliberately not
+solved here.
+
+## Retained sensor data and staleness detection — they are one question
+
+Owner, 2026-08-19: *"could we just configure that? But if so, how would we
+detect stale data?"* The second half is why the first half is not free.
+
+heatctl times staleness from **arrival** (`room_temp_ts[room] =
+time.monotonic()`, checked against `room_temp_max_age_s`). A retained message
+is delivered on subscribe with no indication of when it was produced, so a
+three-hour-old reading arrives looking zero seconds old. Retain therefore
+*defeats* the only staleness mechanism heatctl has. That is not an argument
+against retain — it is an argument that retain needs a second signal beside it.
+
+There are three, and they compose differently depending on one decision.
+
+### The decision everything hangs on: does the Shelly keep sleeping?
+
+**If it stays awake** — it is mains powered (`devicepower:0.external.present =
+true`) while still running `wakeup_period: 600`, so this may be one setting —
+then `online` becomes a true liveness signal, and the problem dissolves:
+
+- `online` is **retained** and maintained by the broker's LWT.
+- `online true` means the device is connected *now*, so its retained reading is
+  current by construction.
+- `online false` means distrust the reading regardless of its age.
+
+Retain then gives heatctl a value immediately on restart, and `online` says
+whether to believe it. That is a complete answer with no clock involved.
+
+**If it keeps sleeping**, `online` is false most of the time *by design* — the
+device disconnects cleanly after every publish — so it says nothing about data
+validity and cannot gate anything.
+
+So: **stopping the deep sleep is not a nicety, it is what makes retain safe.**
+Verify it on `192.168.178.72` before any room migrates.
+
+### Second mechanism: the payload already carries a timestamp
+
+`sensors/shellies/<room>/status/temperature:0` is `{"id":0,"tC":23.7}` — no
+time. But `sensors/shellies/<room>/events/rpc` carries
+`NotifyStatus`/`NotifyFullStatus` with `params.ts` (unix seconds). Subscribing
+there instead gives **measurement time rather than arrival time**, which works
+for retained messages and for sleeping devices alike.
+
+Costs, all real:
+
+- heatctl uses `time.monotonic()` for staleness and the payload is wall clock.
+  Mixing the two needs care, not a cast.
+- It introduces a **clock dependency** on both ends. A device that lost NTP can
+  report 1970 (looks infinitely stale — safe) or a future time (looks
+  infinitely fresh — **unsafe**).
+- So it needs a sanity bound, and the bound must fail toward *stale*: reject
+  timestamps in the future or implausibly old, and treat a rejected timestamp
+  as no reading at all. D-003's "fail open on lost knowledge", applied to the
+  room path.
+
+### Third: heatctl should treat `online false` as no reading
+
+Independently of the above, and cheap. Today a room with a dead sensor keeps
+its last value until `room_temp_max_age_s` expires. If the broker is telling us
+the device is gone, waiting fifteen minutes to agree is a choice nobody made.
+
+### Recommendation
+
+1. Establish whether the H&T G3 can be kept awake on external power. If yes,
+   that plus retain plus `online` gating is the whole answer and needs no
+   clocks.
+2. Subscribe `events/rpc` rather than `status/*` anyway, so the timestamp is
+   available as defence in depth, with a fail-stale sanity bound.
+3. Make `online false` mean "no reading", not "old reading".
+
+**Wohnzimmer is the pilot** (owner): it has both an old-world source (Controme
+REST via the HA bridge) and a new-world one (Shelly on the PLC broker), so
+every one of these can be proven against a room that still has a working
+fallback before any other room moves.
