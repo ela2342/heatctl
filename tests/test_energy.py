@@ -466,3 +466,24 @@ def test_slab_capacity_covers_only_rooms_that_have_one(cfg):
     expected = sum(m.c_slab_wh_per_m2 * a for n, a in m.areas.items()
                    if m.has_slab(n))
     assert m.slab_capacity_wh() == expected > 0
+
+
+def test_the_clamp_does_not_depend_on_the_plant_mode(cfg):
+    """Regression, 2026-08-20. The clamp was gated on `mode == "cooling"` on
+    the reasoning that in heating the target sits above room temperature and
+    could never bind.
+
+    `slab_target_c` is a balance and knows nothing of the plant's mode: a low
+    setpoint in a warm room yields a low target either way. Measured with the
+    plant HEATING, Elternschlafzimmer's target read 7.59 degC, and its
+    unclamped 10.8 kWh was two thirds of the house figure that D-046 uses to
+    pick the mode.
+    """
+    for r in cfg["rooms"]:
+        r.setdefault("floor_area_m2", 20.0)
+    m = EnergyDemand(cfg)
+    name = cfg["rooms"][0]["name"]
+    for mode in ("heating", "cooling", "off"):
+        e = m.room(name, setpoint_c=19.0, outdoor_c=28.0, rl_c=23.0,
+                   vl_c=29.0, room_c=24.0, mode=mode, slab_floor_c=17.6)
+        assert e.target_c == 17.6, f"clamp skipped in {mode}"

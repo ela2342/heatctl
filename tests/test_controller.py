@@ -1215,3 +1215,74 @@ class TestEnergyStatusVisibility:
         ctl.io.touch(time.monotonic())
         await ctl.step(1.0)
         assert ctl.plane.topic("energy/status") == "ok"
+
+
+def _energy_rooms(cfg_rooms):
+    """The synthetic rooms with a floor area, so `energy.room` gets past its
+    "no floor area" guard. Without this an energy assertion passes on a path
+    that never runs - which is how the first version of both tests below came
+    to be green against the very bugs they were written for."""
+    import copy
+    rooms = copy.deepcopy(cfg_rooms)
+    for r in rooms:
+        r["floor_area_m2"] = 20.0
+    return rooms
+
+
+async def test_a_gated_return_reads_as_untrusted_not_as_missing(controller, cfg):
+    """Regression, 2026-08-20. `energy.room` distinguishes "no return temp"
+    from "rl not valid", and the energy shadow defeated that by pre-filtering:
+    a sensor the rl_gate was withholding arrived as None and was reported as
+    missing.
+
+    That cost real diagnosis time - it sent us hunting a fault on rl_hk07, a
+    PT1000 on the coupler reading a perfectly good 22.8 degC, when the truth
+    was that the valve had moved and `settle_s` had not elapsed.
+    """
+    ctl = controller(temps={"rl_hk01": 22.8, "vl_total": 29.0,
+                            "rl_total": 24.0},
+                     room_temps={"gaestebad": 24.0}, dew_point=16.0,
+                     rooms=_energy_rooms(cfg["rooms"]))
+    ctl.plane.outdoor = 12.0          # the energy model reads it from here
+    ctl.io.touch(time.monotonic())
+    ctl.rl_gate.action = lambda valve, now: "hold"          # a fresh valve move
+    await ctl.step(1.0)
+    # Scoped to the room that OWNS rl_hk01. Other rooms genuinely have no
+    # reading in this fixture, so "no return temp" is the honest answer there
+    # and a house-wide assertion would be testing the wrong thing.
+    reasons = {t_: p for t_, p, _ in ctl.plane.published
+               if t_.endswith("/reason")}
+    got = reasons.get("energy/gaestebad/reason")
+    assert got != "no floor area", "test premise broken: rooms need an area"
+    assert got != "no return temp", (
+        f"a withheld sensor was reported as missing (rl_hk01 reads 22.8): {got}")
+    assert got == "rl not valid", f"expected the honest reason, got {got!r}"
+
+
+async def test_the_slab_target_is_clamped_while_heating(controller, cfg):
+    """Regression, 2026-08-20. The clamp was gated on `mode == "cooling"` in
+    the CALLER, so a unit test on `energy.room` could not see it - and the
+    first version of this test passed `slab_floor_c` explicitly, which meant
+    it could not either.
+
+    Measured with the plant heating: Elternschlafzimmer's target read
+    7.59 degC, nine kelvin below the dew point, and its unclamped 10.8 kWh was
+    two thirds of the house figure that D-046 uses to pick the mode.
+    """
+    rooms = _energy_rooms(cfg["rooms"])
+    ctl = controller(control={"mode": "heating"},
+                     temps={"rl_hk01": 23.0, "vl_total": 29.0,
+                            "rl_total": 24.0},
+                     room_temps={"gaestebad": 25.0}, dew_point=16.0,
+                     rooms=rooms)
+    ctl.plane.outdoor = 28.0          # the energy model reads it from here
+    ctl.io.touch(time.monotonic())
+    ctl.room_setpoints = {r["name"]: 19.0 for r in rooms}   # the unreachable one
+    await ctl.step(1.0)
+    limit = ctl.safety.cooling_supply_limit()
+    targets = [float(p) for t_, p, _ in ctl.plane.published
+               if t_.endswith("/slab_target") and p != "unknown"]
+    assert targets, "no slab target was published"
+    assert min(targets) >= limit - 1e-9, (
+        f"a target below the {limit} condensation limit survived while "
+        f"heating: {sorted(targets)}")

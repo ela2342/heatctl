@@ -866,11 +866,22 @@ class Controller:
         rooms: list = []
         for room in self.rooms:
             n = room["name"]
-            rls = [t for circ in room["circuits"]
-                   if (v := circ.get("valve"))
-                   and self.rl_gate.action(v, now) is MEASURE
-                   and (t := state.temps.get(circ["sensor"])) is not None]
-            rl = sum(rls) / len(rls) if rls else None
+            # THE READING AND THE TRUST IN IT ARE SEPARATE, and pre-filtering
+            # collapsed them. `energy.room` distinguishes "no return temp"
+            # from "rl not valid" and the caller was defeating that: a sensor
+            # withheld by the gate arrived as None and got reported as
+            # missing. On 2026-08-20 that sent us looking for a fault on
+            # rl_hk07, a PT1000 on the coupler reading a perfectly good
+            # 22.8 degC, when the truth was that the valve had moved and
+            # `settle_s` had not elapsed.
+            temps = [t for circ in room["circuits"]
+                     if (t := state.temps.get(circ["sensor"])) is not None]
+            measured = [t for circ in room["circuits"]
+                        if (v := circ.get("valve"))
+                        and self.rl_gate.action(v, now) is MEASURE
+                        and (t := state.temps.get(circ["sensor"])) is not None]
+            rl = sum(temps) / len(temps) if temps else None
+            rl_ok = bool(measured)
             # THE SAME ROOM TEMPERATURE THE CONTROL PATH USED - sensor if there
             # is one, otherwise the house average. Passing only sensed rooms
             # was a real defect, found 2026-08-06: a sensorless room got no
@@ -887,15 +898,21 @@ class Controller:
             if room_t is None:
                 room_t = house_mean
             e = self.energy.room(n, targets[n], outdoor, rl, vl,
-                                 rl_valid=rl is not None, room_c=room_t,
+                                 rl_valid=rl_ok, room_c=room_t,
                                  mode=self.mode,
-                                 # The slab cannot be colder than the coldest
-                                 # water we may make (D-046). None in heating,
-                                 # where the target is above room temperature
-                                 # and the clamp could never bind anyway.
-                                 slab_floor_c=(
-                                     self.safety.cooling_supply_limit(now)
-                                     if self.mode == "cooling" else None))
+                                 # NOT GATED ON THE PLANT MODE. It was, for one
+                                 # evening, on the reasoning that in heating
+                                 # the target sits above room temperature so
+                                 # the clamp could never bind. That is wrong:
+                                 # `slab_target_c` is a balance and knows
+                                 # nothing of the plant's mode, so a low
+                                 # setpoint in a warm room yields a low target
+                                 # either way. Measured 2026-08-20 with the
+                                 # plant HEATING, Elternschlafzimmer's target
+                                 # read 7.59 degC and its unclamped 10.8 kWh
+                                 # was two thirds of the house figure that now
+                                 # decides the mode (D-046).
+                                 slab_floor_c=self.safety.cooling_supply_limit(now))
             rooms.append(e)
             base = f"energy/{n}"
             await self.plane.publish(f"{base}/valid", "1" if e.valid else "0")
