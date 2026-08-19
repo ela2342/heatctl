@@ -21,9 +21,15 @@ service on 2026-07-26; do not reintroduce it by "simplifying" the input.
 **Flow is averaged over ALL circuits, counting unactuated ones as fully open.**
 That is the physically meaningful number: a circuit with no actuator is open
 pipe and passes water regardless of what we command. It also makes the rule
-correct through the whole build-out with no special cases - today the average
-sits near 79 % because seven of nine circuits are open pipe, so no stall is
-possible, and the figure falls naturally as actuators are fitted.
+correct through the whole build-out with no special cases.
+
+The build-out finished on 2026-07-31: actuators are on circuits 1-4 and 6-11,
+which is every water-carrying circuit (5 is a reserve towel rail, 12 is out of
+service). The "today the average sits near 79 % because seven of nine circuits
+are open pipe, so no stall is possible" that stood here is gone - a stall IS
+now possible, which is the whole reason `min_open_pct` exists. It was still
+being quoted as current three weeks later, so the sentence is deleted rather
+than kept as history.
 
 **The source stays on; valves apportion.** Corrected 2026-07-27 (owner).
 Powering the unit down is a last resort, not a control action: the heat pump

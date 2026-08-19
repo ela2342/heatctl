@@ -45,10 +45,30 @@ the precision: it means the soft loop and the hard guard can disagree about
 whether a breach is happening. The heat pump register remains as a FALLBACK
 for when the manifold sensor is faulted, because some reading beats none.
 
-Honest limitation while only two circuits are actuated: the other eight are
-open pipe and cannot throttle, so `max_open` barely reflects load and this
-loop effectively runs on house deviation alone. It gets much better when the
-remaining actuators are fitted.
+**`max_open` and the saturation heuristic: read this before trusting them.**
+
+This docstring said, until 2026-08-19: "Honest limitation while only two
+circuits are actuated: the other eight are open pipe and cannot throttle, so
+`max_open` barely reflects load and this loop effectively runs on house
+deviation alone. It gets much better when the remaining actuators are fitted."
+
+That stopped being true on 2026-07-31, when actuators went onto circuits 1-4
+and 6-11 - all ten water-carrying circuits (5 is a reserve towel rail, 12 out
+of service). The remaining actuators ARE fitted.
+
+It did not get much better, for a reason nobody predicted. Measured
+2026-08-09 on the balanced manifold, all ten commanded together: 100 % -> 2.0
+l/min, 75 % -> 2.0 unmoved, 50 % -> 1.9, inside the +-0.3 precision. **The top
+half of the actuator range has no authority** - the balancing throttles are
+now the dominant restriction. So `max_open` still barely reflects load above
+~50 %, and this loop still effectively runs on house deviation alone, but the
+cause is the flow characteristic rather than missing hardware and the fix is
+therefore a different one (rescale distribution.py's 5-100 % output onto the
+range that actually moves water; see docs/FLOW_CHARACTERISATION.md).
+
+Worse for this loop specifically: `min_open_pct` is 55, which sits ABOVE the
+saturation point, so whenever the flow floor binds every circuit is pinned in
+dead range and `max_open` carries no information at all.
 """
 from __future__ import annotations
 
@@ -419,14 +439,24 @@ class SetpointController:
             # through them, condensing inside it invisibly. That is exactly the
             # failure this whole guard exists to prevent.
             #
-            # The lesson is not about the cap. It is that **the valve guard was
-            # not effective protection while eight of ten circuits cannot be
-            # closed**, so the SETPOINT is the only real control over what
-            # reaches the slab. That sentence was written on 2026-07-30, the
-            # floor was removed the next day anyway, and D-035 has since
-            # removed the valve guard entirely - which leaves the sentence not
-            # merely still true but now unopposed. It is the reason the floor
-            # is back.
+            # The lesson was stated as "**the valve guard is not effective
+            # protection while eight of ten circuits cannot be closed**, so the
+            # SETPOINT is the only real control over what reaches the slab".
+            #
+            # THAT PREMISE EXPIRED THE NEXT DAY and I repeated it here anyway
+            # on 2026-08-19. Actuators went onto circuits 1-4 and 6-11 on
+            # 2026-07-31 (config.yaml `fitted`), so all ten water-carrying
+            # circuits can close; 5 and 12 are a reserve towel rail and an
+            # out-of-service circuit. Do not cite the eight-of-ten figure again.
+            #
+            # The CONCLUSION happens to survive, on different and better
+            # evidence, which is exactly why the bad premise was easy to miss:
+            #   - D-035 removed the valve guard outright, so valves are not a
+            #     condensation actuator regardless of how many are fitted; and
+            #   - the measured contradiction, P04 at 15 against a 16.3 limit,
+            #     stands entirely on its own.
+            # Neither needs the actuator count. The floor is back because of
+            # those two, not because of this paragraph.
             #
             # The corner it describes is genuine: at a 15.0 dew point and a
             # measured 4.5 K spread the minimum safe setpoint is 20.5 while the

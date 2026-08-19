@@ -273,6 +273,11 @@ Room sensors still arrive via MQTT regardless of this choice.
       Honest limit while only two circuits are actuated: the other eight are
       open pipe and cannot throttle, so valve saturation barely reflects load
       and the loop effectively runs on house deviation alone.
+      **Superseded 2026-07-31** — all ten water-carrying circuits are actuated.
+      The conclusion survives on different evidence: measured 2026-08-09, the
+      top half of the actuator range has no authority (100 % → 2.0 l/min,
+      75 % → 2.0, 50 % → 1.9), so valve saturation still under-reports load.
+      Different cause, different fix — see `docs/FLOW_CHARACTERISATION.md`.
 - [x] Data recording verified working (2026-07-27). Home Assistant forwards to
       the InfluxDB add-on via a CONFIG ENTRY, not a `influxdb:` YAML block -
       an earlier note in this session wrongly concluded "no YAML, therefore not
