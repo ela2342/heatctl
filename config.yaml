@@ -304,7 +304,11 @@ rooms:
     floor_area_m2: 16.33   # plan "Kind 1": W + S glazing, the room with TWO
                            # windows, which is how the occupant identifies it
     circuits: [{sensor: rl_hk03, valve: valve_hk03}]
-    room_temp_topic: ""
+    # THE LAST ROOM TO GET A SENSOR, 2026-08-19. Shelly H&T G3, externally
+    # powered, bridged by an HA automation like its siblings. Until now this
+    # room had no measurement of its own and fell through to house-average
+    # control - see `_return_control` and the house-average fallback.
+    room_temp_topic: "roomtemp/kind_natalie"
   - name: kind_naomi
     label: "Kinderzimmer Naomi"
     floor_area_m2: 15.61   # plan "Kind 2": S glazing only, one window
