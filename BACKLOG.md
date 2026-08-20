@@ -5998,6 +5998,36 @@ fallback before any other room moves.
 ## Three things the energy-mode work turned up, 2026-08-19
 
 
+### A cleared safety override is never published, so the topic keeps the alarm
+
+Found 2026-08-20 while checking the plant after a restart:
+`heatctl/override/global` read `stale_data` eight minutes after the log said
+`failsafe cleared (was stale_data for 1 s)`. Verified retained (`retain=True`),
+not a live republish.
+
+`Controller.failsafe()` publishes `override/global`; `_failsafe_cleared()` only
+logs. Since `ControlPlane.publish` retains by default, the last reason stands
+for ever. The per-valve `override/<valve>` topics have the same shape — written
+while a rule is active, never written when it stops.
+
+**Why it is worse than cosmetic.** The topic is useless in both directions: it
+shows a false alarm permanently after any transient, and when a *real* override
+clears, nothing says so. Anything in Home Assistant built on it is reporting
+plant safety state that has no relation to the plant. Every restart arms it,
+because a restart always passes briefly through `stale_data`.
+
+This is the same defect already recorded above for the per-room energy topics —
+**absence must be published, not implied** — and it landed on a safety topic
+this time.
+
+  - [ ] `_failsafe_cleared()` publishes `override/global` = `none`; the
+        per-valve loop publishes `none` for every owned valve not overridden
+        this cycle. Both need a test that asserts the CLEAR is published, not
+        merely that the set is.
+  - [x] The stale retained value was cleared by hand on 2026-08-20 so it did
+        not sit there overnight advertising a failsafe that had ended. That is
+        a cleanup, not the fix.
+
 ### Broker file permissions — mosquitto is warning about them
 
 Every reload prints them, so they are not a discovery, just unrecorded:
