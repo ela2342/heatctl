@@ -5898,16 +5898,19 @@ fallback before any other room moves.
 
 ## Three things the energy-mode work turned up, 2026-08-19
 
-### [!] Elternschlafzimmer has lost its return temperature
+### ~~Elternschlafzimmer has lost its return temperature~~ — WRONG, 2026-08-20
 
-`heatctl/energy/schlafzimmer/reason` reads **`no return temp`**, so `rl_hk07`
-is absent, not merely distrusted (that would say `rl not valid`). The room is
-therefore excluded from `house_excess_wh` entirely — the house figure is a sum
-over the *valid* rooms, deliberately understating rather than extrapolating.
+**There was no sensor fault.** `rl_hk07` reads fine and always did. Two bugs
+made it look like one: the caller collapsed "no reading" and "not trusted", so
+a sensor the rl_gate was withholding reported as `no return temp`; and the
+gate was withholding it because the valve had moved and `settle_s` had not
+elapsed. Owner spotted the implausibility immediately — *"rl_hk07 being absent
+is weird, it's one of the sensors on the 750 Modbus."* Both fixed; the reason
+string now says `rl not valid`, which is the truth.
 
-Consequences while it lasts: the room the whole mode discussion was about
-contributes nothing to the decision, and its per-room energy figures are
-meaningless. Needs a look at the sensor, not at the code.
+Kept rather than deleted because the *reasoning* is the lesson: a diagnosis
+that sends you to the hardware should be doubted when the hardware is the
+part least likely to be wrong.
 
 ### Per-room energy topics went stale instead of going unknown — fixed
 
@@ -5943,89 +5946,91 @@ what D-044 was built to avoid.
         is wrong: a permanently blind model would lose the fast start-up
         decision altogether.
 
-## Where we are, 2026-08-20 ~01:00 — handover
+## Where we are, 2026-08-20 morning — handover
 
-### Plant state at handover
+Supersedes the ~01:00 handover, which the morning invalidated.
 
-Cooling, 79 Hz, supply 18.5 against a 17.6 limit, no faults. House slab excess
-**+2 594 Wh = +0.30 K of slab, inside the 0.5 K deadband**, so the energy basis
-says *neither* and auto_mode will not move it. It is in cooling because it
-flipped while the excess was still inflated by an unclamped Schlafzimmer
-target; the clamp landed afterwards.
+### Plant state
 
-Not unsafe — 0.9 K of condensation margin. It is a *waste* question: cooling at
-79 Hz against a 16.9 °C night that would shed the heat for free, while Gästebad
-and Badezimmer sit 0.6–0.8 K **below** target. Left as-is deliberately rather
-than changed on the assistant's judgement overnight.
+**Heating, quiescent, deliberately.** Owner's call from looking outside rather
+than at the forecast: overcast, solar about zero, top around 24 °C, so nothing
+needs moving. Water setpoint (P05) set to 24, roughly where the slab sits, so
+the unit tops it up if it drifts and otherwise does nothing. The trim is left
+enabled and will walk 24 down toward `heating_min_c` 20 over a couple of
+hours — that walk *is* the plant concluding it has nothing to do, not
+something to override.
 
-**Do not reach for `off`** to park it: D-044 made `off` sticky against
-auto_mode, so it stays off until a human moves it.
+**`auto_mode` is OFF** and mode is set by hand. See the oscillation below.
+Reading the logs: automatic changeover logs as `heatctl.demand mode -> …`, a
+manual command as plain `heatctl mode -> …`.
 
-### What shipped today
+No faults or protections. No condensation exposure in heating.
 
-| | |
-|---|---|
-| D-035 | valves are no longer a condensation defence; the compressor is |
-| D-036 | the cooling setpoint has a condensation floor again, no spread term |
-| D-037 | device protections published apart from faults |
-| D-038 | a precondition for one actuator may not disarm another |
-| D-039 | there is no safe amount of condensation |
-| D-040 | Arbeitszimmer stays in the dew-point reference |
-| D-041 | the commanded valve range is 20–50 %, and four things keyed to it |
-| D-042 | "reads ambient" is not evidence of "no flow" |
-| D-043 | one setpoint per room, configured per room |
-| D-044 | auto_mode decides at start-up without the dwell; `off` is sticky |
-| D-045 | heatctl computes its own dew point |
-| D-046 | the mode is decided on energy, and unreachable targets are clamped |
+### The oscillation, and why auto_mode is off
 
-Plus: the PFC200 surveyed and documented, its broker hardened and bridged to
-HA, and Wohnzimmer piloted onto a Shelly publishing direct to the PLC.
+The plant self-excited overnight — four mode flips on a ~78 min period,
+amplitude reaching +4.13 K of slab, each flip inverting the valve allocation
+for the 10–15 min the water took to change over, and swinging supply
+16 ⇄ 26 °C through an 8691 Wh/K slab for no benefit.
 
-### Tomorrow, in the order I would take them
+**Cause:** `slab_estimate_c` falls back to the raw return temperature wherever
+`ntu` is unmeasured, which is everywhere — verified live, slab 22.90 against
+rl 22.9 on every room. So the "stored energy" D-046 picks the mode from is
+return-water temperature, which follows *supply* within minutes. Heat → return
+rises → "cool"; cool → return falls → "heat". The dwell does not damp it, it
+sets the period.
 
-1. **[!] The outdoor station has been silent since 2026-08-19 19:34 UTC.**
-   Physical check, battery most likely. A retained 2022 fossil was masking it
-   until the fossils were cleared. heatctl is insulated (it uses the forecast
-   source) but the three-tier fallback is currently two-tier.
+This is the circularity D-030 was withdrawn for, rebuilt in the mode selector.
+Widening the deadband does not help: the amplitude scales with the supply
+excursion the flip itself causes.
 
-2. **D-044's one-shot can fire before the energy model has answered**, spending
-   itself on the fallback statistic — the one D-046 demoted, and the two
-   disagreed in sign that evening. Needs a *bounded* grace: arm on energy if it
-   arrives within a short window, else fall back and spend it. An unbounded
-   wait is wrong, because a permanently blind model would lose the fast
-   start-up decision entirely.
+**The clamp half of D-046 is untouched and still correct** — it fixes the
+target side, and Schlafzimmer's unclamped 7.59 °C target made this worse.
 
-3. **Decide what the plant should do overnight in shoulder season.** Tonight
-   exposed the real question: with the energy balance in-band and free cooling
-   outdoors, running the compressor at all is the wrong answer, and `off` is a
-   trap because it is sticky. There may be a missing state between "cool" and
-   "off" — circulate but do not run the source.
+### Next, in the order I would take them
 
-4. **Elternschlafzimmer's 19.0 is unreachable in summer** and now shows up
-   clamped rather than as a fictional 8 kWh of demand. The clamp stops it
-   corrupting the totals; it does not make the room reachable. That is an
-   envelope problem (4.9 kWh/day of solar into a slab that sheds ~253 W), and
-   D-006's cost — one number cannot express a heating and a cooling bound —
-   has now come due twice.
+1. **The coupled Kalman filter.** This is now the blocking item, not an
+   aspiration: we have no slab temperature, only return water, and return
+   water is a function of the last control action. Every energy-based decision
+   inherits that. Owner: *"sounds like we need that big Kalman filter for
+   proper energy estimation."* Re-enable `auto_mode` when a slab estimate
+   exists that the actuator does not move.
+2. **The outdoor station's 10.5 h silence** (2026-08-19 19:34 → 06:02 UTC).
+   Recovered by itself; battery check. A retained 2022 fossil was masking it
+   until the fossils were cleared.
+3. **D-044's start-up one-shot can fire before the energy model answers**,
+   spending itself on the fallback statistic. Dormant while `auto_mode` is
+   off, so no urgency. Needs a *bounded* grace, not an unbounded wait.
+4. **Elternschlafzimmer's 19.0 is unreachable in summer.** The clamp stops it
+   corrupting totals; it does not make the room reachable. Envelope problem —
+   4.9 kWh/day of solar into a slab that sheds ~253 W. D-006's cost, twice
+   over.
+5. **What the plant should do overnight in shoulder season.** There may be a
+   missing state between "cool" and "off": circulate, do not run the source.
+   `off` is not it — D-044 made it sticky against auto_mode.
+6. **Remaining rooms onto Shellys**, one at a time, Wohnzimmer having proved
+   the path. Blocked on the deep-sleep question: mains powered yet sleeping
+   600 s, only `online` retained, clock unset right after wake — so neither
+   retained readings nor payload timestamps are available for staleness.
+7. **heatctl onto the PFC200** (Phase B). Now a small step: the bridge carries
+   everything both ways and the pilot proved the config works unchanged.
+8. **The load forecast's stale 24 °C house target.** It predates per-room
+   setpoints and sits ~2 K above where the rooms actually are, so today's
+   41 kWh understates by ~12 kWh. Parked by the owner until it feeds a
+   prediction filter — nothing acts on it today.
 
-5. **Continue the sensor migration**, one room at a time, Wohnzimmer having
-   proved the path. Blocked on the Shelly deep-sleep question: the device is
-   mains powered and still sleeps 600 s, only `online` is retained, and its
-   clock is unset right after wake — so neither retained readings nor payload
-   timestamps are available for staleness. Stopping the sleep is the only
-   route left open.
+### Traps worth not relearning
 
-6. **Then heatctl onto the PFC** (Phase B), which is now a small step: the
-   bridge already carries everything both ways, and the pilot proved the
-   config works unchanged from either side.
-
-### Things worth not forgetting
-
-- **`mosquitto_pub` exits 0 on ACL denial.** It produced four false successes
-  today. Verify by reading back what landed, never by exit status.
-- **Absence must be published, not implied.** Three instances today — retained
-  rtl_433 fossils, per-room energy topics, house energy topics. A value that is
-  merely not refreshed is indistinguishable from a current one.
-- **A green test proves nothing until its mutation is red.** Four tests today
-  passed against the very bugs they were written for, usually because they
-  asserted on a path that never ran.
+- **`mosquitto_pub` exits 0 on ACL denial.** Four false successes in one day.
+  Verify by reading back what landed, never by exit status.
+- **Absence must be published, not implied.** Three instances in one day —
+  retained rtl_433 fossils, per-room energy topics, house energy topics. A
+  value that is merely not refreshed is indistinguishable from a current one.
+- **A green test proves nothing until its mutation is red.** Four tests in one
+  day passed against the very bugs they were written for, usually by asserting
+  on a path that never ran — a fixture missing `enabled`, or `floor_area_m2`.
+- **A deploy ships code, not config — and the mirror image is real.** Shipping
+  config without code left the old `float(payload)` running against JSON.
+- **Anything a controller moves cannot measure that controller.** Spread
+  (D-030) and now the slab estimate. Ask what the actuator touches before
+  building a decision on a signal.
