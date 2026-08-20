@@ -576,3 +576,29 @@ device, **reads contend too**. The migration has to pick one:
 
 Worth measuring, as part of that work, whether HA's present polling already
 violates the 200 ms rule.
+
+## Er03, water flow — it backs off, and eventually it sticks
+
+Owner, 2026-08-20: *"Er03 is self clearing if the cause goes away immediately.
+It backs off and eventually gets stuck in Er03. We should never depend on Er03
+being self clearing."*
+
+So the self-clears observed are not a property to design around, they are the
+early part of a retry sequence with a lengthening backoff. **Every trip makes
+the next one likelier to latch for good**, and a latched Er03 has needed a
+physical reset. Observed self-clears — three on 2026-08-10 at ~4.5 min each,
+one on 2026-08-20 at 4.5 min — say only that the cause vanished quickly, not
+that the unit tolerates the event.
+
+**What this changes about how we treat it:**
+
+- Never write "it will probably clear" into a plan or a comment. The unit is
+  spending a budget nobody can read.
+- The unit shuts its own **water pump** down with the fault, so restored flow
+  cannot clear it — there is no flow to detect. Waiting is not a recovery
+  mechanism, it is waiting.
+- It is the reason D-035 removed valve-closing as a condensation defence:
+  starving the unit is not a cheap action that occasionally annoys, it is
+  drawing down a reserve toward an on-site reset.
+- Any procedure that stops the controller must stop the **source** first — see
+  the cutover procedure in `docs/PFC200.md`.
