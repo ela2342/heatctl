@@ -88,10 +88,21 @@ tracked file:
 For systemd use an `EnvironmentFile`; see `deploy/systemd/README.md`.
 
 ## Deployment
-- Prototype: HA add-on, see `deploy/ha-addon/README.md`
-- Target: the WAGO PFC200 750-8212, see `docs/PFC200.md` — it replaces both
-  the coupler and the "dedicated machine" of `deploy/systemd/README.md`,
-  and has no Python, so it runs containerised. Migration plan in BACKLOG.
+**Live since 2026-08-20: a container on the WAGO PFC200 750-8212**
+(`deploy/pfc200/`, see `docs/PFC200.md`). Control plane on a broker on the same
+box, Modbus still over the network to the 750-352 coupler. The PFC has no
+Python and no pip, so it runs containerised — `deploy/systemd/` does not apply
+to it.
+
+- Previous: HA add-on, `deploy/ha-addon/`. **Stopped, not removed** — it is the
+  rollback, and its config directory is still the seed for the PFC's.
+- Next: swap the coupler for the PFC so the control↔I/O link stops crossing the
+  network. Gated on a watchdog bench test — see `docs/PFC200.md`.
+
+**Moving control between machines needs a procedure**, not just a stop and a
+start: stop the *source* first, or the coupler watchdog closes the valves under
+a running compressor and trips a latching Er03. Cutover steps in
+`docs/PFC200.md`.
 
 ## Development
 See `ROADMAP.md` for milestones, `BACKLOG.md` for what is open, and

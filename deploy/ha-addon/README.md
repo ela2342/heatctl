@@ -1,6 +1,15 @@
 # heatctl as a Home Assistant App (add-on)
 
-This is the **prototype** deployment. The target architecture runs the same code
+> **NO LONGER THE LIVE DEPLOYMENT, since 2026-08-20.** heatctl runs as a
+> container on the WAGO PFC200 — `deploy/pfc200/`, `docs/PFC200.md`. This App
+> is **stopped, not removed**, because it is the rollback: stop the container,
+> `ha addons start local_heatctl`. Its config directory is also still the seed
+> for the PFC's, and `check-live-config.sh` still compares against it.
+>
+> Do not start it while the container is running. Two controllers writing the
+> same coupler registers is the failure the single-writer rule exists for.
+
+This was the **prototype** deployment. The target architecture runs the same code
 as a systemd service on a dedicated machine next to the coupler - see
 `../systemd/README.md`. Read the limitations at the bottom before relying on it.
 

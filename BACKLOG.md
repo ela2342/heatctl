@@ -5660,7 +5660,7 @@ none of the benefit.
 
 Sequence by reversibility instead.
 
-**Phase A — broker, no plant risk, can be done any time.** The broker cannot
+**Phase A — DONE 2026-08-19.** Broker, no plant risk. The broker cannot
 carry heatctl as configured: `homeassistant` is read-only and `shelly` is
 confined to `sensors/shellies/#`, so nothing can publish `heatctl/#` and HA
 cannot send `heatctl/set/#`. Needs a `heatctl` account with write on its own
@@ -5668,7 +5668,11 @@ tree, HA write-limited to `set/`, `persistence true` so retained state survives
 a container restart, 9001 closed or configured, and the CA key moved off the
 broker.
 
-**Phase B — move heatctl to the PFC200, keep the 750-352.** Container on the
+**Phase B — DONE 2026-08-20.** heatctl on the PFC200, 750-352 kept.
+Tripped Er03 on the cutover by leaving the plant unmanaged ~90 s; the
+procedure that prevents it is in `docs/PFC200.md` and enforced by
+`deploy-heatctl.sh`. Status table in that file.
+ Container on the
 PFC, `io.backend: modbus_direct` still pointing at `192.168.178.52:502`,
 control plane on the PFC's own broker. **No plant downtime and rollback in
 seconds** — stop the container, start the HA add-on. What it buys is
@@ -5680,7 +5684,7 @@ while the proven coupler watchdog still guards the outputs.
 > heatctl instances writing the same valves is the failure this project has
 > already had once with HA automations on register 0.
 
-**Phase C — bench the watchdog.** Runs in parallel with B, on the bench, no
+**Phase C — NEXT, and it gates D.** Bench the watchdog. On the bench, no
 plant involvement. Select a runtime so 502 listens. Then the only question that
 matters: **does a read-only Modbus client keep `alternative-watchdog` fed?**
 Connect, poll inputs, never write, and see whether the outputs zero. If they do
@@ -5691,7 +5695,7 @@ the process image layout (`base_register: 12` is hardcoded and this is the
 third time the map has moved) and the 5 V internal bus budget, with WAGO's
 configurator rather than by eye.
 
-**Phase D — swap the coupler. Only if C clears.** Same backplane, modules carry
+**Phase D — blocked on C.** Swap the coupler. Only if C clears. Same backplane, modules carry
 over, IP to the coupler's address, re-verify every register against known live
 sensor values, re-arm the watchdog and **re-run the deliberate trip test** from
 2026-07-26. After this heatctl talks to `127.0.0.1:502` and the control↔I/O
@@ -5952,6 +5956,10 @@ Supersedes the ~01:00 handover, which the morning invalidated.
 
 ### Plant state
 
+**Running on the PFC200 since 2026-08-20 09:38.** The HA App is stopped, not
+removed — it is the rollback. Control plane is on the on-box broker; Modbus
+still crosses the network to the coupler until Phase D.
+
 **Heating, quiescent, deliberately.** Owner's call from looking outside rather
 than at the forecast: overcast, solar about zero, top around 24 °C, so nothing
 needs moving. Water setpoint (P05) set to 24, roughly where the slab sits, so
@@ -6012,8 +6020,11 @@ target side, and Schlafzimmer's unclamped 7.59 °C target made this worse.
    the path. Blocked on the deep-sleep question: mains powered yet sleeping
    600 s, only `online` retained, clock unset right after wake — so neither
    retained readings nor payload timestamps are available for staleness.
-7. **heatctl onto the PFC200** (Phase B). Now a small step: the bridge carries
-   everything both ways and the pilot proved the config works unchanged.
+7. ~~**heatctl onto the PFC200** (Phase B).~~ **Done 2026-08-20.** Next in that
+   thread is **Phase C, the watchdog bench test**, which gates the coupler
+   swap — and the swap is what finally takes the control↔I/O link off the
+   network. Watch first: whether one ARMv7 core holds the 1 s loop under load,
+   and how Docker-on-SD wears.
 8. **The load forecast's stale 24 °C house target.** It predates per-room
    setpoints and sits ~2 K above where the rooms actually are, so today's
    41 kWh understates by ~12 kWh. Parked by the owner until it feeds a
