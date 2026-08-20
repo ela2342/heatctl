@@ -6028,6 +6028,34 @@ this time.
         not sit there overnight advertising a failsafe that had ended. That is
         a cleanup, not the fix.
 
+### The CODESYS runtime is still running, and it owns `/dev/kbus0`
+
+Measured 2026-08-20 while looking at why the single core is busy:
+
+```
+PID 2366  /usr/bin/codesys3   17.9 %CPU   64 MB RES   240 min CPU accumulated
+fuser /dev/kbus0  ->  2366
+```
+
+Three separate problems in one process, and none of them was known:
+
+1. **It is a second master on the local I/O.** It holds the KBUS device node.
+   That is a hard blocker for the native KBUS backend (Phase E), not a
+   performance note — heatctl cannot open a device another process owns.
+2. **It costs ~18 % of the only core, permanently**, for a runtime carrying no
+   program of ours. heatctl itself sits at ~48 % and mosquitto at ~10 %, so
+   the box runs at roughly 77 % of one core with a 1 s control loop on it.
+   Reclaiming CODESYS's share is the largest single headroom win available
+   and needs no code.
+3. **It is a writer nobody decided on.** Whatever it does or does not do with
+   the outputs today, "I do not trust a situation of two masters writing to
+   the same bus" (owner, on the heat pump) applies here by the same argument.
+
+  - [ ] Establish what, if anything, depends on it — WBM pages, the web
+        visualisation, anything that might be part of how the device is
+        administered — before disabling `/etc/rc.d/S98_pp_codesys3`. Attended,
+        with the plant quiescent, and confirm `/dev/kbus0` is then free.
+
 ### Broker file permissions — mosquitto is warning about them
 
 Every reload prints them, so they are not a discovery, just unrecorded:
