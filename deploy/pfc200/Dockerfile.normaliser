@@ -1,0 +1,26 @@
+# The sensor-topic normaliser. See normaliser/main.py and docs/PFC200.md.
+#
+# ITS OWN IMAGE, not a second process inside heatctl's. Two reasons, and the
+# second is the important one:
+#
+#   * heatctl runs as PID 1 so that a crash takes the container down and the
+#     restart policy notices. A helper backgrounded beside it (which is what
+#     the optimizer is, deliberately) can die unnoticed - correct for layer 2,
+#     wrong for something in the sensor path. Its own container gets its own
+#     supervision.
+#   * A deploy of the plumbing must not be able to ship control-core code. This
+#     image contains no `heatctl/` and no pymodbus: it *cannot* reach the
+#     coupler or the heat pump, whatever it is asked to do.
+#
+# Same base as heatctl:local, so the layers are shared and this costs almost
+# nothing on the card.
+FROM python:3.12-slim
+
+COPY normaliser/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt && rm /tmp/requirements.txt
+
+WORKDIR /app
+COPY normaliser/ /app/normaliser/
+
+# Config is MOUNTED, never baked - same rule as heatctl.
+CMD ["python3", "-m", "normaliser.main", "/config/normaliser.yaml"]

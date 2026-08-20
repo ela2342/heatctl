@@ -309,17 +309,28 @@ rooms:
     # this works while heatctl still runs on the HA host. Moving heatctl to
     # the PFC later changes nothing here.
     #
-    # JSON, not a bare number: {"id":0,"tC":23.7,"tF":74.6}. The key is
-    # configured, never guessed (D-045).
-    room_temp_topic: "sensors/shellies/wohnzimmer/status/temperature:0"
-    room_temp_json_key: tC
+    # THROUGH THE NORMALISER since 2026-08-20, not straight off the device
+    # (D-047). The raw Shelly topics are unretained JSON from a sensor that
+    # sleeps 360 s at a time, so heatctl was blind in this room for a whole
+    # wake period after every restart - which on the PFC is every deploy.
+    # `normaliser/main.py` republishes each sample as a bare float, retained,
+    # with a broker-enforced expiry equal to `room_temp_max_age_s` below.
+    #
+    # No `room_temp_json_key` any more: unwrapping the payload is the
+    # normaliser's job now, and one topic shape reaches the control core.
+    #
+    # THE COST, stated because it is real: this room's readings now depend on
+    # a second process. It is supervised and on the same box, and its death
+    # degrades the room to house-average control rather than to a wrong
+    # number - but it is a dependency the raw topic did not have. Accepting
+    # more than one source per room would remove it; see BACKLOG.
+    room_temp_topic: "sensors/room/wohnzimmer/temperature_c"
     # HUMIDITY, and the first room to provide it. This is what lets heatctl
     # compute its own dew point instead of consuming HA's - see D-045. One
     # room is not enough to replace the HA helper, which is exactly why
     # `dew_point()` takes the MAXIMUM of the two rather than preferring
     # either: a local value over a subset of rooms can only be too low.
-    room_humidity_topic: "sensors/shellies/wohnzimmer/status/humidity:0"
-    room_humidity_json_key: rh
+    room_humidity_topic: "sensors/room/wohnzimmer/humidity_pct"
   - name: kind_natalie
     label: "Kinderzimmer Natalie"
     setpoint_c: 22.0

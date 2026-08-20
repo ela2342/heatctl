@@ -1,0 +1,11 @@
+# The normaliser's runtime dependencies: a strict SUBSET of the control core's,
+# at the SAME pins. It needs no Modbus, and shipping a Modbus library into a
+# container whose whole point is that it cannot touch the plant would be an
+# odd thing to do.
+#
+# Kept in step mechanically, not by memory: `tests/test_normaliser.py` asserts
+# that every line here matches the pin in the root `requirements.txt`. Two
+# files with the same dependency at different versions is a 30-year problem,
+# and this project has already been bitten by a range that re-resolved.
+PyYAML==6.0.3
+aiomqtt==2.5.1

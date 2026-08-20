@@ -18,6 +18,7 @@ topic write homeassistant/#
 topic read roomtemp/#
 topic read rtl_433/#
 topic read sensors/shellies/#
+topic read sensors/room/#
 
 # --- Home Assistant ---------------------------------------------------------
 # Reads everything heatctl publishes. Writes only the three things it is the
@@ -28,6 +29,7 @@ user homeassistant
 topic read heatctl/#
 topic read homeassistant/#
 topic read sensors/shellies/#
+topic read sensors/room/#
 topic write heatctl/set/#
 topic write heatctl/hp/set/#
 topic write heatctl/env/#
@@ -37,3 +39,17 @@ topic write roomtemp/#
 # Write-only, and only its own subtree. Unchanged.
 user shelly
 topic write sensors/shellies/#
+
+# --- the normaliser ---------------------------------------------------------
+# Reads the raw device topics, writes only the normalised tree. Added
+# 2026-08-20 with `normaliser/main.py`.
+#
+# ITS OWN ACCOUNT, not heatctl's, for the reason the Home Assistant block above
+# gives: heatctl must not be able to write the topics it reads as measurements.
+# A control core that can publish its own retained inputs can fabricate a
+# reading it will later believe - and after a restart nothing distinguishes
+# that from a sensor. So the write side of the room topics belongs to a
+# process that cannot act on them.
+user normaliser
+topic read sensors/shellies/#
+topic write sensors/room/#

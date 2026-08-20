@@ -1,0 +1,64 @@
+# Sensor-topic normaliser. See normaliser/main.py for why this exists.
+#
+# Same rule as heatctl's config.yaml: the copy that runs is the one MOUNTED on
+# the device (/media/sdcard/docker-root/normaliser/config.yaml on the PFC200).
+# This file is the reference and the review surface; a deploy ships code, never
+# config.
+
+mqtt:
+  # The plant broker, plaintext on the container network. Credentials come from
+  # the environment (NORMALISER_MQTT_USERNAME / _PASSWORD) so they are never
+  # committed - see docs/PFC200.local.md.
+  host: mqtt-broker
+  port: 1883
+  username: ""
+  password: ""
+
+# Where the normalised values go. Bridged to Home Assistant as part of
+# `sensors/#`, so HA sees every room whether or not it still owns the device.
+out_prefix: sensors/room
+
+# HOW LONG A VALUE MAY BE SERVED TO A NEW SUBSCRIBER, in seconds, enforced by
+# the broker as an MQTT 5 message-expiry interval.
+#
+# KEEP THIS EQUAL TO heatctl's `control.room_temp_max_age_s`. They are the same
+# judgement - "older than this is not a measurement any more" - and the plant
+# should not hold two opinions about it. The two enforce it independently and
+# that is deliberate (see the module docstring); they should not also disagree
+# about the number.
+#
+# Sized against the wake period, which is not yet settled: the device reports
+# `wakeup_period: 600` and 360 s was observed between connects. 900 tolerates
+# one missed wake at 360 and none at 600. `interval_s` below is published to
+# settle it - revisit this once there is a week of it.
+ttl_s: 900
+
+# --- sources ----------------------------------------------------------------
+# Explicit, one entry per topic per field. Rooms are never inferred from a
+# topic segment that happens to look like a room name.
+#
+#   topic     what to subscribe
+#   room      heatctl's room name, exactly
+#   field     temperature_c | humidity_pct  (these carry default bands)
+#   json_key  omit for a bare number; name the field for a JSON payload
+#   min/max   override the plausibility band; required for any other field
+#
+# ROOMS MIGRATE ONE AT A TIME. A room appears here once its Shelly publishes to
+# this broker, and heatctl's `room_temp_topic` is repointed at the normalised
+# topic separately - two steps, so the raw and normalised values can be
+# compared on a live room before anything depends on the new one.
+sources:
+  - topic: "sensors/shellies/wohnzimmer/status/temperature:0"
+    room: wohnzimmer
+    field: temperature_c
+    json_key: tC
+  - topic: "sensors/shellies/wohnzimmer/status/humidity:0"
+    room: wohnzimmer
+    field: humidity_pct
+    json_key: rh
+
+  # Still to come, as each room's Shelly is installed and pointed here:
+  # gaestebad, kind_natalie, kind_naomi, badezimmer, schlafzimmer,
+  # arbeitszimmer. Those rooms currently reach heatctl over the Home Assistant
+  # bridge (`roomtemp/#`) or rtl_433, which are not sleeping sources, so they
+  # do not need this yet - see BACKLOG.

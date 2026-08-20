@@ -1430,3 +1430,96 @@ unreachable and that is an envelope problem, not a control one.
 **Not covered:** Arbeitszimmer has no slab (fan coil,  in config.yaml), so it
 contributes nothing to either side of this balance. Its demand is invisible to
 the mode decision. Recorded rather than solved.
+
+## D-047 · Sleeping sensors are normalised into retained topics with a broker-enforced expiry
+`normaliser/main.py` subscribes the raw Shelly topics and republishes each
+sample as a **bare float, retained, carrying an MQTT 5 message-expiry
+interval**. It runs in its own container on the PFC200 next to heatctl, decides
+nothing, and carries no Modbus library. heatctl reads the normalised topics
+with no code change at all.
+
+**Why:** the Shelly H&T G3 sleeps, and BACKLOG records why that cannot be
+changed — an always-on CPU self-heats and distorts the measurement, so the
+device is accurate *because* it powers down. Room
+temperature is therefore a sampled signal, one sample per wake period, and the
+status topics are **not retained** (verified on the broker 2026-08-20: only
+`.../online` is). A restarting heatctl was blind in that room for a whole wake
+period — and on the PFC a restart is every deploy. It also blocks D-044's
+start-up mode decision, which needs a complete room set.
+
+**Why not simply retain at the device.** Because heatctl times staleness from
+*arrival*, and a retained message says nothing about when it was produced. Bare
+retain would deliver a three-hour-old reading looking zero seconds old, which
+is worse than the problem. Retain needs a deadline beside it, and the device
+cannot supply one: its clock is unset immediately after wake
+(`"unixtime":null`), which is exactly the window every message occupies. And
+`online` is false ~357 s in every 360, so it is a wake *event* marker and never
+a freshness gate. Both of those were proposed here and both are closed.
+
+**So the broker holds the deadline.** mosquitto serves a retained value only
+while it is younger than `ttl_s`, decrements the remaining interval while it
+sits there, and deletes it when it runs out — across a broker restart too.
+Verified against mosquitto 2.1.2 on 2026-08-20, including that an **MQTT 3.1.1
+subscriber still receives it** (without the property, per spec), which is why
+heatctl — a v3.1.1 client — needs no change. The clock is ours, on the box
+heatctl runs on, and it is only ever used to *withhold* data. Nothing here can
+make a value look fresher than it is.
+
+**Two enforcers, deliberately not one.** `ttl_s` equals heatctl's
+`room_temp_max_age_s` — the same judgement should not be held twice at two
+values — but the normaliser does **not** republish periodically to keep a value
+alive. That would be easy and it would be a mistake: heatctl's staleness window
+would then measure *the normaliser's* liveness instead of the sensor's, and a
+normaliser that froze while still publishing would be undetectable. One publish
+per sample keeps heatctl's window pointed at the real sensor cadence, so the
+two fail independently — this process dies and the broker still expires the
+value; the broker loses state and heatctl still ages it out.
+
+The price is one bound, accepted rather than engineered away: heatctl
+restarting just before a retained value expires accepts it and then holds it
+for its own full window, so the worst age of a believed reading is
+`ttl_s + room_temp_max_age_s` — 30 minutes, against a slab whose time constant
+is hours.
+
+**A separate container, and its own broker account.** Separate container
+because heatctl runs as PID 1 so a crash takes the container down and the
+restart policy notices; a helper backgrounded beside it can die unnoticed,
+which is correct for layer 2 and wrong for something in the sensor path. Own
+account because heatctl must not be able to write the topics it reads as
+measurements — a control core that can publish its own retained inputs can
+fabricate a reading it will later believe, and after a restart nothing
+distinguishes that from a sensor. Same argument the ACL already makes about
+Home Assistant.
+
+**Rejection, not correction.** An unreadable payload, or a value outside the
+configured physical band, is logged and dropped — nothing is published, so the
+previous value stands until it expires on its own. A six-minute-old real
+reading beats a fresh implausible one, and the value disappearing by itself is
+the alarm. Bands are wide on purpose: this rejects what cannot be a
+measurement, and leaves what is merely *surprising* to the control core
+(`dewpoint.py` still refuses 0 % RH for its own reasons).
+
+**It measured the thing it was sized against.** `sensors/room/<room>/interval_s`
+reported **360 s and 358 s** between Wohnzimmer samples on the first evening,
+against the `wakeup_period: 600` the device reports. The open sizing question
+in BACKLOG is now answered by data: at a 360 s cadence, a 900 s window
+tolerates exactly one missed wake.
+
+**Cost, stated plainly:** a room on the normaliser depends on a second process.
+It is supervised, on the same box, and its death degrades the room to
+house-average control rather than to a wrong number — but the raw topic did not
+have that dependency. Letting heatctl accept more than one source per room
+would remove it; that is in BACKLOG, not done.
+
+**Verified on the plant, 2026-08-20.** heatctl was restarted 110 s after a
+Wohnzimmer wake, so the next one was ~250 s away. It was publishing that room's
+temperature and a dew point sourced from it **before the next wake arrived** —
+83 s after connecting, when the reading it was serving had been taken before
+the restart. Without this it would have been blind in that room for the whole
+remaining interval.
+
+**Not covered:** the expiry property does not survive the v3.1.1 bridge to Home
+Assistant, so on that side these are ordinary retained values that never
+expire. `sensors/room/<room>/sample_ts` is published for exactly that reason —
+it is the only staleness signal available there, and anything built on this
+tree in HA must use it. Bridging in MQTT 5 instead is untested; see BACKLOG.

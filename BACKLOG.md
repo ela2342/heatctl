@@ -5944,21 +5944,51 @@ The general point underneath was right and is unaffected: a room with a dead
 sensor should not keep its last value for the full `room_temp_max_age_s`. It
 just needs a signal that means what `online` was assumed to mean.
 
-### Recommendation, revised 2026-08-20
+### Recommendation, revised 2026-08-20 — BUILT the same day, see D-047
 
-Both of the cheap answers are gone — the device cannot stay awake (physics) and
-cannot timestamp its own wake message (unset clock). So:
+Both cheap answers were gone — the device cannot stay awake (physics) and
+cannot timestamp its own wake message (unset clock) — so the normaliser was
+built instead. `normaliser/main.py`, its own container on the PFC, live since
+2026-08-20 with Wohnzimmer as the pilot.
 
-1. **Resolve the wake period first**: 360 s observed against `wakeup_period:
-   600` reported. Everything else is sized against it and the two disagree.
-2. **Size `room_temp_max_age_s` against that**, deliberately. 900 s was chosen
-   for per-minute sensors and is not a considered number here.
-3. **Build the normaliser on the PFC**: subscribe `sensors/shellies/+/status/#`,
-   republish retained to a heatctl-native topic with an MQTT 5 message-expiry
-   of ~3 wake periods. Retain, staleness and the JSON-vs-float difference all
-   resolve in one place, on a clock we control, with no heatctl change.
-4. **Publish per-room sample age** regardless, so a quiet room is visible
-   instead of inferred.
+1. ~~Resolve the wake period first~~ — **360 s**, measured, not reported. The
+   first two intervals it published were 360 and 358, against the
+   `wakeup_period: 600` the device claims. Anything sized against 600 was
+   sized against the wrong number.
+2. ~~Size `room_temp_max_age_s` against that~~ — 900 s **kept, now on
+   evidence** rather than inheritance: at a 360 s cadence it tolerates exactly
+   one missed wake (720 s) and not two (1080 s). `ttl_s` in the normaliser is
+   held equal to it, and a test asserts the two do not drift apart.
+3. ~~Build the normaliser~~ — done. Retained, MQTT 5 message-expiry, bare
+   floats. heatctl needed no change: mosquitto delivers an expiring retained
+   message to a v3.1.1 subscriber perfectly well, verified on 2.1.2.
+4. **Publish per-room sample age** — half done. `sensors/room/<room>/sample_ts`
+   exists for rooms on the normaliser, which is one room. The other six arrive
+   over the HA bridge and rtl_433 and have no age published anywhere. Still
+   open, and the general answer is heatctl publishing its own view of arrival
+   age for every room, since only heatctl knows what it actually believes.
+
+### What the normaliser left open
+
+  - [ ] **A room on the normaliser depends on a second process.** Supervised,
+        same box, and its death degrades that room to house-average control
+        rather than to a wrong number — but the raw topic did not have that
+        dependency. The fix is letting a room name **more than one source**,
+        preferring the freshest: raw and normalised together, and the raw path
+        keeps working if the normaliser is gone. Needs a heatctl change
+        (`room_temp_topic` becomes a list), so it is not free.
+  - [ ] **The expiry does not survive the bridge to Home Assistant.** The
+        bridge speaks v3.1.1, so `sensors/room/#` lands on HA's broker as
+        ordinary retained values that never expire — the fossil shape, on a
+        tree nothing consumes yet. `sample_ts` is published beside every value
+        precisely so the age is recoverable there, and anything built on this
+        tree in HA must use it. `bridge_protocol_version mqttv50` would carry
+        the property across; untested, and it changes a working link for every
+        bridged topic, so it wants a quiet moment and a quick revert path.
+  - [ ] **Six rooms still to migrate.** Each needs its Shelly pointed at the
+        plant broker, an entry in `normaliser/config.yaml`, and heatctl's
+        `room_temp_topic` repointed — three steps, deliberately separable, so
+        raw and normalised can be compared on a live room first.
 
 **Wohnzimmer is the pilot** (owner): it has both an old-world source (Controme
 REST via the HA bridge) and a new-world one (Shelly on the PLC broker), so
@@ -5966,6 +5996,26 @@ every one of these can be proven against a room that still has a working
 fallback before any other room moves.
 
 ## Three things the energy-mode work turned up, 2026-08-19
+
+
+### Broker file permissions — mosquitto is warning about them
+
+Every reload prints them, so they are not a discovery, just unrecorded:
+
+```
+Warning: File /mosquitto/config/passwd owner is not root.
+Warning: File /mosquitto/config/mosquitto.acl has world readable permissions.
+         Future versions will refuse to load this file.
+```
+
+  - [ ] Tighten `mosquitto.conf`, `mosquitto.acl` and `passwd` to 0600 owned by
+        1883, and confirm the broker still starts. Deferred rather than done
+        because the image is **pinned by digest**, so "future versions" cannot
+        arrive on their own — and a permissions change has already taken this
+        broker down once (root-owned 0600 files, 2026-08-19). It wants a moment
+        when watching it recover is convenient, not the end of a long session.
+        The CA private key sitting world-readable next to them
+        (`docs/PFC200.local.md`) is the more serious half of the same job.
 
 ### ~~Elternschlafzimmer has lost its return temperature~~ — WRONG, 2026-08-20
 

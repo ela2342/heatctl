@@ -15,6 +15,14 @@ boring technology, minimal pinned dependencies, single-file hardware truth.
 
       venv/bin/python -m optimizer.main ./config.yaml
 
+Beside them, and belonging to neither: **`normaliser/`**, sensor plumbing.
+Room sensors sleep and their status topics are not retained, so a restart is
+blind per room for a whole wake period. It republishes each sample retained
+with an MQTT 5 expiry, so the broker holds the deadline. It decides nothing,
+cannot reach the plant, and heatctl works without it.
+
+      venv/bin/python -m normaliser.main ./normaliser/config.yaml
+
 ## Architecture
 
     Shelly H&T ----MQTT----+
