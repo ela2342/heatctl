@@ -369,7 +369,7 @@ rooms:
 
 # --- Control -------------------------------------------------------------
 control:
-  mode: cooling                # heating | cooling | off (overridable via MQTT)
+  mode: heating                # heating | cooling | off (overridable via MQTT)
   loop_interval_s: 1.0
   # How old a room temperature may be before the room falls back to
   # return-temperature control. Matches the running plant, which had it set
