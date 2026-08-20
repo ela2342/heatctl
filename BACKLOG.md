@@ -5839,26 +5839,66 @@ against retain — it is an argument that retain needs a second signal beside it
 
 There are three, and they compose differently depending on one decision.
 
-### The decision everything hangs on: does the Shelly keep sleeping?
+### ~~The decision everything hangs on: does the Shelly keep sleeping?~~ — SETTLED 2026-08-20, and not the way I hoped
 
-**If it stays awake** — it is mains powered (`devicepower:0.external.present =
-true`) while still running `wakeup_period: 600`, so this may be one setting —
-then `online` becomes a true liveness signal, and the problem dissolves:
+**Sleep cannot be disabled, and the reason is physical.** Owner: an always-on
+CPU self-heats and distorts the temperature measurement. So this is not a
+firmware limitation to be argued with — the device is only accurate *because*
+the CPU is off between samples. "Just keep it awake" is permanently closed, and
+anyone who proposes it later should be pointed here.
 
-- `online` is **retained** and maintained by the broker's LWT.
-- `online true` means the device is connected *now*, so its retained reading is
-  current by construction.
-- `online false` means distrust the reading regardless of its age.
+That kills the branch this section was built around. What I wrote — *"stopping
+the deep sleep is not a nicety, it is what makes retain safe"* — was the right
+analysis of the wrong option. `online` is false roughly 357 seconds in every
+360 by design, so it can never gate freshness. It survives only as a **wake
+event marker**: `online` going true says fresh data arrives in the next second
+or two.
 
-Retain then gives heatctl a value immediately on restart, and `online` says
-whether to believe it. That is a complete answer with no clock involved.
+The payload-timestamp route below is closed too, independently: the clock is
+unset immediately after wake (`"unixtime":null`), which is exactly the window a
+first-message-after-reconnect would depend on.
 
-**If it keeps sleeping**, `online` is false most of the time *by design* — the
-device disconnects cleanly after every publish — so it says nothing about data
-validity and cannot gate anything.
+### What that leaves
 
-So: **stopping the deep sleep is not a nicety, it is what makes retain safe.**
-Verify it on `192.168.178.72` before any room migrates.
+**Room temperature is an inherently sampled signal, ~6 min between samples**,
+and no protocol work changes that. Observed connects were exactly 360 s apart
+though the device reports `wakeup_period: 600` — resolve which governs before
+sizing anything, because everything below is sized against it.
+
+  - [ ] **Size `room_temp_max_age_s` against the wake period.** It is 900 s,
+        chosen for sensors reporting every minute. Against a 360 s wake that
+        tolerates one miss; against 600 s, barely any. With seven sleeping
+        rooms the chance that *some* room is stale stops being negligible, and
+        the failure is silent — the room drops to house-average control with
+        nothing said.
+  - [ ] **Publish per-room sample age**, so a room going quiet is visible
+        rather than inferred. Absence must be published, not implied.
+  - [ ] **A normaliser on the PFC** is the option I would pursue: subscribe
+        `sensors/shellies/+/status/#`, republish to a heatctl-native topic
+        **retained**, with an **MQTT 5 message-expiry** of ~3 wake periods so
+        mosquitto itself drops the value when it goes stale. That fixes retain,
+        staleness and the JSON-vs-bare-float difference in one place, using a
+        clock we control instead of the sensor's — and needs no heatctl change
+        at all. Cost: a new moving part in the sensor path, which cuts against
+        "depend on as little as possible", mitigated only by it sharing a box
+        and therefore a failure domain with heatctl.
+
+**Consequences elsewhere, so they are not rediscovered:**
+
+- **Every restart is blind for up to a wake period, per room**, because
+  readings are not retained. That also blocks D-044's start-up one-shot, which
+  needs a complete room set — and on the PFC that is every deploy.
+- **The dew point inherits all of it** (D-045). Humidity comes from the same
+  sleeping devices, so the local computation is sampled too and may have zero
+  contributing rooms after a restart. Keep HA's helper as the `max()` partner
+  considerably longer than planned: its state machine holds last-known values,
+  so it degrades differently rather than identically.
+- **It sharpens the redundancy argument.** A sleeping device that wakes to find
+  no access point loses the whole cycle. Overlapping AP coverage turns a
+  six-minute hole into a non-event, which matters more here than for a
+  mains-powered always-connected sensor.
+- **Mounting matters.** The measurement is valid because the CPU is off; do not
+  place these where air exchange is poor or near a heat source.
 
 ### Second mechanism: the payload already carries a timestamp
 
