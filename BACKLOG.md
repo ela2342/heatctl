@@ -5900,7 +5900,15 @@ sizing anything, because everything below is sized against it.
 - **Mounting matters.** The measurement is valid because the CPU is off; do not
   place these where air exchange is poor or near a heat source.
 
-### Second mechanism: the payload already carries a timestamp
+### ~~Second mechanism: the payload already carries a timestamp~~ — CLOSED 2026-08-20
+
+**The clock is unset right after wake.** Measured on the wire: `"time":null,
+"unixtime":null, "last_sync_ts":null` in the first `sys` status of a wake
+cycle. So the timestamp is missing in precisely the window a sleeping device's
+first message occupies, which is every message that matters. The reasoning
+below stands as the general argument for measurement time over arrival time —
+it is why the normaliser stamps on the broker instead — but this device cannot
+supply it.
 
 `sensors/shellies/<room>/status/temperature:0` is `{"id":0,"tC":23.7}` — no
 time. But `sensors/shellies/<room>/events/rpc` carries
@@ -5920,20 +5928,37 @@ Costs, all real:
   as no reading at all. D-003's "fail open on lost knowledge", applied to the
   room path.
 
-### Third: heatctl should treat `online false` as no reading
+### ~~Third: heatctl should treat `online false` as no reading~~ — INVERTED 2026-08-20
 
-Independently of the above, and cheap. Today a room with a dead sensor keeps
-its last value until `room_temp_max_age_s` expires. If the broker is telling us
-the device is gone, waiting fifteen minutes to agree is a choice nobody made.
+Written for a device that stays connected, where `online false` means the
+device is gone. On a sleeping device it is the **normal** state — false roughly
+357 s in every 360 — so this rule would discard every reading heatctl has.
+Exactly backwards, and worth leaving visible: it is the shape of mistake this
+whole section now exists to prevent.
 
-### Recommendation
+What survives is the inverse. `online` going **true** is a wake event, i.e. a
+reliable "fresh data in the next second or two", which is a useful thing to log
+and to measure the real wake period with. It is not a freshness gate.
 
-1. Establish whether the H&T G3 can be kept awake on external power. If yes,
-   that plus retain plus `online` gating is the whole answer and needs no
-   clocks.
-2. Subscribe `events/rpc` rather than `status/*` anyway, so the timestamp is
-   available as defence in depth, with a fail-stale sanity bound.
-3. Make `online false` mean "no reading", not "old reading".
+The general point underneath was right and is unaffected: a room with a dead
+sensor should not keep its last value for the full `room_temp_max_age_s`. It
+just needs a signal that means what `online` was assumed to mean.
+
+### Recommendation, revised 2026-08-20
+
+Both of the cheap answers are gone — the device cannot stay awake (physics) and
+cannot timestamp its own wake message (unset clock). So:
+
+1. **Resolve the wake period first**: 360 s observed against `wakeup_period:
+   600` reported. Everything else is sized against it and the two disagree.
+2. **Size `room_temp_max_age_s` against that**, deliberately. 900 s was chosen
+   for per-minute sensors and is not a considered number here.
+3. **Build the normaliser on the PFC**: subscribe `sensors/shellies/+/status/#`,
+   republish retained to a heatctl-native topic with an MQTT 5 message-expiry
+   of ~3 wake periods. Retain, staleness and the JSON-vs-float difference all
+   resolve in one place, on a clock we control, with no heatctl change.
+4. **Publish per-room sample age** regardless, so a quiet room is visible
+   instead of inferred.
 
 **Wohnzimmer is the pilot** (owner): it has both an old-world source (Controme
 REST via the HA bridge) and a new-world one (Shelly on the PLC broker), so
