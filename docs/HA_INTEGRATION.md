@@ -204,6 +204,29 @@ subscribes to the raw topics and writes them as one measurement:
 Numeric payloads land in `value`, everything else in `text`. Keeping the
 strings is the point: they are the plant explaining itself.
 
+**How to actually run one.** Auth is enabled and the credentials are a UI
+config entry, so they are not in `configuration.yaml` - they live in
+`/config/.storage/core.config_entries`. Extract and use them **on the HA host**
+so they never reach a terminal history or a transcript:
+
+```sh
+ssh root@<ha-host>
+CE=/config/.storage/core.config_entries
+U=$(jq -r '.data.entries[] | select(.domain=="influxdb") | .data.username' "$CE" | head -1)
+P=$(jq -r '.data.entries[] | select(.domain=="influxdb") | .data.password' "$CE" | head -1)
+curl -s -G "http://a0d7b954-influxdb:8086/query" -u "$U:$P" \
+     --data-urlencode "db=mqtt" \
+     --data-urlencode "q=SELECT last(text) FROM mqtt WHERE topic='heatctl/capacity/reason'"
+```
+
+The host is the App's container name (`a0d7b954-influxdb:8086`) - `localhost`
+from the Terminal & SSH App does **not** reach other Apps, they are separate
+network namespaces. InfluxQL, API v1. `SHOW TAG VALUES FROM mqtt WITH KEY=topic`
+lists what is being recorded.
+
+Grafana (same host) is the better front end for anything more than one value:
+add the `mqtt` database as a datasource and template a variable on `topic`.
+
 **Its own database, with a finite retention policy, and that is load-bearing.**
 This host is **83 % full with 9.4 GB free**, and the `homeassistant` database's
 only policy is `autogen` at duration `0s` - infinite. Writing ~100 msg/s into

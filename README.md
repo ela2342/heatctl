@@ -15,27 +15,97 @@ boring technology, minimal pinned dependencies, single-file hardware truth.
 
       venv/bin/python -m optimizer.main ./config.yaml
 
-Beside them, and belonging to neither: **`normaliser/`**, sensor plumbing.
-Room sensors sleep and their status topics are not retained, so a restart is
-blind per room for a whole wake period. It republishes each sample retained
-with an MQTT 5 expiry, so the broker holds the deadline. It decides nothing,
-cannot reach the plant, and heatctl works without it.
+Beside them, and belonging to neither — **plumbing and observation**. None of
+these decides anything, none can reach the plant, and heatctl works with all
+three dead:
+
+- **`normaliser/`** — room sensors sleep and their status topics are not
+  retained, so a restart is blind per room for a whole wake period. It
+  republishes each sample retained with an MQTT 5 expiry, so the broker holds
+  the deadline (D-047).
+- **`journal/`** — the black box. `mosquitto_sub` piped into a rotator, writing
+  every message to the PFC's SD card with a UTC daily roll and 90-day
+  retention. Exists because the 2026-08-21 capacity-loop finding only survived
+  by luck.
+- **`mqtt2influx/`** — the same stream into the InfluxDB that already runs on
+  the Home Assistant host, for Grafana. A bounded 30-day window; the long
+  history stays with the plant.
 
       venv/bin/python -m normaliser.main ./normaliser/config.yaml
+      venv/bin/python -m journal.main            # reads records on stdin
+      venv/bin/python -m mqtt2influx.main        # reads /data/options.json
 
 ## Architecture
 
-    Shelly H&T ----MQTT----+
-    modbus2mqtt <--Modbus--> WAGO 750-352 (PT1000 x16, 0-10V x8, relays)
-         |                   ^
-        MQTT                 | (modbus_direct fallback / fast DHW loop)
-         v                   |
-      mosquitto <-------- heatctl (this) ----> SQLite history
-         ^
-         +---- Home Assistant (bridge; visualization + setpoints only)
+Two machines. Everything in the dotted box runs on the PFC200 and survives the
+LAN going away; only Modbus to the coupler still crosses it, and Phase D
+removes that too (`docs/PFC200.md`).
+
+    .- WAGO PFC200 750-8212 (1 ARMv7 core) --------------------.
+    |                                                          |
+    |  heatctl ── SQLite history      (containers, `docker ps`) |
+    |     │  ▲                                                 |
+    |     ▼  │            normaliser ──┐                       |
+    |  mqtt-broker ◄──────────────────┬┴── journal ── SD card  |
+    |     ▲   │                       │                        |
+    '-----│---│-----------------------│------------------------'
+          │   │ TLS 8883              │ bridge (both ways)
+          │   ▼                       ▼
+          │  Shelly H&T (sleep 360 s)  Home Assistant .230
+          │                             ├─ mqtt2influx ─► InfluxDB ─► Grafana
+          │                             ├─ rtl_433 (WH65B outdoor)
+          │                             └─ Controme RC bridge (retiring)
+          │ Modbus TCP
+          ├─► WAGO 750-352 coupler .52   (PT1000 ×16, 0–10 V ×16)
+          └─► PW58321 heat pump .37:4196 (RS485 via Waveshare)
 
 I/O transport is pluggable (`io.backend: mqtt | modbus_direct`), so the
-bridge is replaceable and the direct path stays as insurance.
+coupler link is replaceable and the direct path stays as insurance.
+
+## Looking at the running plant
+
+Three tools, and the right one depends on the question. **Do not go through the
+PFC to observe the PFC** — it has one core and a 1 s control loop on it.
+
+| Question | Tool |
+|---|---|
+| What is it doing *right now*? | `tools/plant-status.sh` |
+| What happened at 11:47:49? | the journal on the PFC, with `grep`/`zgrep` |
+| Show me a week of it | InfluxDB + Grafana on the HA host |
+
+```sh
+tools/plant-status.sh                 # heatctl's own state, ~4 s, bounded
+tools/plant-status.sh inputs          # the non-retained inbound feeds, 90 s
+tools/plant-status.sh raw 20 'heatctl/hp/#'
+```
+
+It talks to the broker's TLS port from the workstation using `~/plc-ca.crt` and
+`~/plc-pw`; every mode passes `-W`, so it always terminates.
+
+The journal is `/media/sdcard/docker-root/journal/data/mqtt-YYYYMMDD.log` on
+the PFC, one line per message as `<epoch> <topic> <payload>`:
+
+```sh
+ssh root@<pfc>; D=/media/sdcard/docker-root/journal/data
+grep  ' heatctl/capacity/reason ' $D/mqtt-20260821.log
+zgrep ' heatctl/hp/silent_max_freq_cooling_hz ' $D/*.gz
+date -d @1787313600            # the timestamps are epoch seconds
+```
+
+InfluxDB holds the same stream as one measurement, queryable from the HA host —
+numeric payloads in `value`, everything else in `text`:
+
+```sql
+SELECT last(value) FROM mqtt WHERE topic = 'heatctl/temp/vl_total'
+SELECT last(text)  FROM mqtt WHERE topic = 'heatctl/capacity/reason'
+```
+
+**A trap worth knowing before you measure anything:** a freshly connected
+subscriber receives the whole **retained snapshot** first — around 800 messages
+— which a long-running recorder never sees. Counting lines from a new
+`mosquitto_sub` therefore makes any recorder look ~25 % short when it is losing
+nothing. Compare by wall-clock window on the timestamps instead. That cost two
+rounds of chasing a bug that did not exist.
 
 ## Where things live
 
@@ -52,6 +122,8 @@ bridge is replaceable and the direct path stays as insurance.
 | Site addresses, credentials, vendor manuals, **building physics** | `docs/*.local.md` | Git-excluded; this repository is public. Envelope areas, U-values, thermal masses, façade azimuths and per-room geometry live in `docs/BUILDING.local.md` — they identify the site, so they never move into a tracked file. |
 | How one control decision is made | the module docstring in `heatctl/<module>.py` | Rationale lives next to the code it explains. |
 | Whether a rule still holds | `tests/` | Every safety rule has a test; each regression test carries its defect's story. |
+| **What is actually running, and on which machine** | § Architecture above, then `docs/PFC200.md` (the three PFC containers) and `docs/HA_INTEGRATION.md` (the HA Apps) | There are two machines and six processes. Guessing from the repository layout will miss half of them. |
+| **How to see what the plant is doing** | § Looking at the running plant above | `tools/plant-status.sh` for now, the journal for a past moment, InfluxDB for a trend. Includes the retained-snapshot trap. |
 
 **Where new things go**
 
@@ -60,6 +132,10 @@ bridge is replaceable and the direct path stays as insurance.
   `D-nnn` in `docs/DECISIONS.md`. Routine work does not belong there.
 - A fact about a device → `docs/HARDWARE.md`, `docs/HEATPUMP.md` or
   `docs/PFC200.md`, never inline in the code that happens to use it.
+- A new **process** → named in § Architecture here, with its operational
+  detail in `docs/PFC200.md` if it runs on the PFC or `docs/HA_INTEGRATION.md`
+  if it runs on Home Assistant. A component documented only in its own module
+  docstring is one nobody will find.
 - Rationale for *how a module works* → that module's docstring.
 
 The failure mode this structure exists to prevent: a decision recorded only in
