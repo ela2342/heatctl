@@ -190,6 +190,53 @@ mistake was made and corrected on 2026-07-27. Verified by querying Influx
 directly: heatctl circuits, setpoints and heat pump registers all landing at
 full resolution. Grafana add-on is installed alongside.
 
+### The `mqtt` database and the `mqtt2influx` App (2026-08-21)
+
+HA's own integration records **entities**. That misses most of what is worth
+debugging - `heatctl/capacity/reason`, `cooling_supply_limit`, the compressor
+frequency ceiling - because those are MQTT topics and not entities. The
+`local_mqtt2influx` App (`mqtt2influx/main.py`, `deploy/ha-addon-mqtt2influx/`)
+subscribes to the raw topics and writes them as one measurement:
+
+    SELECT last(value) FROM mqtt WHERE topic = 'heatctl/temp/vl_total'
+    SELECT last(text)  FROM mqtt WHERE topic = 'heatctl/capacity/reason'
+
+Numeric payloads land in `value`, everything else in `text`. Keeping the
+strings is the point: they are the plant explaining itself.
+
+**Its own database, with a finite retention policy, and that is load-bearing.**
+This host is **83 % full with 9.4 GB free**, and the `homeassistant` database's
+only policy is `autogen` at duration `0s` - infinite. Writing ~100 msg/s into
+that would be a slow-motion outage, so `mqtt` is separate with a `thirty_days`
+policy (720 h, default).
+
+**How it was created, because it needs admin and the HA account is not one.**
+`CREATE DATABASE` and `CREATE RETENTION POLICY` both return "requires admin
+privilege" for the `homeassistant` user. The documented route is the InfluxDB
+App's own `auth` option, via the Supervisor API:
+
+1. `POST /addons/a0d7b954_influxdb/options` with `auth: false` **and**
+   `network: {"8086/tcp": null}` in the same call - unpublishing the port keeps
+   the unauthenticated window on the internal Supervisor network instead of the
+   LAN, which is otherwise where 8086 is exposed.
+2. Restart the App, then unauthenticated:
+   `CREATE DATABASE "mqtt" WITH DURATION 30d REPLICATION 1 NAME "thirty_days"`
+   and `GRANT ALL ON "mqtt" TO "homeassistant"`.
+3. Restore the **exact** original options and network, restart, and verify:
+   an unauthenticated query must return 401 and the port must be published
+   again.
+
+A script that does this with the restore in a `trap` is the only sane way -
+half-finished, it would leave the database unauthenticated.
+
+**A 403 on `CREATE DATABASE` at App start-up is the expected state**, not a
+fault: the account cannot create it and does not need to once it exists. The
+App checks `SHOW DATABASES` before deciding whether to complain.
+
+**Pre-existing risk worth naming:** `homeassistant / autogen / 0s`. HA's own
+recording grows without bound on a disk that is already 83 % full. Nothing to
+do with this App, and it will bite first.
+
 ## Dashboard
 
 `heatctl-overview` ("Heizung", in the sidebar). One screen, deliberately not a

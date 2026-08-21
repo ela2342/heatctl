@@ -151,6 +151,36 @@ class TestRetentionIsNotOptional:
         assert seen["path"] == "/query"
         assert 'CREATE+DATABASE+%22mqtt%22+WITH+DURATION+30d' in seen["data"]
 
+    class _Forbidden(Writer):
+        """An account that may write but may not CREATE DATABASE - which is
+        exactly the Home Assistant InfluxDB account."""
+
+        present: set = set()
+
+        def _request(self, path, data, query):
+            import urllib.error
+            raise urllib.error.HTTPError("u", 403, "Forbidden", {}, None)
+
+        def databases(self):
+            return self.present
+
+    def test_an_existing_database_is_not_reported_as_a_problem(self, caplog):
+        """403 on CREATE DATABASE is the EXPECTED state here. Warning about it
+        every start reads like a fault when the database is simply there."""
+        w = self._Forbidden("http://x", "mqtt", "homeassistant", "p")
+        w.present = {"homeassistant", "mqtt"}
+        with caplog.at_level("DEBUG", logger="mqtt2influx"):
+            w.ensure_db(30)
+        assert [r.levelname for r in caplog.records] == ["INFO"]
+
+    def test_a_genuinely_missing_database_still_warns_with_the_fix(self, caplog):
+        w = self._Forbidden("http://x", "mqtt", "homeassistant", "p")
+        w.present = {"homeassistant"}
+        with caplog.at_level("DEBUG", logger="mqtt2influx"):
+            w.ensure_db(30)
+        assert [r.levelname for r in caplog.records] == ["WARNING"]
+        assert 'CREATE DATABASE "mqtt" WITH DURATION 30d' in caplog.text
+
     def test_zero_days_is_explicit_infinity_not_an_accident(self):
         """Someone may genuinely want it, but they have to type 0 - it is not
         what an unset or malformed value produces, because the default in the

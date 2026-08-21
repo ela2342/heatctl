@@ -140,17 +140,57 @@ class Writer:
             r.read()
 
     def ensure_db(self, retention_days: int) -> None:
-        """Idempotent in InfluxQL - re-running CREATE DATABASE is not an error.
+        """Create the database if we are allowed to, and say which case we are
+        in. Re-running CREATE DATABASE is not an error in InfluxQL.
 
-        The retention policy is created WITH the database rather than left to
-        the default of `INF`, because the default on a host with 9.4 GB free is
-        a slow-motion outage.
+        The retention policy is set WITH the database rather than left at
+        InfluxDB's default of `INF`, because infinite retention on a host with
+        9.4 GB free is a slow-motion outage.
+
+        THE NORMAL CASE HERE IS A 403. The Home Assistant InfluxDB account is
+        not an admin, so this only succeeds where someone has granted more.
+        That is fine when the database already exists - and saying "403,
+        continuing" every start, as the first version did, reads like a fault
+        when it is the expected state. So a refusal is checked against whether
+        the database is actually there, and only the genuinely broken case
+        warns.
         """
         dur = f"{int(retention_days)}d" if retention_days > 0 else "INF"
         self.retention = dur
         stmt = f'CREATE DATABASE "{self.db}" WITH DURATION {dur}'
-        self._request("/query", urllib.parse.urlencode({"q": stmt}).encode(), {})
-        log.info("database %s ready, retention %s", self.db, dur)
+        try:
+            self._request("/query",
+                          urllib.parse.urlencode({"q": stmt}).encode(), {})
+            log.info("database %s created or confirmed, retention %s",
+                     self.db, dur)
+            return
+        except urllib.error.HTTPError as e:
+            if e.code != 403:
+                raise
+        if self.db in self.databases():
+            log.info("database %s exists; this account cannot verify its "
+                     "retention policy, which needs admin", self.db)
+        else:
+            log.warning(
+                "database %r does not exist and this account cannot create "
+                'it. As an InfluxDB ADMIN, once:  CREATE DATABASE "%s" WITH '
+                'DURATION %s ;  GRANT ALL ON "%s" TO "%s"',
+                self.db, self.db, dur, self.db, self.user)
+
+    def databases(self) -> set[str]:
+        """Names visible to this account, or an empty set if it cannot ask."""
+        try:
+            q = {"q": "SHOW DATABASES"}
+            if self.user:
+                q["u"], q["p"] = self.user, self.password or ""
+            with urllib.request.urlopen(
+                    f"{self.url}/query?{urllib.parse.urlencode(q)}",
+                    timeout=self.timeout_s) as r:
+                data = json.load(r)
+            series = data["results"][0].get("series") or [{}]
+            return {v[0] for v in series[0].get("values", [])}
+        except Exception:                            # noqa: BLE001
+            return set()
 
     def write(self, lines: list[str]) -> bool:
         if not lines:
