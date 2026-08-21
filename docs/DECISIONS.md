@@ -1032,6 +1032,17 @@ stopped by `_trim_capacity`, warm, run again.
 The July incident it was answering is real, and the answer to it is that
 idling must be LOUD, not that it must be avoided. `step()` returns `BLOCKED`.
 
+**Confirmed in the field, 2026-08-21.** First full log of a cooling ramp under
+this architecture. The supply did land under the limit exactly as the paragraph
+above predicts, and `_trim_capacity` recovered it unaided — worst case 1.0 K
+under for about five minutes, then a stable landing at 42 Hz with the supply on
+the limit. The excursion turned out to be caused by the *raise* path spending
+transient ramp headroom, not by the floor; see BACKLOG. So this entry's
+division of labour holds, and the thing to fix is upstream of it. The log also
+records an operator override that interrupted an earlier ramp mid-recovery,
+which is the failure mode this entry invites: the enforcer works on a 60 s
+cadence and looks idle while it is working.
+
 **Related:** D-010 (no dew point, no cooling), D-030 (what was removed), D-035
 (why the valve guard is not behind this any more).
 

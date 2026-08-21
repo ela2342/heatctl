@@ -6056,6 +6056,92 @@ Three separate problems in one process, and none of them was known:
         administered — before disabling `/etc/rc.d/S98_pp_codesys3`. Attended,
         with the plant quiescent, and confirm `/dev/kbus0` is then free.
 
+### The capacity loop's raise path has no rate term, and that is what breaches the limit
+
+Measured 2026-08-21, and this is the first end-to-end log of a cooling ramp
+under the D-035/D-036 architecture. Sampled every 33 s. `limit` is
+`cooling_supply_limit`; `ceil` is R32.
+
+```
+time         vl     rl  limit  ceil  freq  reason
+11:40:10   19.7   22.7   20.0  50.0   0.0  margin -0.30 K low, waiting for the last move
+11:41:16   19.8   22.7   20.0  48.0   0.0  margin -0.20 K - in band
+11:42:22   20.1   22.8   19.1  48.0   0.0  limit DROPS 20.0 -> 19.1 (bathroom aired out)
+11:42:52   20.7   23.0   19.1  48.0  28.0  compressor starts
+11:43:25   21.1   23.2   19.1  58.0  50.0  margin +2.00  <- RAISE
+11:45:37   20.8   23.6   19.1  68.0  63.0  margin +1.70  <- RAISE, margin now falling
+11:47:49   19.8   23.5   19.1  75.0  74.0  margin +0.70  <- RAISE, still falling
+11:49:28   18.9   23.3   19.0  75.0  74.0  margin -0.10  crosses under
+11:53:16   18.0   22.7   19.0  56.0  56.0  margin -1.00  worst point
+11:57:41   18.9   22.3   19.0  42.0  41.0  margin -0.10  recovering
+11:58:14   19.0   22.3   19.0  42.0  41.0  margin  0.00  in band
+12:01:29   19.3   22.4   19.0  44.0  43.0  stable, ceiling 42-44, supply on the limit
+```
+
+**Two findings, and the first one matters more than the defect.**
+
+#### 1. The loop works. It was interrupted once for no good reason.
+
+Left alone it caught the excursion and settled: worst case **1.0 K under the
+limit for about five minutes**, then a clean landing at 42 Hz with the supply
+sitting on the limit. No intervention, no oscillation, no fault. That is
+D-036's architecture doing exactly what it says it does — *"the floor does not
+hold the limit; the enforcer is `_trim_capacity`, acting on measured supply
+every cycle"*.
+
+An earlier ramp the same morning was cut short by an operator `mode off` at
+supply 17.7 / limit 19.0-20.0, on the reading that "nothing is stopping it".
+Something was: the ceiling had already moved 71 -> 61 and `writes_last_hour`
+was 9. The reason string said `waiting for the last move to take effect`, which
+is a loop mid-response, and it was read as a loop not responding. That
+intervention destroyed the only interesting measurement of the day and produced
+a proposal to reinstate D-030 — a decision the repository already records as
+tried, measured and reversed.
+
+Worth stating as a rule, because it will come up again: **`_trim_capacity` is
+the designated enforcer and it acts on a 60 s settle cadence. A margin that is
+negative and a loop that is stepping the ceiling down is the system working.
+Before overriding it, check that the ceiling has actually moved and that
+`min_hz` has been reached** — that is the point at which its authority is
+genuinely exhausted, and it stops the compressor by itself there.
+
+#### 2. The raise path spends transient headroom as if it were steady state
+
+The breach was caused by the *raise* path, not by a failure of the lower path.
+Between 11:43 and 11:48 the ceiling went **48 -> 58 -> 68 -> 75 Hz** while the
+margin fell monotonically **+2.00 -> +1.70 -> +0.70**. It then took six minutes
+of lowering to walk back out of an excursion it had created.
+
+`step()` raises on the margin's **level** (`err > deadband`, at ceiling, raise
+interval elapsed) and never looks at its **slope**. During a cold-start ramp
+into a large demand, headroom is being consumed at ~0.3 K per 30 s and reading
+it as spare capacity is simply wrong.
+
+This is the same family as the RESUME defect fixed on 2026-08-11/12 - *"the
+loop spends a margin it created itself"* - in the other branch, and the same
+comment already warns about it for `_last_raise`. `raise_interval_s` was also
+cut 600 -> 120 when the step became proportional, which makes it raise three
+times through a transient where it used to raise once.
+
+  - [ ] **Do not raise while the margin is falling.** The cheapest form is a
+        sign test on the change in margin since the last sample; a small
+        negative-slope veto would have blocked all three raises above without
+        affecting steady-state behaviour at all. It must not become a
+        derivative *controller* - the lowering path stays purely proportional,
+        because the protective direction must never depend on an estimate of
+        a rate.
+  - [ ] **Consider whether a cold start should raise at all** for the first few
+        minutes. `_last_raise` is seeded on first use precisely so a restart
+        cannot ratchet; a compressor start from 0 Hz is the same situation and
+        is not currently covered.
+  - [ ] **`supply_k_per_hz: 0.074` still has POOR provenance by its own
+        comment.** This log is not a clean step test either - the limit moved
+        at 11:42 and again at 11:48 - but it does give a usable check: 75 -> 42
+        Hz against roughly +1.3 K of supply recovery is ~0.04 K/Hz, about half
+        the configured figure. If that holds up, every lowering step is
+        currently about half the size the loop intends. A controlled step test
+        against a stable dew point remains the fix.
+
 ### Broker file permissions — mosquitto is warning about them
 
 Every reload prints them, so they are not a discovery, just unrecorded:
