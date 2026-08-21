@@ -53,3 +53,17 @@ topic write sensors/shellies/#
 user normaliser
 topic read sensors/shellies/#
 topic write sensors/room/#
+
+# --- the black box ----------------------------------------------------------
+# Reads everything, writes nothing. Added 2026-08-21 with `journal/main.py`.
+#
+# `topic read #` is deliberate and is the whole point: the topic that mattered
+# on 2026-08-21 was the compressor frequency ceiling, and nobody would have put
+# it on a list. A recorder with a curated subscription is useless exactly once.
+#
+# NO WRITE RULE AT ALL, and there must never be one. A recorder that can
+# publish is a recorder that can be blamed for a message, and this account
+# subscribes to the tree it would be publishing into.
+# `tests/test_journal.py` asserts the absence.
+user journal
+topic read #

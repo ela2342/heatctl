@@ -1,0 +1,82 @@
+# Home Assistant App manifest for the MQTT -> InfluxDB forwarder.
+#
+# The query half of the debugging story; `journal/` on the PFC is the archive
+# half. See mqtt2influx/main.py for why the split runs that way round - short
+# version, the PFC has 110 GB free and no query engine, this host has InfluxDB,
+# Grafana and Chronograf and 9.4 GB free.
+name: mqtt2influx
+version: "0.1.0"
+slug: mqtt2influx
+description: Record the MQTT stream into the existing InfluxDB, for Grafana
+url: https://github.com/ela2342/heatctl
+arch:
+  - aarch64
+  - amd64
+
+init: false
+# "application", not "services": it consumes the broker and the database, so it
+# should start after both.
+startup: application
+boot: auto
+
+# Ask the Supervisor for the broker's details. "want", not "need": this is a
+# debugging tool and must never be a reason the plant's own stack fails to
+# come up.
+services:
+  - mqtt:want
+
+# It reads a broker and writes a database. It has no business anywhere else.
+hassio_api: false
+homeassistant_api: false
+auth_api: false
+
+options:
+  log_level: info
+  # Left empty, the Supervisor's broker details are used.
+  mqtt_host: ""
+  mqtt_port: 1883
+  mqtt_username: ""
+  mqtt_password: ""
+  # The InfluxDB App's container name on the Supervisor network. Credentials
+  # are the ones the InfluxDB App was set up with - see docs/*.local.md; they
+  # are deliberately not defaulted here.
+  influx_url: "http://a0d7b954-influxdb:8086"
+  influx_db: mqtt
+  influx_username: ""
+  influx_password: ""
+  # A SEPARATE DATABASE from `homeassistant`, on purpose: raw topics and HA
+  # entities have different shapes, different lifetimes and different owners,
+  # and mixing them makes the retention policy below unusable for either.
+  #
+  # 30 DAYS, AND THIS IS THE SETTING THAT MATTERS. InfluxDB's default retention
+  # is infinite and this host was 83 % full (9.4 GB free) when the App was
+  # written. A debugging tool must not be the reason the machine running Home
+  # Assistant, the broker and the PFC bridge runs out of disk. The long history
+  # lives on the PFC's card, which has 110 GB spare.
+  retention_days: 30
+  # NOT `homeassistant/#`: discovery configs are not measurements, they are
+  # large, and they arrive in a burst on every reconnect. The journal on the
+  # PFC keeps them anyway.
+  topics:
+    - "heatctl/#"
+    - "sensors/#"
+    - "roomtemp/#"
+    - "rtl_433/#"
+  batch_max: 2000
+  flush_interval_s: 5.0
+
+schema:
+  log_level: list(debug|info|warning|error|critical)
+  mqtt_host: str?
+  mqtt_port: port?
+  mqtt_username: str?
+  mqtt_password: password?
+  influx_url: str
+  influx_db: str
+  influx_username: str?
+  influx_password: password?
+  retention_days: int(0,3650)
+  topics:
+    - str
+  batch_max: int(100,50000)
+  flush_interval_s: float

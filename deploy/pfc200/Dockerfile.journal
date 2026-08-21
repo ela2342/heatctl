@@ -1,0 +1,32 @@
+# The MQTT black box. See journal/main.py and docs/PFC200.md.
+#
+# TWO PROCESSES, AND THE SPLIT IS THE WHOLE POINT. `mosquitto_sub` (C) does the
+# subscribing and formatting; the Python half only rotates, compresses and
+# prunes. Measured on this box 2026-08-21, same broker and window: the
+# all-Python version recorded 25 msg/s of 55 published, `mosquitto_sub`
+# recorded 54 at lower CPU. One ARMv7 core with no idle time does not forgive
+# per-message work in Python.
+#
+# Same `python:3.12-slim` base as heatctl and the normaliser, so the large
+# layer is already on the card and this image costs only the client package.
+#
+# NO pip INSTALL AT ALL. Since `mosquitto_sub` took over the subscribing, the
+# recorder is pure stdlib - no aiomqtt, no PyYAML, so nothing here can drift
+# from the control core's pins because there is nothing to pin.
+FROM python:3.12-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends mosquitto-clients \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY journal/ /app/journal/
+
+# Configuration is the environment set by run-journal.sh, and the subscription
+# is that script's `mosquitto_sub` invocation - there is deliberately no config
+# file, because splitting five settings across a file and a command line is
+# worse than putting them in the one version-controlled place that has to
+# contain the command line anyway.
+#
+# /data is bind-mounted onto the SD CARD, never the 283 MB root filesystem.
+CMD ["/bin/sh", "-c", "exec python3 -m journal.main"]

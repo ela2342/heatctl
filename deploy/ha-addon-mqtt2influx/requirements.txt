@@ -1,0 +1,3 @@
+# Subset of the control core's pins, at the same versions. urllib from the
+# stdlib does the InfluxDB writes, so there is no HTTP library here.
+aiomqtt==2.5.1
