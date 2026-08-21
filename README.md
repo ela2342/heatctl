@@ -112,6 +112,7 @@ rounds of chasing a bug that did not exist.
 | I need... | Go to | Rule |
 |---|---|---|
 | **What is still open** | `BACKLOG.md` | The **only** place open work is tracked. No TODO comments in code, no "still missing" notes buried in prose — those go stale silently and nobody greps for them. |
+| **What happened, and what we believed at the time** | `LOGBOOK.md` | Investigations, incidents, measurements and superseded designs, append-only and dated. Read it before re-running an experiment or re-deriving a number. It is not a task list — nothing in it is tracked. |
 | Where the system is going, and what was already done | `ROADMAP.md` | Milestones and their history. Completed items keep their rationale; open ones live in the backlog and are only named here. |
 | **Why something is the way it is**, and what we believed before | `docs/DECISIONS.md` | Numbered `D-nnn`, append-only, never renumbered. Reference decisions **by ID** — `see D-012` — never "section 4.3 of DESIGN.md": section numbers move, IDs do not. |
 | The whole-system target architecture | `docs/DESIGN.md` | The destination, not today. Work packages WP-A..WP-I. |
@@ -128,6 +129,11 @@ rounds of chasing a bug that did not exist.
 **Where new things go**
 
 - An open item → `BACKLOG.md`. Nowhere else.
+- What you did, measured or found out → `LOGBOOK.md`, dated, appended. If it
+  leaves something to do, the *task* goes to the backlog with a pointer back.
+  Keeping the two apart is deliberate: the backlog was 6 300 lines and mostly
+  narrative before they were split on 2026-08-21, which made it useless as
+  both.
 - A decision that establishes a principle, or reverses an earlier one → a new
   `D-nnn` in `docs/DECISIONS.md`. Routine work does not belong there.
 - A fact about a device → `docs/HARDWARE.md`, `docs/HEATPUMP.md` or
