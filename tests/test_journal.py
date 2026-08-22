@@ -120,14 +120,40 @@ class TestRollingAndArchiving:
         assert day_key(1787355000.0) == "20260821"
 
     def test_crossing_midnight_rolls_and_gzips_the_closed_day(self, tmp_path):
+        """End to end with the real `gzip`, which is what runs on the device.
+
+        Compression is asynchronous now (see TestArchivingNeverBlocksTheRecorder
+        for why), so this waits for the child rather than assuming it finished -
+        the previous version asserted the file was already gone, which was only
+        true while the roll blocked the recorder.
+        """
         j = Journal(tmp_path)
         j.write(NOON, f"{NOON} a 1")
         j.write(NEXT, f"{NEXT} b 2")
+        # close() is what commits the pending record and therefore rolls - a
+        # record is only complete once the next one starts, so the roll cannot
+        # happen on write().
         j.close()
+        for child in j._children:
+            assert child.wait(timeout=30) == 0
         assert not (tmp_path / "mqtt-20260821.log").exists()
         with gzip.open(tmp_path / "mqtt-20260821.log.gz", "rt") as fh:
             assert fh.read().strip().endswith("a 1")
         assert read(tmp_path / "mqtt-20260822.log") == ["1787356830.0 b 2"]
+
+    def test_the_recorder_keeps_writing_while_gzip_runs(self, tmp_path):
+        """The property the 41-minute outage violated: records that arrive
+        during compression are still written, because compression is not in
+        this process."""
+        j = Journal(tmp_path)
+        j.write(NOON, f"{NOON} a 1")
+        j.write(NEXT, f"{NEXT} b 2")          # roll + spawn
+        for i in range(200):                  # while the child may still run
+            j.write(NEXT + i, f"{NEXT + i} t {i}")
+        j.close()
+        for child in j._children:
+            child.wait(timeout=30)
+        assert len(read(tmp_path / "mqtt-20260822.log")) == 201
 
     def test_a_restart_mid_day_appends_and_does_not_truncate(self, tmp_path):
         """The morning is the half most likely to explain why it restarted."""
@@ -147,6 +173,74 @@ class TestRollingAndArchiving:
         j.write(NOON + 1, f"{NOON+1} b 2")
         j.close()
         assert len(read(tmp_path / "mqtt-20260821.log")) == 2
+
+
+class TestArchivingNeverBlocksTheRecorder:
+    """The 2026-08-22 defect. Compression used to run inline, so the daily roll
+    stopped this process reading stdin for as long as gzip took - 41 minutes on
+    the first real roll, during which mosquitto timed the client out and the
+    recording simply stopped. Silently, and at 02:00 where nobody looks.
+    """
+
+    class _Spawn:
+        def __init__(self, rc=None):
+            self.calls = []
+            self.rc = rc
+
+        def __call__(self, argv, **kw):
+            self.calls.append((argv, kw))
+            outer = self
+
+            class _P:
+                def poll(self_inner):
+                    return outer.rc
+            return _P()
+
+    def test_the_roll_hands_gzip_to_a_child_and_returns(self, tmp_path):
+        sp = self._Spawn()
+        j = Journal(tmp_path, spawn=sp)
+        j.write(NOON, f"{NOON} a 1")
+        j.write(NEXT, f"{NEXT} b 2")          # crosses UTC midnight -> roll
+        j.close()
+        [(argv, kw)] = sp.calls
+        assert argv[0] == "gzip"
+        assert argv[-1].endswith("mqtt-20260821.log")
+        # No wait() anywhere: the object the fake returns has only poll().
+        # If _compress ever called wait() this test would raise AttributeError.
+
+    def test_it_does_not_compress_inline(self, tmp_path):
+        """The regression itself: after the roll the .log must still be on
+        disk, because a CHILD is compressing it - not this process."""
+        sp = self._Spawn()
+        j = Journal(tmp_path, spawn=sp)
+        j.write(NOON, f"{NOON} a 1")
+        j.write(NEXT, f"{NEXT} b 2")
+        j.close()
+        assert (tmp_path / "mqtt-20260821.log").exists()
+        assert not (tmp_path / "mqtt-20260821.log.gz").exists()
+
+    def test_gzip_runs_at_the_lowest_priority(self, tmp_path):
+        """It shares one core with a 1 s control loop. Compression is never
+        more urgent than a control cycle."""
+        sp = self._Spawn()
+        j = Journal(tmp_path, spawn=sp)
+        j.write(NOON, f"{NOON} a 1")
+        j.write(NEXT, f"{NEXT} b 2")
+        j.close()
+        [(_argv, kw)] = sp.calls
+        assert callable(kw["preexec_fn"])
+
+    def test_a_failure_to_start_gzip_is_not_fatal(self, tmp_path):
+        """Losing an archive is a nuisance; losing the recorder is the thing
+        this module exists to prevent."""
+        def boom(*a, **k):
+            raise OSError("no gzip here")
+        j = Journal(tmp_path, spawn=boom)
+        j.write(NOON, f"{NOON} a 1")
+        j.write(NEXT, f"{NEXT} b 2")          # must not raise
+        j.write(NEXT + 1, f"{NEXT+1} c 3")
+        j.close()
+        assert read(tmp_path / "mqtt-20260822.log")[-1].endswith("c 3")
 
 
 class TestPruning:

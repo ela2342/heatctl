@@ -1613,6 +1613,27 @@ is not tracking — it is a device note that happens to have a column saying
         **no SDK headers on the device**, so this needs WAGO's SDK or a
         documented ABI. The better destination, not the next step.
 
+        **`jessejamescox/pfc-kbus-api` — evaluated 2026-08-22 and REJECTED as
+        the I/O path, but it settled the CODESYS question.** Owner raised it.
+        Two reasons it is not the route:
+
+          * **It is an MQTT bridge.** heatctl → MQTT → kbus-api → KBUS. That
+            reinstates precisely what Phase E exists to remove, and it is
+            structurally `backends/mqtt_io.py`, which already exists and is
+            deliberately not in use. Its payload is the AWS-IoT shadow shape
+            (`state.reported` / `state.desired`) published cyclically, so it
+            inherits the staleness and latency questions in
+            `docs/MODBUS2MQTT.md` as well.
+          * **A prebuilt 267 KB armhf binary with no source**, last pushed
+            2022-08-22, three stars, MIT on the wrapper scripts only. A closed
+            blob in the safety-critical I/O path is the opposite of the
+            30-year promise: it cannot be rebuilt, audited or fixed.
+
+        What it DID give us is the supported way to release the device node
+        from CODESYS, recorded under the CODESYS item below, and the useful
+        existence proof that a plain Linux process drives KBUS on this
+        hardware with the runtime switched off.
+
 ## The PFC200 and its SD card are now single points of failure
 
 What the resilience design (→ LOGBOOK § *Resilience: depend on as little as
@@ -1719,8 +1740,28 @@ Three separate problems in one process, and none of them was known:
 
   - [ ] Establish what, if anything, depends on it — WBM pages, the web
         visualisation, anything that might be part of how the device is
-        administered — before disabling `/etc/rc.d/S98_pp_codesys3`. Attended,
-        with the plant quiescent, and confirm `/dev/kbus0` is then free.
+        administered. Attended, with the plant quiescent, and confirm
+        `/dev/kbus0` is then free.
+  - [ ] **Use WAGO's own `config_runtime`, not the init script.** Owner found
+        the procedure in `jessejamescox/pfc-kbus-api` (2026-08-22), and it is
+        supported and reversible rather than a hack:
+
+        ```sh
+        /etc/init.d/runtime stop
+        /etc/config-tools/config_runtime -w runtime-version=0      # none
+        /etc/config-tools/config_runtime cfg-version=3 webserver-state=disabled
+        ```
+
+        and back again with `runtime-version=3` / `webserver-state=enabled`.
+        Consistent with the 2026-08-19 survey, where `get_possible_runtimes`
+        offered `0 1`. Prefer this to disabling `S98_pp_codesys3`: it is what
+        the vendor's tooling is for, and it has a documented undo.
+  - [ ] **Resolve a contradiction before relying on either observation.** The
+        2026-08-19 survey recorded `get_runtime_config` empty and **no CODESYS
+        process running**; on 2026-08-21 `codesys3` was running as PID 2366 and
+        `fuser /dev/kbus0` returned it. Both cannot be right. Either the
+        runtime starts on some trigger the survey missed, or the survey was
+        wrong. It matters because Phase E's blocker is stated in terms of it.
 
 ### The capacity loop's raise path has no rate term, and that is what breaches the limit
 

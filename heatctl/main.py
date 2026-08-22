@@ -475,9 +475,23 @@ class Controller:
             self.capacity.note_write(now)
 
     # ---------- main loop ----------
+    async def _publish_no_overrides(self) -> None:
+        """State, once at start-up, that nothing is overridden.
+
+        Without this a restart INHERITS the previous process's retained
+        override topics - and a restart is exactly when someone is most likely
+        to be reading them. Worse, every restart passes briefly through
+        `stale_data` on its way to the first good cycle, so the fossil it
+        leaves is one the new process created and then forgot about.
+        """
+        await self.plane.publish("override/global", "none")
+        for valve in self.owned_valves:
+            await self.plane.publish(f"override/{valve}", "none")
+
     async def run(self) -> None:
         await self.io.start()
         plane_task = asyncio.create_task(self.plane.run())
+        await self._publish_no_overrides()
         hp_task = asyncio.create_task(self.hp.run())
         interval = self.cfg["control"]["loop_interval_s"]
         last = time.monotonic()
@@ -534,7 +548,7 @@ class Controller:
             await self.plane.publish("energy/status", "stale: no I/O")
             return
         await self.plane.publish("energy/status", "ok")
-        self._failsafe_cleared()
+        await self._failsafe_cleared()
 
         # Dew point in, before safety runs: it sets the real condensation
         # limit for this cycle. Absent or stale simply leaves safety on its
@@ -767,7 +781,18 @@ class Controller:
             self.rl_gate.record_command(valve, pct, now)
             if reason:
                 overrides.setdefault(reason, []).append(valve)
-                await self.plane.publish(f"override/{valve}", reason)
+            # PUBLISHED EVERY CYCLE, OVERRIDDEN OR NOT. The `if reason:` that
+            # used to guard this wrote the topic only while an override was
+            # active, and `ControlPlane.publish` retains - so the last reason
+            # stood for ever and the topic became useless in both directions:
+            # a permanent false alarm after any transient, and silence when a
+            # real override cleared. Absence must be published, not implied.
+            #
+            # Iterating the valves rather than the `overrides` dict is the
+            # load-bearing part: a valve that STOPS being overridden is absent
+            # from that dict, so a loop over it would never write the clear -
+            # which is the original bug restated.
+            await self.plane.publish(f"override/{valve}", reason or "none")
         self._log_overrides(overrides, now)
 
         await self._hold_source_power()
@@ -1225,13 +1250,22 @@ class Controller:
                                        self.owned_valves)
         await self.plane.publish("override/global", reason)
 
-    def _failsafe_cleared(self) -> None:
-        """Called on a good cycle, so recovery is visible in the log."""
+    async def _failsafe_cleared(self) -> None:
+        """Called on a good cycle, so recovery is visible in the log AND on the
+        broker.
+
+        Publishing the clear is not decoration. `failsafe()` writes
+        `override/global` retained; without this the last reason stayed there
+        for ever. On 2026-08-22 the topic read `cycle_error` all morning from
+        an event that had lasted one second, and it was the first thing an
+        operator looked at.
+        """
         if self._failsafe_reason is not None:
             log.info("failsafe cleared (was %s for %.0f s)",
                      self._failsafe_reason,
                      time.monotonic() - self._failsafe_since)
             self._failsafe_reason = None
+            await self.plane.publish("override/global", "none")
 
     async def telemetry(self, state) -> None:
         for n, t in state.temps.items():

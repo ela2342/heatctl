@@ -53,9 +53,12 @@ Plain text on purpose: `grep`, `awk` and `zgrep` are the query language, they
 will still exist in thirty years, and a truncated line at the end of a crashed
 file costs one message rather than a corrupt database.
 
-Files roll at UTC midnight and the closed one is gzipped; this traffic
-compresses roughly 10:1, so a day costs tens of MB against the card's 110 GB
-free. `JOURNAL_RETAIN_DAYS` prunes the tail.
+Files roll at UTC midnight and the closed one is gzipped **by a child process**
+so the roll never stops the recording - see `_compress`, which exists in that
+shape because the inline version cost 41 minutes of history on its first real
+roll. Measured compression is 5.8:1 (86.2 MB -> 14.8 MB), so a day costs some
+tens of MB against the card's 110 GB free. `JOURNAL_RETAIN_DAYS` prunes the
+tail.
 
 ## One message is one line, and `mosquitto_sub` does not guarantee that
 
@@ -81,11 +84,10 @@ unlikely rather than impossible. Noted rather than solved.
 """
 from __future__ import annotations
 
-import gzip
 import io
 import logging
 import os
-import shutil
+import subprocess
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -150,7 +152,7 @@ class Journal:
     """Append-only writer with a daily roll."""
 
     def __init__(self, dirpath: Path | str, retain_days: int = 90,
-                 flush_interval_s: float = 1.0):
+                 flush_interval_s: float = 1.0, spawn=subprocess.Popen):
         self.dir = Path(dirpath)
         self.dir.mkdir(parents=True, exist_ok=True)
         self.retain_days = int(retain_days)
@@ -167,6 +169,9 @@ class Journal:
         self._pending: tuple[float, str] | None = None
         self._sec: int | None = None
         self._sec_day: str | None = None
+        # Injectable so the archiving path is testable without running gzip.
+        self._spawn = spawn
+        self._children: list = []
 
     def path_for(self, day: str) -> Path:
         return self.dir / f"mqtt-{day}.log"
@@ -227,25 +232,63 @@ class Journal:
         # morning - which is the half most likely to explain why it restarted.
         self._fh = open(self.path_for(day), "a", buffering=1 << 16)
         self._last_flush = now
+        self._reap()
         if closed is not None and closed.exists():
             self._compress(closed)
         for f in prune(self.dir, self.retain_days, now):
             log.info("pruned %s", f.name)
 
     def _compress(self, path: Path) -> None:
-        """gzip the closed day. The original is unlinked only after the archive
-        is complete, so an interrupted compression leaves a partial `.gz`
-        beside an intact `.log` and the next roll overwrites it."""
-        gz = path.with_suffix(".log.gz")
+        """Hand the closed day to an external `gzip` and RETURN IMMEDIATELY.
+
+        THE BUG THIS FIXES, measured 2026-08-22. Compression used to run inline
+        here, with `shutil.copyfileobj` into `gzip.open`. On the first real
+        roll that meant 86 MB squeezed on one busy ARMv7 core while this
+        process was not reading stdin - so `mosquitto_sub` blocked on the full
+        pipe, mosquitto timed the client out ("exceeded timeout"), and the
+        recorder lost **41 minutes**, silently, at 02:01. The archive line and
+        the reconnect are 12 seconds apart in the logs:
+
+            02:01:05  broker: Client journal disconnected: exceeded timeout
+            02:41:50  journal: archived mqtt-20260821.log.gz: 86.2 MB -> 14.8 MB
+            02:42:02  broker: New client connected as journal
+
+        A black box with a nightly 41-minute hole is precisely the failure it
+        exists to prevent, and it would have gone unnoticed indefinitely -
+        nothing alarms on it, and the gap looks like a quiet night.
+
+        So: a child process, at the lowest possible priority, and no `wait()`.
+        `gzip` removes the original itself once it has succeeded, so an
+        interrupted run leaves the `.log` intact and the next roll retries.
+        Nothing downstream changes - the name it produces, `<day>.log.gz`, is
+        the one `prune()` already expects.
+        """
         try:
             raw_mb = path.stat().st_size / 1e6
-            with open(path, "rb") as src, gzip.open(gz, "wb") as dst:
-                shutil.copyfileobj(src, dst, length=1 << 20)
-            path.unlink()
-            log.info("archived %s: %.1f MB -> %.1f MB", gz.name, raw_mb,
-                     gz.stat().st_size / 1e6)
-        except OSError as e:
-            log.warning("could not archive %s: %s", path.name, e)
+        except OSError:
+            return
+        try:
+            # niced in the child, not via a `nice` binary - the image does not
+            # have one, and os.nice() needs nothing installed.
+            child = self._spawn(["gzip", "-f", str(path)],
+                                preexec_fn=lambda: os.nice(19))
+        except (OSError, ValueError) as e:
+            log.warning("could not start gzip for %s: %s", path.name, e)
+            return
+        self._children.append(child)
+        log.info("archiving %s (%.1f MB) in the background", path.name, raw_mb)
+
+    def _reap(self) -> None:
+        """Collect finished compressions so they do not linger as zombies.
+        Called on each roll; one a day makes the list at most a few entries."""
+        still = []
+        for c in self._children:
+            rc = c.poll()
+            if rc is None:
+                still.append(c)
+            elif rc != 0:
+                log.warning("gzip exited %s; the .log was left in place", rc)
+        self._children = still
 
     def close(self) -> None:
         self._commit()

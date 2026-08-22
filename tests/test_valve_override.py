@@ -81,3 +81,80 @@ class TestValveOverride:
         ctl.on_command("valve", "valve_hk01", "70")
         assert ctl._valve_override
         assert controller()._valve_override == {}
+
+
+class TestTheClearIsPublishedToo:
+    """A safety-override topic that is only ever written while the override is
+    ACTIVE is useless in both directions.
+
+    `ControlPlane.publish` retains, so before 2026-08-22 the last reason stood
+    for ever: a permanent false alarm after any transient, and silence when a
+    real override cleared. Measured cost that morning - `override/global` read
+    `cycle_error` for hours from an event that lasted one second, and it was
+    the first thing an operator looked at while the signal that mattered went
+    unread.
+
+    These assert the CLEAR, which is the half that was missing. Asserting only
+    that the override appears is what let this ship.
+    """
+
+    async def test_an_unoverridden_valve_says_none(self, controller):
+        """Not silence. Absence must be published, not implied."""
+        ctl = controller(
+            temps={"rl_hk01": 24.0, "rl_hk02": 24.0, "rl_hk03": 24.0,
+                   "vl_total": 30.0},
+            room_temps={"gaestebad": 18.0})
+        ctl.io.touch(time.monotonic())
+        await ctl.step(1.0)
+        assert ctl.plane.topic("override/valve_hk01") == "none"
+
+    async def test_a_valve_that_stops_being_overridden_is_written_again(
+            self, controller):
+        """The bug restated: the old code looped over the overrides dict, and a
+        valve that stops being overridden is absent from it - so the clear was
+        never written and the stale reason stood."""
+        ctl = controller(
+            temps={"rl_hk01": 24.0, "rl_hk02": 24.0, "rl_hk03": 24.0,
+                   "vl_total": 50.0},           # screed overtemp
+            room_temps={"gaestebad": 28.0},
+            dew_point=14.0)
+        ctl.io.touch(time.monotonic())
+        await ctl.step(1.0)
+        assert ctl.plane.topic("override/valve_hk01") == "vl_overtemp"
+
+        ctl.io.state.temps["vl_total"] = 30.0    # the reason goes away
+        ctl.io.touch(time.monotonic())
+        await ctl.step(1.0)
+        assert ctl.plane.topic("override/valve_hk01") == "none"
+
+    async def test_a_cleared_global_failsafe_says_none(self, controller):
+        ctl = controller(temps={"rl_hk01": 24.0, "vl_total": 30.0})
+        await ctl.failsafe("stale_data")
+        assert ctl.plane.topic("override/global") == "stale_data"
+        await ctl._failsafe_cleared()
+        assert ctl.plane.topic("override/global") == "none"
+
+    async def test_clearing_twice_is_harmless(self, controller):
+        """`_failsafe_cleared` runs on every good cycle. It must publish on the
+        TRANSITION only - re-publishing `none` at 1 Hz for ever would be the
+        same churn the energy topics were fixed to avoid."""
+        ctl = controller(temps={"rl_hk01": 24.0})
+        await ctl.failsafe("stale_data")
+        await ctl._failsafe_cleared()
+        n = len([p for p in ctl.plane.published if p[0] == "override/global"])
+        await ctl._failsafe_cleared()
+        await ctl._failsafe_cleared()
+        assert len([p for p in ctl.plane.published
+                    if p[0] == "override/global"]) == n
+
+    async def test_start_up_disowns_the_previous_process_fossils(
+            self, controller):
+        """A restart inherits the retained topics of the process before it -
+        and a restart is exactly when someone is most likely reading them. It
+        also always passes briefly through `stale_data` on the way to its first
+        good cycle, so the fossil is one it created itself."""
+        ctl = controller(temps={"rl_hk01": 24.0})
+        await ctl._publish_no_overrides()
+        assert ctl.plane.topic("override/global") == "none"
+        for valve in ctl.owned_valves:
+            assert ctl.plane.topic(f"override/{valve}") == "none"
