@@ -1655,6 +1655,46 @@ obvious shape, and none of it exists.
         the Home Assistant App", which needs the coupler — so it disappears at
         Phase D, and this becomes the only answer.
 
+## Battery Shellys wake every 2 h, and the freshness window assumes 15 min
+
+Measured 2026-08-22, when Bad and Gästebad came onto the plant broker:
+
+| room | power | `wakeup_period` | temperature msgs / 5 h | worst gap |
+|---|---|---|---|---|
+| Wohnzimmer | **mains** (`external.present: true`) | 600 s | ~75 | ~6 min |
+| Bad | battery, 6.27 V | **7200 s** | 8 | 112 min |
+| Gästebad | battery, 6.29 V | **7200 s** | 7 | 93 min |
+
+`room_temp_max_age_s` is 900 s and the normaliser's `ttl_s` matches it, so a
+battery room spends most of the day on `house_avg`. Bad was migrated anyway -
+its Controme sensor was dead, so an hourly real reading strictly beats a
+permanent house average - but **Gästebad was deliberately NOT repointed**: its
+Controme path still publishes ~620 times a day against this device's ~7, so
+switching now trades a two-minute cadence for a two-hour one.
+
+**The interesting part is that silence means different things on the two.** A
+periodic sensor going quiet is a fault. A *change-triggered* one going quiet
+means the room is not moving - which is exactly when the last reading is still
+valid. The two are only distinguishable by the device's own `wakeup_period`:
+silence longer than that is a fault, shorter than that is information. So the
+window is not arbitrary, it is a property of the device, and the device
+publishes it.
+
+  - [ ] **Decide the approach.** Three, and they are not exclusive:
+        **mains-power them** (Wohnzimmer already is, and it still deep-sleeps,
+        so accuracy is unaffected - `wakeup_reason.boot` is `deepsleep_wake`);
+        **shorten `wakeup_period`** on the devices, at a real battery cost of
+        roughly 12x the wakes; or **size the window per room**.
+  - [ ] **If per-room: derive it, do not configure it.** The normaliser already
+        receives `status/sys` with `wakeup_period` on every wake, so it can set
+        each room's expiry from what that device says about itself - about
+        1.5x its own period. Self-configuring, and it cannot drift from the
+        device the way a hand-set number would. heatctl would need
+        `room_temp_max_age_s` per room to match.
+  - [ ] **Watch the battery.** 6.27 V and 6.29 V, both reporting 100 %, are the
+        first readings. Whatever is decided above changes the discharge rate,
+        so record a baseline now while the cadence is known.
+
 ## What the normaliser left open
 
   - [ ] **A room on the normaliser depends on a second process.** Supervised,

@@ -353,7 +353,24 @@ rooms:
     setpoint_c: 23.5
     floor_area_m2: 8.94   # Bad
     circuits: [{sensor: rl_hk06, valve: valve_hk06}]
-    room_temp_topic: "roomtemp/badezimmer"   # Shelly H&T G3, via the HA bridge
+    # DIRECT TO THE PLANT BROKER since 2026-08-22, through the normaliser
+    # (D-047). The old `roomtemp/badezimmer` path went silent - two messages in
+    # eleven hours on 2026-08-22, against 320-620 for every other room - and
+    # heatctl correctly fell this room back to the house average for the whole
+    # day. Nothing was wrong with the control; the sensor was gone.
+    #
+    # BATTERY, so `wakeup_period` is 7200 s and the worst observed gap is
+    # 112 min. That is well outside `room_temp_max_age_s`, so this room WILL
+    # spend much of the day on `house_avg` - which is exactly what it does now
+    # with a dead sensor, so this is a strict improvement rather than a
+    # regression. Sizing the window per room is in BACKLOG.
+    room_temp_topic: "sensors/room/badezimmer/temperature_c"
+    # THE REAL PRIZE. Bad is the bathroom - it is what drives the house dew
+    # point, and the local computation could not see it at all until now
+    # (D-045: one contributing room, and it was the living room). A shower has
+    # already moved the enforced limit by 3 K this week, via HA's helper; this
+    # is heatctl finally being able to observe that itself.
+    room_humidity_topic: "sensors/room/badezimmer/humidity_pct"
   # rl_hk05 = Badezimmer Handtuchhalter, reserve, not installed
   - name: schlafzimmer
     label: "Elternschlafzimmer"

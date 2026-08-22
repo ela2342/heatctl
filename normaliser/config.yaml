@@ -57,8 +57,42 @@ sources:
     field: humidity_pct
     json_key: rh
 
+  # BADEZIMMER. The device's topic base is `bad`, the heatctl room is
+  # `badezimmer` - mapped explicitly here, never inferred.
+  #
+  # ON BATTERY, so `wakeup_period` is 7200 s against Wohnzimmer's 600 s on
+  # mains. Measured 2026-08-22: eight temperature reports in five hours, worst
+  # gap 112 min. That is far outside `ttl_s`, so this room will show as expired
+  # much of the day - accepted deliberately, because its Controme sensor is
+  # DEAD (two messages in eleven hours) and an hourly real reading beats a
+  # permanent house average. The humidity matters more than the temperature:
+  # it is the bathroom, it is what actually drives the house dew point, and
+  # until now the local computation could not see it at all.
+  - topic: "sensors/shellies/bad/status/temperature:0"
+    room: badezimmer
+    field: temperature_c
+    json_key: tC
+  - topic: "sensors/shellies/bad/status/humidity:0"
+    room: badezimmer
+    field: humidity_pct
+    json_key: rh
+
+  # GAESTEBAD. Normalised so the data is flowing and comparable, but heatctl
+  # is NOT repointed at it yet: the Controme path still publishes ~620 times a
+  # day against this device's ~7, so switching now would trade a two-minute
+  # cadence for a two-hour one. See BACKLOG - the choice is to mains-power it,
+  # or to size the freshness window per room from the device's own
+  # `wakeup_period`.
+  - topic: "sensors/shellies/gaestebad/status/temperature:0"
+    room: gaestebad
+    field: temperature_c
+    json_key: tC
+  - topic: "sensors/shellies/gaestebad/status/humidity:0"
+    room: gaestebad
+    field: humidity_pct
+    json_key: rh
+
   # Still to come, as each room's Shelly is installed and pointed here:
-  # gaestebad, kind_natalie, kind_naomi, badezimmer, schlafzimmer,
-  # arbeitszimmer. Those rooms currently reach heatctl over the Home Assistant
-  # bridge (`roomtemp/#`) or rtl_433, which are not sleeping sources, so they
-  # do not need this yet - see BACKLOG.
+  # kind_natalie, kind_naomi, schlafzimmer, arbeitszimmer. Those rooms reach
+  # heatctl over the Home Assistant bridge (`roomtemp/#`) or rtl_433, which are
+  # not sleeping sources, so they do not need this yet - see BACKLOG.
