@@ -313,3 +313,82 @@ class TestConfigFailsAtStartUpOrNotAtAll:
             f"not a subset of the control core's: {set(mine) - set(core)}")
         for name, line in mine.items():
             assert line == core[name], f"{name}: {line!r} vs {core[name]!r}"
+
+
+class TestTheWindowIsLearnedFromTheDevice:
+    """One global window cannot serve two devices whose cadence differs
+    twelve-fold. The same Shelly H&T model reports `wakeup_period: 600` on
+    mains and 7200 on battery, and the manual's guarantee is "on a delta, or
+    every wake period at the latest". Against a hand-set 900 s a battery room
+    is stale 88 % of the time - which is how the bathroom, the room that drives
+    the house dew point, contributed for fifteen minutes in every two hours.
+    """
+
+    SYS = "sensors/shellies/wohnzimmer/status/sys"
+
+    def norm(self, period_topic=None, **kw):
+        return Normaliser(shelly(), "sensors/room", TTL,
+                          wake_topics={"wohnzimmer": period_topic or self.SYS},
+                          **kw)
+
+    def test_the_period_becomes_the_window(self):
+        n = self.norm()
+        out = feed(n, self.SYS, '{"wakeup_period":7200,"mac":"x"}')
+        assert out["max_age_s"].payload == "10800"       # 1.5 x 7200
+
+    def test_it_then_applies_to_that_room_s_measurements(self):
+        """The point of the whole exercise: the reading must outlive the
+        default window, or the room is stale between wakes."""
+        n = self.norm()
+        n.on_message(self.SYS, '{"wakeup_period":7200}', wall=0.0, mono=0.0)
+        out = feed(n, T, '{"tC":23.6}')
+        assert out["temperature_c"].expiry_s == 10800
+
+    def test_a_room_with_no_wake_topic_keeps_the_default(self):
+        n = Normaliser(shelly("gaestebad"), "sensors/room", TTL)
+        g = "sensors/shellies/gaestebad/status/temperature:0"
+        assert feed(n, g, '{"tC":22.0}')["temperature_c"].expiry_s == TTL
+
+    def test_the_mains_device_lands_on_the_hand_chosen_number(self):
+        """1.5 x 600 is exactly the 900 s that was chosen by hand for the mains
+        device. A reassuring coincidence rather than a derivation, but it would
+        be a bad sign if the factor disagreed with it."""
+        n = self.norm()
+        assert feed(n, self.SYS, '{"wakeup_period":600}')["max_age_s"].payload \
+            == "900"
+
+    def test_the_floor_is_the_configured_ttl(self):
+        """A very short period must not shorten the window below what the rest
+        of the plant is built around."""
+        n = self.norm()
+        assert feed(n, self.SYS, '{"wakeup_period":60}')["max_age_s"].payload \
+            == str(TTL)
+
+    def test_an_absurd_period_is_capped(self):
+        """A misconfigured device, or a payload we misread, must not talk the
+        plant into believing a measurement for a day."""
+        n = self.norm(ttl_max_s=14400)
+        assert feed(n, self.SYS, '{"wakeup_period":86000}')["max_age_s"].payload \
+            == "14400"
+
+    @pytest.mark.parametrize("payload", [
+        "{}", "not json", '{"wakeup_period":"soon"}', '{"wakeup_period":0}',
+        '{"wakeup_period":-5}', '{"wakeup_period":999999}',
+    ])
+    def test_an_unusable_period_changes_nothing(self, payload):
+        """Keep the previous window rather than inventing one. Silence is the
+        safe direction: the default already works, just poorly."""
+        n = self.norm()
+        n.on_message(self.SYS, '{"wakeup_period":7200}', wall=0.0, mono=0.0)
+        assert feed(n, self.SYS, payload) == {}
+        assert feed(n, T, '{"tC":23.6}')["temperature_c"].expiry_s == 10800
+
+    def test_it_is_published_only_when_it_changes(self):
+        """The device sends `sys` on every wake. Re-publishing an unchanged
+        window would be churn, and on a retained topic it buys nothing."""
+        n = self.norm()
+        assert feed(n, self.SYS, '{"wakeup_period":7200}')
+        assert feed(n, self.SYS, '{"wakeup_period":7200}') == {}
+
+    def test_the_wake_topic_is_subscribed(self):
+        assert self.SYS in self.norm().topics

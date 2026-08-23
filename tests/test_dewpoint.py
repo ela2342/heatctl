@@ -179,3 +179,78 @@ class TestCombiningTheTwoSources:
         p.room_hum_ts["gaestebad"] = now - 5000            # stale humidity
         val, _room, n = p.local_dew_point(900)
         assert val is None and n == 0
+
+
+class TestThePerRoomFreshnessWindow:
+    """Adopted from the normaliser, which derives it from what each device
+    reports about its own cadence.
+
+    The bathroom is why this matters. Its Shelly is on battery and wakes every
+    7200 s; against the global 900 s it was stale 88 % of the time, so the room
+    that actually drives the house dew point contributed to it for fifteen
+    minutes in every two hours. On 2026-08-23 the local dew point read 12.3
+    from the living room alone while the bathroom's own reading implied 14.1.
+    """
+
+    def _plane(self, cfg):
+        return ControlPlane(cfg, on_command=lambda *a: None)
+
+    def _stale_pair(self, p, room, age):
+        now = __import__("time").monotonic()
+        p.room_temps[room], p.room_hum[room] = 24.0, 80.0
+        p.room_temp_ts[room] = p.room_hum_ts[room] = now - age
+
+    def test_a_room_beyond_the_default_but_inside_its_own_window_counts(self, cfg):
+        p = self._plane(cfg)
+        p._set_max_age("gaestebad", "10800")
+        self._stale_pair(p, "gaestebad", 3000)          # > 900, < 10800
+        val, room, n = p.local_dew_point(900)
+        assert n == 1 and room == "gaestebad" and val is not None
+
+    def test_without_the_published_window_the_default_still_applies(self, cfg):
+        """No adoption, no change: a room whose device has said nothing keeps
+        the behaviour it has always had."""
+        p = self._plane(cfg)
+        self._stale_pair(p, "gaestebad", 3000)
+        assert p.local_dew_point(900)[2] == 0
+
+    def test_room_temp_uses_it_too(self, cfg):
+        p = self._plane(cfg)
+        p._set_max_age("gaestebad", "10800")
+        p.room_temps["gaestebad"] = 21.5
+        p.room_temp_ts["gaestebad"] = __import__("time").monotonic() - 3000
+        assert p.room_temp("gaestebad", 900) == 21.5
+
+    def test_it_can_only_lengthen_the_window_to_the_ceiling(self, cfg):
+        """It arrives over the broker, and lengthening a staleness window is a
+        safety-relevant act. The clamp does not depend on the ACL continuing to
+        keep other writers off the topic."""
+        cfg["control"]["room_temp_max_age_ceiling_s"] = 14400.0
+        p = self._plane(cfg)
+        p._set_max_age("gaestebad", "999999")
+        assert p.room_max_age["gaestebad"] == 14400.0
+
+    def test_it_can_never_shorten_below_the_configured_default(self, cfg):
+        """Shortening is the safe direction, but it is not this mechanism's
+        job - a broker message must not be able to make rooms drop out."""
+        p = self._plane(cfg)
+        p._set_max_age("gaestebad", "10")
+        assert p.room_max_age["gaestebad"] == 900.0
+
+    @pytest.mark.parametrize("payload", ["", "soon", "unavailable"])
+    def test_an_unusable_or_cleared_value_returns_to_the_default(self, cfg,
+                                                                 payload):
+        """A retain-clear means the normaliser has stopped asserting a window.
+        Continuing to honour the last one heard would be believing a claim
+        nobody is making any more."""
+        p = self._plane(cfg)
+        p._set_max_age("gaestebad", "10800")
+        p._set_max_age("gaestebad", payload)
+        expected = 900.0 if payload == "" else 10800.0
+        assert p.room_max_age.get("gaestebad", 900.0) == expected
+
+    def test_the_topic_is_subscribed_per_room(self, cfg):
+        p = self._plane(cfg)
+        assert "sensors/room/gaestebad/max_age_s" in p.room_max_age_topics
+        assert p.room_max_age_topics["sensors/room/gaestebad/max_age_s"] \
+            == "gaestebad"

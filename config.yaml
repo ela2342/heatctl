@@ -400,9 +400,28 @@ control:
   mode: heating                # heating | cooling | off (overridable via MQTT)
   loop_interval_s: 1.0
   # How old a room temperature may be before the room falls back to
-  # return-temperature control. Matches the running plant, which had it set
-  # explicitly while the repo relied on the identical default.
+  # return-temperature control.
+  #
+  # THIS IS NOW THE FLOOR AND THE DEFAULT, NOT THE ANSWER. Each room's real
+  # window is published by the normaliser on `sensors/room/<room>/max_age_s`,
+  # derived from what that room's own device reports as its wake period, and
+  # heatctl adopts it. One number cannot serve two devices whose cadence
+  # differs twelve-fold: the same Shelly H&T model reports 600 s on mains and
+  # 7200 s on battery. At 900 s a battery room is stale 88 % of the time,
+  # which is how the bathroom - the room that drives the house dew point -
+  # contributed to it for fifteen minutes in every two hours.
+  #
+  # A room whose device has said nothing keeps exactly this value, so nothing
+  # changes for the rtl_433 and HA-bridge rooms.
   room_temp_max_age_s: 900.0
+  # THE CLAMP ON THAT. An adopted window arrives over the broker, and
+  # lengthening a staleness window is a safety-relevant act - it decides how
+  # long a dead sensor is believed. A published value may only move the window
+  # between `room_temp_max_age_s` above and this ceiling; outside that it is
+  # ignored and logged. Today only the normaliser may write `sensors/#` (see
+  # the broker ACL), but this does not depend on that staying true.
+  # 4 h: two battery wake periods plus slack.
+  room_temp_max_age_ceiling_s: 14400.0
   # ONE TARGET PER ROOM, NOT ONE PER MODE. Split heating/cooling defaults were
   # removed 2026-08-19 (owner: "separate setpoints for heating and cooling make
   # absolutely no sense") - which is D-006 from three weeks earlier, finally

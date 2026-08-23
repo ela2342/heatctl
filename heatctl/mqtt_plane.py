@@ -87,6 +87,36 @@ class ControlPlane:
         self.room_temps: dict[str, float] = {}
         self.room_temp_ts: dict[str, float] = {}
 
+        # PER-ROOM FRESHNESS WINDOW, ADOPTED FROM THE NORMALISER.
+        #
+        # One global `room_temp_max_age_s` cannot serve two devices whose
+        # cadence differs twelve-fold: the same Shelly H&T model reports a
+        # 600 s wake period on mains and 7200 s on battery. At 900 s a battery
+        # room is stale 88 % of the time, which is how the bathroom - the room
+        # that drives the house dew point - contributed to it for fifteen
+        # minutes in every two hours.
+        #
+        # The normaliser derives each room's window from what that device says
+        # about itself and publishes it here. Adopting it means nothing has to
+        # be configured per room, and nothing drifts when a device is replaced
+        # or re-flashed.
+        #
+        # CLAMPED, because this arrives over the broker and lengthening a
+        # staleness window is a safety-relevant act. A published value may only
+        # move the window between the configured default and
+        # `room_temp_max_age_ceiling_s`; anything outside that is ignored and
+        # logged. Layer 2 cannot send it - the topic is under `sensors/`, which
+        # only the normaliser may write - but the clamp does not depend on that
+        # remaining true.
+        self.room_max_age_topics = {
+            f"sensors/room/{r['name']}/max_age_s": r["name"]
+            for r in cfg["rooms"]}
+        self.room_max_age: dict[str, float] = {}
+        _ctl = cfg.get("control") or {}
+        self.max_age_default = float(_ctl.get("room_temp_max_age_s", 900.0))
+        self.max_age_ceiling = float(
+            _ctl.get("room_temp_max_age_ceiling_s", 14400.0))
+
         # HUMIDITY, for computing the dew point here instead of in Home
         # Assistant - see heatctl/dewpoint.py for why that matters. Optional
         # per room and absent everywhere until the Shellys publish direct, so
@@ -142,9 +172,13 @@ class ControlPlane:
         self._client: aiomqtt.Client | None = None
 
     def room_temp(self, room: str, max_age_s: float = 300) -> float | None:
-        """Room air temperature if fresh enough, else None."""
+        """Room air temperature if fresh enough, else None.
+
+        `max_age_s` is the DEFAULT; a room whose device has told us its own
+        cadence uses that instead. See `room_max_age` in `__init__`.
+        """
         ts = self.room_temp_ts.get(room)
-        if ts is None or time.monotonic() - ts > max_age_s:
+        if ts is None or time.monotonic() - ts > self._max_age(room, max_age_s):
             return None
         return self.room_temps.get(room)
 
@@ -193,6 +227,35 @@ class ControlPlane:
         return {r: w for r, w in self._room_solar.items()
                 if now - self._room_solar_ts.get(r, 0.0) <= max_age_s}
 
+    def _set_max_age(self, room: str, payload: str) -> None:
+        """Adopt a published freshness window, within the clamp.
+
+        A retain-clear (empty payload) drops back to the configured default,
+        which is the right direction: if the normaliser stops asserting a
+        window, the plant should not keep honouring the last one it heard.
+        """
+        if payload == "":
+            if self.room_max_age.pop(room, None) is not None:
+                log.info("%s: freshness window back to the default", room)
+            return
+        try:
+            v = float(payload)
+        except ValueError:
+            log.warning("non-numeric max_age for %s: %r", room, payload)
+            return
+        clamped = min(self.max_age_ceiling, max(self.max_age_default, v))
+        if clamped != v:
+            log.warning("%s: published freshness window %.0f s clamped to "
+                        "%.0f s", room, v, clamped)
+        if self.room_max_age.get(room) != clamped:
+            log.info("%s: freshness window %.0f s", room, clamped)
+        self.room_max_age[room] = clamped
+
+    def _max_age(self, room: str, default: float) -> float:
+        """This room's freshness window: what its device implies, or the
+        caller's default when nothing has been published for it."""
+        return self.room_max_age.get(room, default)
+
     def local_dew_point(self, max_age_s: float = 900,
                         ) -> tuple[float | None, str | None, int]:
         """Dew point computed here, from the rooms that report humidity.
@@ -209,9 +272,10 @@ class ControlPlane:
         now = time.monotonic()
         pairs: dict[str, tuple[float | None, float | None]] = {}
         for room, rh in self.room_hum.items():
-            if now - self.room_hum_ts.get(room, 0.0) > max_age_s:
+            age = self._max_age(room, max_age_s)
+            if now - self.room_hum_ts.get(room, 0.0) > age:
                 continue
-            if now - self.room_temp_ts.get(room, 0.0) > max_age_s:
+            if now - self.room_temp_ts.get(room, 0.0) > age:
                 continue
             pairs[room] = (self.room_temps.get(room), rh)
         return dewpoint.house_dew_point(pairs)
@@ -281,6 +345,8 @@ class ControlPlane:
                         await client.subscribe(topic)
                     for topic in self.room_hum_topics:
                         await client.subscribe(topic)
+                    for topic in self.room_max_age_topics:
+                        await client.subscribe(topic)
                     if self.dew_topic:
                         await client.subscribe(self.dew_topic)
                     if self.outdoor_topic:
@@ -321,6 +387,10 @@ class ControlPlane:
             else:
                 self.room_temps[room] = v
                 self.room_temp_ts[room] = time.monotonic()
+            return
+        room = self.room_max_age_topics.get(topic)
+        if room is not None:
+            self._set_max_age(room, payload)
             return
         room = self.room_hum_topics.get(topic)
         if room is not None:

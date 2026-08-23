@@ -76,6 +76,7 @@ weakens the failure model.
     sensors/room/<room>/humidity_pct    bare float, retained, expiring
     sensors/room/<room>/sample_ts       unix seconds at receipt, same lifetime
     sensors/room/<room>/interval_s      seconds since the previous temperature
+    sensors/room/<room>/max_age_s       the window derived from this device
 
 `sample_ts` is the receipt time of the room's last **accepted** sample of any
 field - a rejected reading does not advance it, or a dashboard would show
@@ -84,9 +85,34 @@ property does not survive the v3.1.1 bridge to Home Assistant, so it is the
 only way the age is visible on that side. Informational: nothing in the control
 path reads it.
 
-`interval_s` is the measurement that settles the 600-vs-360 question. It is
-derived from the temperature source only - the one field every room has, and
-the one control depends on.
+`interval_s` is derived from the temperature source only - the one field every
+room has, and the one control depends on.
+
+## The window is learned from the device, not configured
+
+`max_age_s` is the important one, and it exists because **one global number
+cannot be right for two devices with a twelve-fold difference in cadence.** The
+same Shelly H&T model reports `wakeup_period: 600` on mains and **7200 on
+battery**, and the manual's guarantee is "when a reading changes by more than
+the configured delta, or every wake period at the latest". Measured 2026-08-23,
+that is a metronome - five consecutive wakes exactly 7200 s apart, to the
+second, each carrying a full status.
+
+Against the hand-set 900 s, a battery room was therefore stale 88 % of the
+time. That is how the bathroom - the room that actually drives the house dew
+point - contributed to it for fifteen minutes in every two hours, and why the
+local dew point read 12.3 when the true house maximum was 14.1.
+
+So `status/sys` is subscribed per room and the window comes from the device
+itself: `wake_factor` x its own reported period, floored at `ttl_s` and capped
+at `ttl_max_s`. Nothing to configure per room, nothing to keep in step with a
+device someone re-flashes. heatctl reads the published value and adopts it,
+within its own clamp - a broker-supplied number may not talk the control core
+into believing a measurement for arbitrarily long.
+
+The factor covers **jitter, not a missed wake**: the period is a guarantee, so
+silence beyond it means something went wrong and should surface as stale rather
+than be smoothed over.
 
 ## Rejection, not correction
 
@@ -120,6 +146,10 @@ from paho.mqtt.properties import Properties
 log = logging.getLogger("normaliser")
 
 TEMPERATURE = "temperature_c"
+# The field the normaliser publishes its own derived freshness window on, for
+# heatctl to adopt. Named for what a consumer does with it, not for where it
+# came from.
+MAX_AGE = "max_age_s"
 
 # Wide bands, and only as a default: what cannot be a measurement at all. A
 # disconnected channel and a saturated one both land outside these.
@@ -174,12 +204,21 @@ def parse_value(payload: str, json_key: str | None) -> float | None:
 class Normaliser:
     """Pure message-in, publications-out. No I/O, so the rules are testable."""
 
-    def __init__(self, sources: list[Source], out_prefix: str, ttl_s: int):
+    def __init__(self, sources: list[Source], out_prefix: str, ttl_s: int,
+                 wake_topics: dict[str, str] | None = None,
+                 wake_factor: float = 1.5, ttl_max_s: int = 14400):
         self.by_topic: dict[str, list[Source]] = {}
         for s in sources:
             self.by_topic.setdefault(s.topic, []).append(s)
         self.out_prefix = out_prefix.rstrip("/")
         self.ttl_s = int(ttl_s)
+        # room -> the `status/sys` topic that reports its wake period, and the
+        # window learned from it. See `_learn_window`.
+        self.wake_topics = {topic: room
+                            for room, topic in (wake_topics or {}).items()}
+        self.wake_factor = float(wake_factor)
+        self.ttl_max_s = int(ttl_max_s)
+        self._room_ttl: dict[str, int] = {}
         # Monotonic time of the last accepted sample per (room, field), for
         # `interval_s` and for deciding what is worth logging. Monotonic, not
         # wall clock: an NTP step must not be reported as a wake period.
@@ -187,6 +226,12 @@ class Normaliser:
 
     def on_message(self, topic: str, payload: str, *,
                    wall: float, mono: float) -> list[Publication]:
+        room = self.wake_topics.get(topic)
+        if room is not None:
+            # Arrives ~0.1 ms BEFORE the measurements in the same wake
+            # (measured 2026-08-23), so the window is already correct by the
+            # time the reading it applies to is published.
+            return self._learn_window(room, payload)
         sources = self.by_topic.get(topic)
         if not sources:
             # Only reachable if the subscription and the map disagree, which
@@ -228,11 +273,52 @@ class Normaliser:
 
     def _pub(self, room: str, field: str, payload: str) -> Publication:
         return Publication(f"{self.out_prefix}/{room}/{field}", payload,
-                           expiry_s=self.ttl_s)
+                           expiry_s=self._room_ttl.get(room, self.ttl_s))
+
+    def _learn_window(self, room: str, payload: str) -> list[Publication]:
+        """Derive this room's freshness window from what its device says.
+
+        THE DEVICE KNOWS ITS OWN CADENCE AND WE DO NOT. A Shelly H&T on mains
+        reports `wakeup_period: 600`; the same model on battery reports 7200,
+        and the manual's guarantee is "when a reading changes by more than the
+        configured delta, or every wake period at the latest". Measured
+        2026-08-23, that is a metronome: five consecutive wakes exactly 7200 s
+        apart, to the second, each carrying a full status.
+
+        So one global `room_temp_max_age_s` cannot be right for both. At 900 s
+        a battery room is stale 88 % of the time - which is how the bathroom,
+        the room that actually drives the house dew point, contributed to it
+        for fifteen minutes in every two hours.
+
+        `wake_factor` covers jitter, NOT a missed wake. That is deliberate: the
+        period is a guarantee, so silence beyond it means something went wrong
+        and should surface as stale rather than be papered over. 1.5x turns the
+        mains device's 600 s into exactly the 900 s that was hand-chosen for
+        it, which is a mild reassurance that the factor is sane.
+
+        `ttl_max_s` is the backstop. A device that reported an absurd period -
+        misconfigured, or a payload we misread - must not be able to talk us
+        into believing a measurement for a day.
+        """
+        try:
+            period = float(json.loads(payload)["wakeup_period"])
+        except (ValueError, TypeError, KeyError):
+            return []
+        if not (1.0 <= period <= 86400.0):
+            log.warning("%s: implausible wakeup_period %r, ignored",
+                        room, period)
+            return []
+        ttl = int(min(self.ttl_max_s, max(self.ttl_s, period * self.wake_factor)))
+        if self._room_ttl.get(room) == ttl:
+            return []
+        self._room_ttl[room] = ttl
+        log.info("%s: wake period %.0f s -> freshness window %d s",
+                 room, period, ttl)
+        return [self._pub(room, MAX_AGE, str(ttl))]
 
     @property
     def topics(self) -> list[str]:
-        return sorted(self.by_topic)
+        return sorted(set(self.by_topic) | set(self.wake_topics))
 
 
 def _fmt(v: float) -> str:
@@ -353,7 +439,10 @@ def main() -> None:
     )
     norm = Normaliser(load_sources(cfg),
                       out_prefix=cfg.get("out_prefix", "sensors/room"),
-                      ttl_s=int(cfg.get("ttl_s", 900)))
+                      ttl_s=int(cfg.get("ttl_s", 900)),
+                      wake_topics=cfg.get("wake_topics") or {},
+                      wake_factor=float(cfg.get("wake_factor", 1.5)),
+                      ttl_max_s=int(cfg.get("ttl_max_s", 14400)))
     asyncio.run(run(norm, broker))
 
 

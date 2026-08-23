@@ -33,6 +33,33 @@ out_prefix: sensors/room
 # settle it - revisit this once there is a week of it.
 ttl_s: 900
 
+# --- freshness windows, learned from the devices -----------------------------
+# `ttl_s` above is only the FLOOR now. Each room's real window is derived from
+# what its own device reports as `wakeup_period` in `status/sys`, because the
+# same Shelly H&T model says 600 s on mains and 7200 s on battery - a twelve-
+# fold difference that no single number can serve. The derived value is
+# published on `sensors/room/<room>/max_age_s` for heatctl to adopt.
+#
+# 1.5 covers jitter and NOT a missed wake, deliberately: the period is the
+# device's guarantee, so silence past it means something is wrong and should
+# show as stale. It also turns the mains device's 600 s into exactly the 900 s
+# that was hand-chosen for it, which is a reassuring coincidence rather than a
+# derivation.
+wake_factor: 1.5
+
+# The backstop. A device reporting an absurd period - misconfigured, or a
+# payload we misread - must not be able to talk the plant into believing a
+# measurement for a day. 4 h.
+ttl_max_s: 14400
+
+# Which topic reports each room's wake period. Explicit, like everything else
+# here: `bad` is the device, `badezimmer` is the room, and neither is inferred
+# from the other.
+wake_topics:
+  wohnzimmer: "sensors/shellies/wohnzimmer/status/sys"
+  badezimmer: "sensors/shellies/bad/status/sys"
+  gaestebad: "sensors/shellies/gaestebad/status/sys"
+
 # --- sources ----------------------------------------------------------------
 # Explicit, one entry per topic per field. Rooms are never inferred from a
 # topic segment that happens to look like a room name.
