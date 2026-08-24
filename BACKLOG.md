@@ -1665,6 +1665,23 @@ is not tracking — it is a device note that happens to have a column saying
                 100 ms DHW loop (Milestone 2) fits inside that, which is worth
                 knowing beyond this phase.
 
+        **Prepared 2026-08-24:** `deploy/pfc200/run-modbus-server.sh` — image
+        pinned by digest, on the `plc` network with **502 deliberately not
+        published** (heatctl reaches it by name, so the I/O never returns to
+        the LAN), and it refuses to start if `/dev/kbus0` is still held.
+
+        **The silent failure to watch for.** `_watchdog_maintain` in
+        `backends/modbus_direct.py` returns quietly when the watchdog status
+        register is unreadable — so if `kbusmodbusslave` does not expose it at
+        `0x1000+`, heatctl runs with **no watchdog and logs nothing about it**.
+        The swap-day check is therefore the *presence* of `coupler watchdog
+        armed` or `active` in heatctl's log; absence is the failure signal and
+        nothing alarms on it.
+          - [ ] Consider making that loud rather than quiet — a configured
+                watchdog that cannot be armed is worth a warning, and this is
+                the second time this session that "publishes nothing on
+                failure" has cost an investigation.
+
         Swap day: **source off first, watched to 0 Hz** — Er03 does not
         reliably self-clear (2026-08-20). Then terminals 1–12 plus the 750-600,
         verify the process image against `docs/HARDWARE.md` before trusting it,
