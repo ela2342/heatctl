@@ -1585,19 +1585,40 @@ These were tracked only in that document's status table until 2026-08-21, which
 is not tracking — it is a device note that happens to have a column saying
 "not started".
 
-  - [ ] **Phase C: bench the Modbus watchdog. Gates D.** The 750-352 uses the
-        *Standard* watchdog with a coding mask restricted to FC6+FC16 (D-004),
-        so "watchdog satisfied" means *outputs are being driven* and heatctl
-        needs no separate heartbeat — its per-cycle valve write **is** the
-        heartbeat. The PFC200 offers only `alternative-watchdog`, which D-004
-        calls "exactly backwards": it resets on any telegram, so a controller
-        that is reading fine but failing to write would keep it fed while the
-        outputs went stale. There is an `options` mask (currently 4) that may
-        restore Standard-like semantics. **That is a hypothesis about a name.**
-        Bench it the way the 750-352's trip test was run on 2026-07-26: prove
-        the outputs actually zero when writes stop.
-        Also unresolved: nothing listens on 502 today, because the Modbus
-        server lives in the PLC runtime and no runtime is selected.
+  - [ ] **Phase C: bench the Modbus watchdog. Gates D.** Three questions, not
+        one, and only the second was written down before 2026-08-24.
+
+        **C1 — can the Modbus server run without a CODESYS runtime at all?**
+        `/etc/config-tools/modbus_config` configures it *without* CODESYS,
+        which is the survey's good branch. But nothing listens on 502 and
+        `get_runtime_config` is empty. Those two observations are in tension
+        and D depends on which is right. If the server needs the runtime, D
+        puts the CODESYS toolchain in the control path — the branch the survey
+        hoped to avoid — and that changes D's cost enough to reconsider the
+        ordering.
+
+        **C2 — does `alternative-watchdog` behave like Standard?** The 750-352
+        uses *Standard* with a coding mask restricted to FC6+FC16 (D-004), so
+        "watchdog satisfied" means *outputs are being driven* and heatctl needs
+        no separate heartbeat: its per-cycle valve write **is** the heartbeat.
+        Alternative resets on any telegram, which D-004 calls "exactly
+        backwards" — a controller reading fine but failing to write would keep
+        it fed while the outputs went stale. There is an `options` mask,
+        currently 4, that may restore write-only semantics. **That is a
+        hypothesis about a name.**
+
+        **C3 — which direction does it drive the outputs on trip, and is that
+        configurable here?** This inherits the open contradiction from
+        2026-07-31 (LOGBOOK): the 352 zeroes its outputs and that is *not*
+        configurable, verified twice on hardware, while `docs/DESIGN.md` and
+        `safety.py`'s policy docstring still assert the opposite ("full scale
+        — valves are fail-open by design"). With NC actuators, zero closes.
+        The PFC runs its own program and **neither behaviour comes along for
+        free**, so the swap is the moment to decide which is wanted and make
+        the documents agree with the hardware.
+
+        Bench it the way the 352's trip test was run on 2026-07-26: stop
+        writing, prove the outputs actually move, and record which way.
   - [ ] **Phase D: swap the 750-352 for the PFC200.** Blocked on C. This is the
         one that matters — it takes Modbus off the network entirely, which is
         the standing risk from the 2026-08-08 incident where both Modbus
@@ -1633,6 +1654,48 @@ is not tracking — it is a device note that happens to have a column saying
         from CODESYS, recorded under the CODESYS item below, and the useful
         existence proof that a plain Linux process drives KBUS on this
         hardware with the runtime switched off.
+
+        **What those two grounds do NOT reject is a topology**, and that
+        distinction was nearly lost on 2026-08-24 — owner asked "on what
+        grounds did we reject the kbus-api shape?" and the honest answer was
+        that we rejected *a binary* and *a transport*, not "a process between
+        heatctl and the KBUS". A sibling process on the same box over a unix
+        socket is not a network hop, and Phase E exists to remove the
+        **network** from the I/O path, not all IPC. Note also that the MQTT
+        objection is narrower than it first looks: `docs/MODBUS2MQTT.md` says
+        the bridge was abandoned because the available add-on could not publish
+        raw per-register values, and explicitly that "a future bridge may do
+        this properly". The durable objection to MQTT here is the broker in the
+        critical path and the 100 ms DHW loop, not MQTT as such.
+
+  - [ ] **Phase E removes the outermost failsafe, and nothing yet replaces
+        it.** Not recorded anywhere before 2026-08-24, and it is the hard part
+        of E rather than the SDK.
+
+        CLAUDE.md is explicit: the coupler's Modbus watchdog "is the only
+        failsafe that survives a *bridge* crash — software failsafe logic here
+        is the second layer, not the only one." Remove Modbus and that
+        watchdog goes with it. If heatctl wedges with the outputs at 10 V,
+        nothing zeroes them: the NC actuators close on loss of **power**, not
+        on a hung controller.
+
+        Three candidates, none free:
+
+          * **A watchdog in the DAL/KBUS layer.** Plausible and cheapest if it
+            exists; needs the SDK documentation we do not have.
+          * **A local KBUS supervisor** owning `/dev/kbus0`, implementing the
+            watchdog, and dropping the outputs when its client stops writing.
+            This is **structurally what the 750-352 already does** — heatctl's
+            per-cycle write is the heartbeat today and D-004's mask makes
+            "outputs are being driven" the liveness condition — so it is the
+            most faithful port of the current design rather than a departure
+            from it. Cost: a second process in the I/O path, which must then
+            be as boring and as well-tested as the control core.
+          * **Hardware**: a relay or contactor dropping output power on a
+            heartbeat. The only one that survives everything, and the most
+            work.
+
+        Decide this before E is scheduled, not during it.
 
 ## The PFC200 and its SD card are now single points of failure
 
