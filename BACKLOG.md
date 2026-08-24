@@ -1697,6 +1697,43 @@ is not tracking — it is a device note that happens to have a column saying
 
         Decide this before E is scheduled, not during it.
 
+  - [ ] **Bench work for E, prepared 2026-08-24 — what is left.** The two
+        blockers named above are both gone; what remains is real but bounded.
+
+        **Done and verified:**
+          * `/dev/kbus0` is free with `runtime-version=0`, `codesys3` stops,
+            ~18 % of the core comes back.
+          * heatctl's own container **can reach the DAL** — ctypes recipe in
+            `docs/PFC200.md`, `adi_GetApplicationInterface()` returns a live
+            pointer from stock `python:3.12-slim`. No compiler, no SDK on the
+            device, no new dependency, no base-image change.
+          * The ABI is documented: WAGO's ADI-DAL manual, `adi_functions.txt`
+            and a working `kbusdemo.c` in `github.com/WAGO/pfc-howtos`.
+
+        **Left:**
+          * [ ] Get `dal/adi_application_interface.h` and transcribe the vtable
+                into ctypes `Structure`s. Do not guess offsets - it is a
+                function pointer in the I/O path.
+          * [ ] Prove `Init/ScanDevices/GetDeviceList` finds a device named
+                `libpackbus`. **This works with an EMPTY rail**, so it can be
+                done before the swap and before any terminals exist.
+          * [ ] Decide the failsafe (the item above). Still the hard one.
+          * [ ] Read/write process data — needs terminals, so after the swap.
+          * [ ] Check whether `SCHED_FIFO` priority 40 matters, as WAGO's demo
+                does it. Untested from Python.
+
+  - [ ] **`WAGO/pfc-modbus-server` — makes Phase D much cheaper than the
+        CODESYS route, and is worth a look before committing to E-first.**
+        Vendor-published Docker image serving Modbus TCP off the KBUS with the
+        runtime OFF. Costs: `--privileged`, D-Bus socket, a closed 24 KB
+        binary (vendor, but last pushed 2022), a **750-362** register map that
+        must be checked against our 352 offsets, a documented "if the kbus
+        would not init, toggle the runtime" bootstrap, and dependence on the
+        physical RUN/STOP switch. Detail in `docs/PFC200.md`.
+        Worth testing on the bench precisely because heatctl would need only
+        an address change — if the 362 mapping matches, D becomes an
+        afternoon.
+
 ## The PFC200 and its SD card are now single points of failure
 
 What the resilience design (→ LOGBOOK § *Resilience: depend on as little as
