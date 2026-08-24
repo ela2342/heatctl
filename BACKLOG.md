@@ -31,7 +31,7 @@ blocking something else, cheap, or a known defect in the safety path.
 |---|---|---|
 | 1 | **The capacity loop's raise path has no rate term** | A proven defect with a measured trace and a fix sketch. It is what put the supply 1.0 K under the condensation limit on 2026-08-21. |
 | 2 | **A cleared safety override is never published** | Two lines of code. Until then `heatctl/override/global` is a permanent false alarm after any transient, and silent when a real override clears. |
-| 3 | **Phase C: bench the PFC200's Modbus watchdog** | Gates Phase D, which is the whole point of the migration — it is what stops Modbus crossing the network. |
+| 3 | **Bench `pfc-modbus-server`, then swap the coupler (D)** | The swap stops Modbus crossing the network and lets the manifold wiring be finished. Going via Modbus-on-the-box keeps the coupler watchdog, so the failsafe question defers to E. |
 | 4 | ~~CODESYS owns `/dev/kbus0`~~ — **done 2026-08-24** | `runtime-version=0` freed the node and returned its ~18 % of the core. Left off; WBM still works. |
 | 5 | **One coupled Kalman filter for the slab estimate** | `auto_mode` is off because the estimate follows the control action. Nothing else re-enables automatic mode selection. |
 | 6 | **`supply_k_per_hz` has POOR provenance by its own comment** | The entire capacity descent rate is computed from it, and 2026-08-21 put it nearer 0.04 than the configured 0.074. Wants one controlled step test. |
@@ -1623,13 +1623,40 @@ is not tracking — it is a device note that happens to have a column saying
 
         Bench it the way the 352's trip test was run on 2026-07-26: stop
         writing, prove the outputs actually move, and record which way.
-  - [ ] **Phase D: swap the 750-352 for the PFC200.** Blocked on C. This is the
-        one that matters — it takes Modbus off the network entirely, which is
-        the standing risk from the 2026-08-08 incident where both Modbus
-        endpoints were lost together to what looked like a switching loop.
-        Follow the cutover procedure in `docs/PFC200.md`: **the source goes off
-        first**, or the compressor trips Er03 into a closed loop, as it did on
-        2026-08-20.
+  - [ ] **Phase D — the swap, with `pfc-modbus-server` on the box. NEXT.**
+        Takes Modbus off the network, which is the standing risk from
+        2026-08-08, and lets the manifold wiring be finished and the cabinet
+        closed. The wiring is identical for D and E; only the protocol above it
+        changes later.
+
+        **Why D rather than straight to E** (owner, 2026-08-24): native KBUS
+        removes the coupler watchdog, which is the only failsafe surviving a
+        dead heatctl, and nothing replaces it yet. Modbus-on-the-box keeps that
+        watchdog, so the swap happens now and the failsafe question travels
+        with E where it belongs. That is what makes D a useful step rather than
+        a detour.
+
+        **Gating checks, both doable on an EMPTY rail before anything moves:**
+          - [ ] **Does `kbusmodbusslave` implement the coupler watchdog at
+                `0x1000+`?** The single most important question. If it does
+                not, D loses the failsafe too and its whole rationale with it.
+          - [ ] **Do our register offsets survive the 362 emulation?** It
+                emulates a **750-362**; ours is a **352**.
+                `docs/HARDWARE.md` says input regs 12–27, holding 12–27. Same
+                family, probably the same rules — not good enough for the thing
+                the plant stands on with the cabinet open.
+          - [ ] Confirm the image starts, serves 502, and **survives a
+                reboot**. WAGO's own README documents a "toggle the runtime if
+                the KBUS will not init" bootstrap; find out whether that bites
+                on this firmware before relying on it at 2 a.m.
+
+        Swap day: **source off first, watched to 0 Hz** — Er03 does not
+        reliably self-clear (2026-08-20). Then terminals 1–12 plus the 750-600,
+        verify the process image against `docs/HARDWARE.md` before trusting it,
+        repoint `HEATCTL_MODBUS_HOST`, and run the watchdog trip test —
+        which also settles the open 2026-07-31 direction contradiction.
+        Rollback is physical: the 352 goes back on the rail. Keep it
+        configured, on the shelf, until E is done.
   - [ ] **Phase E: native KBUS backend, retiring Modbus from the control
         path.** `/dev/kbus0` and the WAGO DAL libraries are present, so a Linux
         process can reach the process image with no Modbus server and no
@@ -1678,8 +1705,10 @@ is not tracking — it is a device note that happens to have a column saying
         critical path and the 100 ms DHW loop, not MQTT as such.
 
   - [ ] **Phase E removes the outermost failsafe, and nothing yet replaces
-        it.** Not recorded anywhere before 2026-08-24, and it is the hard part
-        of E rather than the SDK.
+        it.** The hard part of E, and **deliberately deferred to when E is
+        implemented** (owner, 2026-08-24) — going via D keeps the coupler
+        watchdog, so this does not block the swap. Do not start E without
+        answering it.
 
         CLAUDE.md is explicit: the coupler's Modbus watchdog "is the only
         failsafe that survives a *bridge* crash — software failsafe logic here
