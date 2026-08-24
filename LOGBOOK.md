@@ -4591,3 +4591,116 @@ target side, and Schlafzimmer's unclamped 7.59 °C target made this worse.
 - **Anything a controller moves cannot measure that controller.** Spread
   (D-030) and now the slab estimate. Ask what the actuator touches before
   building a decision on a signal.
+
+## 2026-08-24 — the KBUS route opens up, and two of my conclusions were wrong
+
+A day of investigation prompted by owner deciding to go for the swap and
+wanting the bench work prepared. No spare terminals, so the question was how
+much of Phase E is provable with an empty rail. Answer: almost all of it.
+
+### Phase C1, and the conclusion I got wrong twice in one morning
+
+`modbus_config get tcp enabled` returns **true** on port **502**, and nothing
+has ever listened there. Starting CODESYS3 (`config_runtime -w
+runtime-version=1`) brought up port **11740** — its gateway — but not 502, with
+`get_codesys_application_info -j` returning `{}`. No `modbus` daemon, no init
+script, no binary. What exists is `/usr/lib/dal/libmbs.so`.
+
+So the Modbus server is an **ADI device an application instantiates**, and
+`modbus_config` configures something that does not exist until one does. From
+that I concluded Phase D needs a CODESYS program — a second toolchain in the
+plant's I/O path, for thirty years.
+
+**Wrong within the hour.** WAGO publish `github.com/WAGO/pfc-modbus-server`: a
+Docker image wrapping a `kbusmodbusslave` daemon that serves Modbus TCP
+straight off the KBUS, and whose own `setup_environment.sh` sets
+`runtime-version=0`. It runs with CODESYS **off**. The evidence I had was
+sound; the inference from "no listener without CODESYS" to "therefore requires
+CODESYS" was not — I had ruled out a daemon on this box without asking whether
+the vendor shipped one elsewhere.
+
+Its costs are real and recorded in `docs/PFC200.md`: `--privileged`, the D-Bus
+socket, a closed 24 KB vendor binary last pushed 2022, a **750-362** register
+map against our 352, a "toggle the runtime if the KBUS will not init"
+bootstrap, and dependence on the physical RUN/STOP switch.
+
+### The runtime getter lies, which explains a four-day-old contradiction
+
+The 2026-08-19 survey recorded `get_runtime_config` empty and concluded no
+runtime was running. On 2026-08-21 `codesys3` was running and holding
+`/dev/kbus0`. Both were accurate: **the getter returns empty even while
+codesys3 runs** — watched directly today, with 11740 open and the getter still
+silent. It reports a configured selection, not what is live. Check the process
+table.
+
+### `runtime-version=0` frees the bus, verified
+
+`fuser /dev/kbus0` → FREE, `codesys3` gone, **~18 % of the single core back**,
+and the WBM still answers on 443 — nothing that matters depended on it. Left
+off, since that is what Phase E wants anyway. Note this box offers only `0 1`
+(None / CODESYS3); the `pfc-kbus-api` script's `runtime-version=3` is
+e!Runtime and would have failed here.
+
+### Is `/dev/kbus0` proprietary? (owner asked)
+
+Split answer. The **driver** is char major 246, **built into a GPL kernel**
+(6.6.94-rt56-w05.08.02), so its source is obtainable — the device interface is
+knowable rather than reverse-engineered. The **protocol above it** looks
+closed: `libpackbus.so` is 146 KB against `libdal`'s 18 KB and exports
+`GetCnfFromRail` and `GFD_GetModuleIdentNumber`, so terminal enumeration and
+process-image layout are in userspace, over a driver that is a transport
+(`SPI_Open`, `SCPU_gpio_open`, "Failed ioctl to SPI device" — an SPI-attached
+Infineon KBUS master). `/dev/ttyKbus` is a red herring: a symlink to
+`/dev/ttyO5`, a plain UART.
+
+Mitigating that: WAGO publish `libpackbus`'s **headers** in the G2 SDK
+(`libpackbus.tgz` → `usr/include/{libpackbus,rail-info,kbus-tcm,scpu-*}.h`),
+and our rail is fixed and already documented in `docs/HARDWARE.md`. The general
+enumeration case may simply not be needed.
+
+### The ABI is documented after all
+
+`libdal.so` exports exactly one symbol, `adi_GetApplicationInterface`, and is a
+thin loader over `liblibloader`. Everything else is a **vtable**, so `nm` shows
+nothing useful — which is why this looked like a blocker. But
+`github.com/WAGO/pfc-howtos` carries the ADI-DAL manual as a PDF,
+`adi_functions.txt`, and a working `kbusdemo.c`. The sequence is
+`Init → ScanDevices → GetDeviceList` (find `DeviceName == "libpackbus"`)
+`→ OpenDevice → SetApplicationState(RUNNING)`, then per cycle
+`CallDeviceSpecificFunction("libpackbus_Push")` and Read/Write of the process
+image. WAGO's demo runs that loop at `SCHED_FIFO` priority 40.
+
+### heatctl's own container can drive it — the result that matters
+
+Nobody had asked whether a Debian container can load PTXdist-built vendor
+libraries. It can:
+
+```
+preloaded libffi.so.8, libglib-2.0.so.0, liblibloader.so.0
+loaded libdal
+adi_GetApplicationInterface() -> 0xb6564154
+/dev/kbus0 present: True
+```
+
+from stock `python:3.12-slim`, with `--device /dev/kbus0`, `/usr/lib` at
+`/hostlib` and `/usr/lib/dal` at its own path. No compiler, no SDK on the
+device, no new dependency, no base-image change.
+
+**The first attempt failed instructively.** Setting `LD_LIBRARY_PATH=/hostlib`
+made the container's own Python bind to the host's glibc:
+`/hostlib/libc.so.6: version GLIBC_2.38 not found (required by
+libpython3.12.so)`. Host is **2.35**, container **2.41**, and only that
+direction works — an old library on a new glibc, never the reverse. So preload
+the host's dependencies by absolute path with `RTLD_GLOBAL`, satisfying
+`libdal`'s `DT_NEEDED` from inside the namespace, and leave the search path
+alone.
+
+### What this leaves
+
+The vtable still has to be transcribed into ctypes from the real header — a
+wrong offset is memory corruption behind a function pointer in the I/O path,
+not an exception. `ScanDevices` finding `libpackbus` works on an **empty rail**
+and can therefore be proven before the swap. Reading and writing process data
+needs terminals. And the failsafe — what zeroes the outputs when heatctl
+wedges, once the Modbus watchdog is gone — is untouched and remains the only
+part of E that is not mechanical.

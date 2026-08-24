@@ -32,7 +32,7 @@ blocking something else, cheap, or a known defect in the safety path.
 | 1 | **The capacity loop's raise path has no rate term** | A proven defect with a measured trace and a fix sketch. It is what put the supply 1.0 K under the condensation limit on 2026-08-21. |
 | 2 | **A cleared safety override is never published** | Two lines of code. Until then `heatctl/override/global` is a permanent false alarm after any transient, and silent when a real override clears. |
 | 3 | **Phase C: bench the PFC200's Modbus watchdog** | Gates Phase D, which is the whole point of the migration — it is what stops Modbus crossing the network. |
-| 4 | **CODESYS owns `/dev/kbus0`** | Blocks Phase E outright, and reclaiming its ~18 % would roughly pay for everything else running on that core. |
+| 4 | ~~CODESYS owns `/dev/kbus0`~~ — **done 2026-08-24** | `runtime-version=0` freed the node and returned its ~18 % of the core. Left off; WBM still works. |
 | 5 | **One coupled Kalman filter for the slab estimate** | `auto_mode` is off because the estimate follows the control action. Nothing else re-enables automatic mode selection. |
 | 6 | **`supply_k_per_hz` has POOR provenance by its own comment** | The entire capacity descent rate is computed from it, and 2026-08-21 put it nearer 0.04 than the configured 0.074. Wants one controlled step test. |
 | 7 | **`dew_point_margin_c: 1.0` is unsized** | The only buffer in the condensation defence, and it has never been derived. D-039 says there is no safe amount of condensation. |
@@ -1588,14 +1588,18 @@ is not tracking — it is a device note that happens to have a column saying
   - [ ] **Phase C: bench the Modbus watchdog. Gates D.** Three questions, not
         one, and only the second was written down before 2026-08-24.
 
-        **C1 — can the Modbus server run without a CODESYS runtime at all?**
-        `/etc/config-tools/modbus_config` configures it *without* CODESYS,
-        which is the survey's good branch. But nothing listens on 502 and
-        `get_runtime_config` is empty. Those two observations are in tension
-        and D depends on which is right. If the server needs the runtime, D
-        puts the CODESYS toolchain in the control path — the branch the survey
-        hoped to avoid — and that changes D's cost enough to reconsider the
-        ordering.
+        **C1 — ANSWERED 2026-08-24, and it dissolved most of Phase C.** The
+        stock Modbus server is an **ADI device** (`/usr/lib/dal/libmbs.so`),
+        not a daemon: `modbus_config` sets parameters for something that does
+        not exist until an application instantiates it. There is no `modbus`
+        init script and no modbus binary on the box, and starting CODESYS3
+        brought up its gateway on 11740 but never 502, with no application
+        loaded.
+        **But that application need not be CODESYS.** WAGO publish
+        `pfc-modbus-server`, whose own setup script sets `runtime-version=0` —
+        so D can have a Modbus server with the runtime off. The remaining C
+        questions apply to *that* server, not to a CODESYS program, and they
+        only matter if D is taken. See the item below.
 
         **C2 — does `alternative-watchdog` behave like Standard?** The 750-352
         uses *Standard* with a coding mask restricted to FC6+FC16 (D-004), so
@@ -1630,9 +1634,14 @@ is not tracking — it is a device note that happens to have a column saying
         path.** `/dev/kbus0` and the WAGO DAL libraries are present, so a Linux
         process can reach the process image with no Modbus server and no
         CODESYS — that is what the `IOBackend` ABC exists for. Two blockers:
-        **CODESYS currently holds the device node** (see below), and there are
-        **no SDK headers on the device**, so this needs WAGO's SDK or a
-        documented ABI. The better destination, not the next step.
+        ~~**CODESYS currently holds the device node**, and there are **no SDK
+        headers on the device**, so this needs WAGO's SDK or a documented
+        ABI.~~ **BOTH RESOLVED 2026-08-24.** The node is free with
+        `runtime-version=0`. The ABI is documented: WAGO's ADI-DAL manual,
+        `adi_functions.txt` and a working `kbusdemo.c` in
+        `github.com/WAGO/pfc-howtos`, plus the `libpackbus` headers in the G2
+        SDK. And heatctl's own container can reach the DAL - verified, see
+        `docs/PFC200.md`. What is left is in the bench-work item below.
 
         **`jessejamescox/pfc-kbus-api` — evaluated 2026-08-22 and REJECTED as
         the I/O path, but it settled the CODESYS question.** Owner raised it.
@@ -1878,10 +1887,11 @@ Three separate problems in one process, and none of them was known:
    the outputs today, "I do not trust a situation of two masters writing to
    the same bus" (owner, on the heat pump) applies here by the same argument.
 
-  - [ ] Establish what, if anything, depends on it — WBM pages, the web
-        visualisation, anything that might be part of how the device is
-        administered. Attended, with the plant quiescent, and confirm
-        `/dev/kbus0` is then free.
+  - [x] **DONE 2026-08-24.** Turned off with `config_runtime -w
+        runtime-version=0`, attended, plant quiescent. `/dev/kbus0` reports
+        FREE, `codesys3` is gone, its ~18 % of the core is back, and **the WBM
+        still answers** - nothing that matters depended on it. Left off, since
+        that is also what Phase E needs.
   - [ ] **Use WAGO's own `config_runtime`, not the init script.** Owner found
         the procedure in `jessejamescox/pfc-kbus-api` (2026-08-22), and it is
         supported and reversible rather than a hack:
@@ -1896,12 +1906,15 @@ Three separate problems in one process, and none of them was known:
         Consistent with the 2026-08-19 survey, where `get_possible_runtimes`
         offered `0 1`. Prefer this to disabling `S98_pp_codesys3`: it is what
         the vendor's tooling is for, and it has a documented undo.
-  - [ ] **Resolve a contradiction before relying on either observation.** The
-        2026-08-19 survey recorded `get_runtime_config` empty and **no CODESYS
-        process running**; on 2026-08-21 `codesys3` was running as PID 2366 and
-        `fuser /dev/kbus0` returned it. Both cannot be right. Either the
-        runtime starts on some trigger the survey missed, or the survey was
-        wrong. It matters because Phase E's blocker is stated in terms of it.
+  - [x] **EXPLAINED 2026-08-24 — the survey was misled by its own tool.**
+        It recorded `get_runtime_config` empty and concluded no runtime was
+        running; on 2026-08-21 `codesys3` was running and holding the node.
+        Both observations were accurate: **`get_runtime_config` returns empty
+        even while `codesys3` is running.** Confirmed directly - starting
+        CODESYS3 brought up its gateway on port 11740 while the getter still
+        reported nothing. So the getter reports a *configured selection*, not
+        what is live, and "no runtime selected" never meant "no runtime
+        running". Check the process table, not the config tool.
 
 ### The capacity loop's raise path has no rate term, and that is what breaches the limit
 
