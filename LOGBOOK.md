@@ -4746,3 +4746,95 @@ modbus_delay_ms 0  kbus_priority 60         kbus_cycle_ms 50
 
 **`kbus_cycle_ms 50`** matters beyond this phase: the 100 ms DHW fast loop in
 Milestone 2 has to fit inside the I/O cycle, and 50 ms does.
+
+## 2026-08-24 evening — the coupler swap, and a controller that vanished
+
+Owner replaced the 750-352 with the PFC200 in one go rather than staging it.
+My staged suggestion — move one 750-559, verify, then the rest — was naive
+about the physical reality: the terminals are a bus stack, so pulling one from
+position 7–10 means splitting the rail and re-terminating anyway. More
+connector handling, not less.
+
+Compressor off first and watched to zero, per the Er03 rule: `compressor_freq
+0.0`, `compressor_current 0.0` — not merely commanded off — and `spread -0.1`,
+so the loop had settled. Pump left running.
+
+### The controller disappeared, and everything looked fine
+
+After the swap and reboot, `docker ps` showed nothing but the container I had
+just created. heatctl, the broker, the normaliser and the journal were gone.
+
+`/media/sdcard/docker-root` was a **244 MB tmpfs**, not the 119 GB card. The
+card had mounted at boot (`EXT4-fs (mmcblk0p1): recovery complete`, 16.3 s) and
+then vanished from the bus with **no I/O error logged** — the signature of a
+clean physical removal rather than a failure. It had been knocked out of its
+slot while the unit was handled.
+
+Reseated and rebooted, and it still did not come back — but for a different
+reason, which is the one worth remembering:
+
+```
+/dev/mmcblk0p1 on /media/bf594745-2a89-4f55-bf1d-0d9c5a571e85 type ext4
+```
+
+**WAGO's hotplug automounter claimed it and mounted it by UUID**, not at the
+`/etc/fstab` entry for `/media/sdcard`. Docker's `data-root` points at
+`/media/sdcard/docker-root`, found the tmpfs fallback there, and started with
+an empty root. Nothing errored. `docker ps` was simply empty and the plant had
+no controller.
+
+Everything survived — configs, the `*.env` files carrying broker credentials
+generated on the device and stored nowhere else, and all four journal files
+including a live 253 MB one. Recovery was stop dockerd, unmount the tmpfs,
+unmount the UUID path, `mount /media/sdcard`, start dockerd; all four
+containers came back on their restart policy.
+
+This is the *"the PFC and its SD card are single points of failure"* backlog
+item arriving for real, and it landed on the half I had flagged as
+unrecoverable. It is also the worst shape of failure: **healthy-looking, and
+the plant simply has no controller.**
+
+### Then the swap turned out to be fine
+
+The 750-362 emulation reproduces the 352's register map exactly. The server
+enumerates the rail at start and logs it, so this is read rather than inferred:
+four 750-463 at bit offset 192/256/320/384 → **input registers 12–27**, four
+750-559 at the same offsets on the output side → **holding 12–27**. Precisely
+what `docs/HARDWARE.md` records. heatctl needed nothing but
+`HEATCTL_MODBUS_HOST=modbus-server`.
+
+A trap on the way: **`docker restart` does not re-read `--env-file`.** Env is
+baked in at `docker run`, so the first attempt cheerfully kept dialling the
+dead `192.168.178.52`. Recreating via `run-heatctl.sh` fixed it.
+
+heatctl now reads all twelve circuits and the three manifold ambients,
+22.8–23.5 °C, with no Modbus errors.
+
+**The watchdog is live**, which was the entire premise of going D-first:
+`coupler watchdog armed: 10.0 s, mask 0x8020`, registers holding 100 and
+32800, and 13 629 `Watchdog trigger` lines server-side. It accepts our
+Standard-style write-only mask and heatctl's per-cycle valve write feeds it
+exactly as on the 352.
+
+Three caveats, all recorded in BACKLOG: `WD_STATUS 0x1006` always reads 0 so
+heatctl re-arms every cycle; holding registers **alias to the input image** on
+read, which kills `valve_readback`; and the expiry *direction* still cannot be
+observed and needs a physical test.
+
+### And production found a bug I shipped two days ago
+
+`override/global` still read `stale_data` after the swap, with no failsafe
+since start-up. `run()` calls `_publish_no_overrides()` immediately after
+*scheduling* the MQTT connect, so it fires before the plane is connected and
+the publish is dropped.
+
+The test passed because it called the method directly against a fake that
+always records. It asserted that the method publishes — not that the effect
+survives start-up ordering. The lesson is narrower than "test more": a test
+that exercises a method in isolation cannot see a defect that lives in *when*
+it is called.
+
+Fix recorded: make `override/global` level-triggered like the per-valve topics.
+That reverses a choice I made deliberately on churn grounds two days ago, and
+the churn argument was wrong — retained state must not depend on a single
+publish landing.

@@ -31,7 +31,7 @@ blocking something else, cheap, or a known defect in the safety path.
 |---|---|---|
 | 1 | **The capacity loop's raise path has no rate term** | A proven defect with a measured trace and a fix sketch. It is what put the supply 1.0 K under the condensation limit on 2026-08-21. |
 | 2 | **A cleared safety override is never published** | Two lines of code. Until then `heatctl/override/global` is a permanent false alarm after any transient, and silent when a real override clears. |
-| 3 | **Bench `pfc-modbus-server`, then swap the coupler (D)** | The swap stops Modbus crossing the network and lets the manifold wiring be finished. Going via Modbus-on-the-box keeps the coupler watchdog, so the failsafe question defers to E. |
+| 3 | **The SD card does not come back by itself after reinsertion** | WAGO's automounter claims it by UUID, Docker starts on a tmpfs, and the plant has no controller while everything reports healthy. Bit us during the swap; recovery is in `docs/PFC200.md`. |
 | 4 | ~~CODESYS owns `/dev/kbus0`~~ — **done 2026-08-24** | `runtime-version=0` freed the node and returned its ~18 % of the core. Left off; WBM still works. |
 | 5 | **One coupled Kalman filter for the slab estimate** | `auto_mode` is off because the estimate follows the control action. Nothing else re-enables automatic mode selection. |
 | 6 | **`supply_k_per_hz` has POOR provenance by its own comment** | The entire capacity descent rate is computed from it, and 2026-08-21 put it nearer 0.04 than the configured 0.074. Wants one controlled step test. |
@@ -1573,6 +1573,54 @@ This is a request to *size* it, not to pad it. The owner reverted a 1.0 → 2.0
 raise on 2026-08-10 because the incident had a complete explanation without it,
 and that reasoning stands: a defensive change needs its own evidence. What is
 missing is the arithmetic, not the margin.
+
+## What the coupler swap exposed, 2026-08-24
+
+Phase D is **done** — terminals on the PFC, Modbus off the network, register
+map identical, watchdog live. Detail in `docs/PFC200.md`. Four things it left.
+
+  - [ ] **The SD card does not survive being reinserted.** WAGO's hotplug
+        automounter mounts it by UUID at `/media/<uuid>`, not the `fstab` entry
+        for `/media/sdcard`, so Docker's `data-root` finds the 244 MB tmpfs
+        fallback and comes up with **no containers**. Silently: `docker ps` is
+        empty, everything else looks fine, and the plant has no controller.
+        Recovery is documented, but it should not need one. Options: make the
+        fstab mount win, mask the automounter for this UUID, or make dockerd
+        refuse to start when `data-root` is a tmpfs. The last is the most
+        honest — a controller that starts with no configuration should fail
+        loudly, not serve.
+  - [ ] **`WD_STATUS` at `0x1006` always reads 0** on the 362 emulation, even
+        while the watchdog is being triggered thousands of times a minute. So
+        heatctl never sees ACTIVE, re-arms every cycle, and logs "armed" every
+        second. Harmless in effect; wrong in model, and it means we have no
+        working readback of watchdog state. Find where the 362 reports it, or
+        teach `modbus_direct` that a successful arm plus continued triggering
+        is the evidence.
+  - [ ] **Holding registers alias to the input image on read.** Reading
+        holding 12–15 returns PT1000 values while heatctl commands 0 there, so
+        `valve_readback` is meaningless and auto-disables. That check is gone
+        until Phase E — worth deciding whether to reimplement it another way,
+        because it is the only thing that ever proved a command reached an
+        output.
+  - [ ] **The watchdog's expiry DIRECTION is still unknown**, and cannot be
+        read through the registers because of the aliasing. Needs a physical
+        observation: stop writes, watch whether a valve moves. Last open piece
+        of C3 and of the 2026-07-31 contradiction.
+
+  - [ ] **`override/global`'s start-up clear is silently dropped** — my bug,
+        shipped 2026-08-22, found in production 2026-08-24. `run()` calls
+        `_publish_no_overrides()` immediately after *scheduling* the MQTT
+        connect, so it fires before the plane is connected and
+        `ControlPlane.publish` drops it. The topic still read `stale_data` from
+        before the swap despite no failsafe since start-up.
+        The test passed because it called the method directly against a fake
+        that always records — it asserted the method publishes, not that the
+        effect survives start-up ordering.
+        **Fix: make `override/global` level-triggered like the per-valve
+        topics** — publish `reason or "none"` every cycle. That reverses the
+        edge-triggered choice I made deliberately on churn grounds, and the
+        churn argument was wrong: retained state must not depend on a single
+        publish landing. One extra topic per second against ~100 already.
 
 ## PFC200 migration — phases C, D and E
 
