@@ -314,7 +314,25 @@ class Normaliser:
         self._room_ttl[room] = ttl
         log.info("%s: wake period %.0f s -> freshness window %d s",
                  room, period, ttl)
-        return [self._pub(room, MAX_AGE, str(ttl))]
+        # RETAINED WITHOUT AN EXPIRY, and it is the one topic here that may be.
+        #
+        # The first version gave it the room's own window and published it only
+        # when it changed. Both are individually reasonable and together they
+        # are a bug: the value expired at its own deadline and was never
+        # re-published, so within three hours every window vanished from the
+        # broker and the next heatctl restart silently reverted every room to
+        # the 900 s default. Caught 2026-08-23 by noticing that Wohnzimmer -
+        # the shortest window, so the first to go - was missing from the
+        # adoptions after a restart while the other two were present.
+        #
+        # A window is a PROPERTY OF THE DEVICE, not a measurement of the room.
+        # It does not go stale when the room stops being sampled; it stops
+        # being true only when the device is reconfigured, and then the device
+        # tells us and this overwrites it. Nothing is at risk if it outlives
+        # the device: the measurements it governs expire on their own, so the
+        # room falls back regardless, and heatctl clamps whatever it reads.
+        return [Publication(f"{self.out_prefix}/{room}/{MAX_AGE}", str(ttl),
+                            expiry_s=None)]
 
     @property
     def topics(self) -> list[str]:

@@ -81,7 +81,7 @@ class TestEveryMeasurementCarriesADeadline:
     retaining at all: heatctl times from arrival, so a retained value with no
     expiry arrives looking zero seconds old however old it is."""
 
-    def test_all_publications_are_retained_and_expiring(self):
+    def test_all_MEASUREMENTS_are_retained_and_expiring(self):
         n = norm()
         pubs = (n.on_message(T, '{"tC":23.6}', wall=1.0, mono=1.0)
                 + n.on_message(T, '{"tC":23.7}', wall=400.0, mono=400.0)
@@ -313,6 +313,48 @@ class TestConfigFailsAtStartUpOrNotAtAll:
             f"not a subset of the control core's: {set(mine) - set(core)}")
         for name, line in mine.items():
             assert line == core[name], f"{name}: {line!r} vs {core[name]!r}"
+
+
+class TestTheWindowOutlivesTheMeasurements:
+    """The derived window is the ONE topic here published without an expiry,
+    and that is deliberate.
+
+    The first version gave it the room's own window and published it only on
+    change - so it expired at its own deadline, was never re-published, and
+    within three hours every window had vanished from the broker. The next
+    heatctl restart would then silently revert every room to the default,
+    which is the whole feature undoing itself. Found 2026-08-23 by noticing
+    Wohnzimmer missing from the post-restart adoptions: shortest window, first
+    to go.
+
+    A window is a property of the DEVICE, not a measurement of the room. It
+    does not decay with time, and if it outlives the device nothing is at risk
+    - the measurements it governs expire on their own.
+    """
+
+    SYS = "sensors/shellies/wohnzimmer/status/sys"
+
+    def test_the_window_has_no_deadline(self):
+        n = Normaliser(shelly(), "sensors/room", TTL,
+                       wake_topics={"wohnzimmer": self.SYS})
+        assert feed(n, self.SYS, '{"wakeup_period":7200}')["max_age_s"] \
+            .expiry_s is None
+
+    def test_but_it_is_still_retained(self):
+        """A restart must find it. That is the entire point."""
+        n = Normaliser(shelly(), "sensors/room", TTL,
+                       wake_topics={"wohnzimmer": self.SYS})
+        assert feed(n, self.SYS, '{"wakeup_period":7200}')["max_age_s"].retain
+
+    def test_the_measurements_it_governs_still_expire(self):
+        """The carve-out is for the window only. A measurement without a
+        deadline is the fossil this module exists to prevent."""
+        n = Normaliser(shelly(), "sensors/room", TTL,
+                       wake_topics={"wohnzimmer": self.SYS})
+        n.on_message(self.SYS, '{"wakeup_period":7200}', wall=0.0, mono=0.0)
+        out = feed(n, T, '{"tC":23.6}')
+        assert out["temperature_c"].expiry_s == 10800
+        assert out["sample_ts"].expiry_s == 10800
 
 
 class TestTheWindowIsLearnedFromTheDevice:

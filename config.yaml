@@ -284,10 +284,27 @@ rooms:
     setpoint_c: 23.5
     floor_area_m2: 3.43   # WC/Du
     circuits: [{sensor: rl_hk01, valve: valve_hk01}]
-    # Legacy wall unit, bridged to MQTT by an HA automation (interim - that
-    # data only exists over HTTP on the old Mini Server). Target is a Shelly
-    # H&T publishing natively, e.g. shellies/shellyht-XXXX/sensor/temperature
-    room_temp_topic: "roomtemp/gaestebad"
+    # DIRECT TO THE PLANT BROKER since 2026-08-23, through the normaliser
+    # (D-047). This was the LAST Controme Raumcontroller in the control path,
+    # and the chain behind it was: wall unit -> HTTP -> the old Mini Server ->
+    # an HA REST sensor -> an HA automation -> MQTT -> the bridge -> here.
+    # Seven hops and three machines for one room temperature, every one of
+    # them able to fail silently. It is now one sleeping device and a broker.
+    #
+    # THE CADENCE OBJECTION IS GONE, which is what made this safe to do: the
+    # Controme path published ~620 times a day against this device's ~12, and
+    # under the old fixed 900 s window that would have been a downgrade. The
+    # window is now derived from the device itself (7200 s period -> 10800 s),
+    # so a two-hourly reading is treated as what it is rather than as stale.
+    #
+    # `roomtemp/gaestebad` keeps arriving over the bridge and the journal keeps
+    # recording it, so the two paths can still be compared retrospectively -
+    # heatctl simply no longer depends on the old one.
+    room_temp_topic: "sensors/room/gaestebad/temperature_c"
+    # New: the Controme unit reported humidity too, but heatctl never consumed
+    # it. Gästebad is the second wet room, so this is a third contributor to
+    # the local dew point and the second one that showers.
+    room_humidity_topic: "sensors/room/gaestebad/humidity_pct"
   - name: wohnzimmer
     label: "Wohnzimmer"
     setpoint_c: 22.0
