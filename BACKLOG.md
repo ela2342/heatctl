@@ -1636,19 +1636,34 @@ is not tracking — it is a device note that happens to have a column saying
         with E where it belongs. That is what makes D a useful step rather than
         a detour.
 
-        **Gating checks, both doable on an EMPTY rail before anything moves:**
-          - [ ] **Does `kbusmodbusslave` implement the coupler watchdog at
-                `0x1000+`?** The single most important question. If it does
-                not, D loses the failsafe too and its whole rationale with it.
+        **Gating checks. NOT doable on an empty rail** — tested 2026-08-24:
+        the server starts and listens, but the KBUS will not init
+        (`KBUS ERROR: 3`) and every register returns exception 6, busy. So
+        these move to swap day, staged: **one 750-559 first**, verify, then the
+        rest. Costs four valve channels on a plant that is down anyway.
+          - [x] **Does `kbusmodbusslave` implement a watchdog?** **YES**, on
+                the binary's own strings: `Watchdog Init/start/stop/trigger`,
+                `ModbusWatchdog Expired Task`, `Watchdog Timeout: %ums`. D
+                keeps a coupler-style watchdog, which is the premise the plan
+                rests on.
+          - [ ] **What does it do on expiry?** No string reveals the
+                direction, so this is a bench observation. Settles C3 and the
+                open 2026-07-31 contradiction at the same time.
           - [ ] **Do our register offsets survive the 362 emulation?** It
                 emulates a **750-362**; ours is a **352**.
                 `docs/HARDWARE.md` says input regs 12–27, holding 12–27. Same
                 family, probably the same rules — not good enough for the thing
                 the plant stands on with the cabinet open.
-          - [ ] Confirm the image starts, serves 502, and **survives a
-                reboot**. WAGO's own README documents a "toggle the runtime if
-                the KBUS will not init" bootstrap; find out whether that bites
-                on this firmware before relying on it at 2 a.m.
+          - [x] **Starts and serves 502 with the runtime off** — confirmed
+                2026-08-24. Degrades correctly too: with no KBUS it answers
+                *busy* rather than hanging or serving stale zeros, so heatctl
+                would fail its reads and hit the stale-data failsafe.
+          - [ ] **Does it survive a reboot?** WAGO's README documents a
+                "toggle the runtime if the KBUS will not init" bootstrap. Find
+                out before relying on it at 2 a.m.
+          - [ ] Note `kbus_cycle_ms 50` in its shipped config — the planned
+                100 ms DHW loop (Milestone 2) fits inside that, which is worth
+                knowing beyond this phase.
 
         Swap day: **source off first, watched to 0 Hz** — Er03 does not
         reliably self-clear (2026-08-20). Then terminals 1–12 plus the 750-600,

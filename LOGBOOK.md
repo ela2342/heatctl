@@ -4704,3 +4704,45 @@ and can therefore be proven before the swap. Reading and writing process data
 needs terminals. And the failsafe — what zeroes the outputs when heatctl
 wedges, once the Modbus watchdog is gone — is untouched and remains the only
 part of E that is not mechanical.
+
+### Same day, later — testing `pfc-modbus-server`, and a claim of mine that failed
+
+Pulled `wagoautomation/pfc-modbus-server` (55 MB, four years old) and ran it
+against the bare PFC, runtime off.
+
+**It starts and listens on 502.** It also cannot initialise an empty rail:
+`!!!! KBUS ERROR: 3`, repeating, and it does not hold `/dev/kbus0`. Every
+register read — holding, input, process image, `0x1000` — returns Modbus
+**exception 6, slave device busy**. Notably *not* exception 2, which would have
+told us a register does not exist.
+
+**So the claim I had written hours earlier — that both gating checks are
+answerable on an empty rail — is false.** The emulated register map cannot be
+probed without terminals. Corrected in `docs/PFC200.md`, and the checks moved
+onto swap day, staged: one 750-559 first, verify against it, then the rest.
+Four valve channels for the duration, on a plant that is down anyway, and the
+352 an arm's length away.
+
+Two things did come out of it without hardware.
+
+**The watchdog exists**, from the binary's own strings: `Watchdog Init`,
+`Watchdog start` / `stop` / `trigger`, `ModbusWatchdog Expired Task`, `MODBUS
+Watchdog expired`, `Watchdog Timeout: %ums`. That is the premise the whole
+D-first plan rests on, so it is a relief to have it on evidence rather than
+hope. **What it does on expiry is still unknown** — nothing in the strings
+suggests a direction, so that is a bench observation.
+
+**Its failure mode is the right one.** With no KBUS it answers *busy* rather
+than hanging or serving stale zeros, so `modbus_direct` would fail its reads
+and heatctl would fall into the stale-data failsafe. Same shape as the
+intermittent 750-352 faults of 2026-08-22, which heatctl already handles.
+
+Shipped config, worth recording:
+
+```
+modbus_port 502    max_tcp_connections 5    operation_mode 0 (async)
+modbus_delay_ms 0  kbus_priority 60         kbus_cycle_ms 50
+```
+
+**`kbus_cycle_ms 50`** matters beyond this phase: the 100 ms DHW fast loop in
+Milestone 2 has to fit inside the I/O cycle, and 50 ms does.
