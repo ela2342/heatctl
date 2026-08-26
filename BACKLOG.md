@@ -1574,6 +1574,42 @@ raise on 2026-08-10 because the incident had a complete explanation without it,
 and that reasoning stands: a defensive change needs its own evidence. What is
 missing is the arithmetic, not the margin.
 
+## Elternschlafzimmer 19.0 -> 22.0, and what it did not fix
+
+Changed 2026-08-26. Owner: *"it does not make sense to hunt an unreachable
+value."* 19.0 was never once reached; D-046 put the slab target it implies at
+**7.78 degC**, nine kelvin below the dew point, which D-039 forbids outright.
+The room was permanently 4-6 K "above setpoint" as a matter of arithmetic.
+
+**The harm was to the MEAN, not to the room.** The water-setpoint trim runs on
+average room deviation, so a permanent −5 K contributor is a standing bias
+saying "the house is warm". Measured 2026-08-25 at 7.9 degC outdoor: three of
+seven rooms genuinely below setpoint, the energy model asking for **33.9 kWh**,
+and the trim reading `house -0.87 K` and holding the water at its minimum. The
+compressor did not start once overnight — verified from the journal, zero
+samples above 0 Hz.
+
+The change moved the mean by 3.0 K / 7 rooms = **0.43 K**, measured live:
+`-2.43 -> -2.03`. That is the whole effect, and on a warm morning it changes
+no behaviour.
+
+  - [ ] **It does not fix the underlying problem, which is that one scalar
+        decides for seven rooms.** A mean cannot represent a house where rooms
+        disagree in sign, and it will mask a cold room behind a warm one again
+        — just less violently. The real answer is the energy shadow gaining
+        authority (item above), because it already works per-room against slab
+        targets and already disagreed correctly on 2026-08-25.
+  - [ ] **Watch whether 22.0 becomes the new clamped room in winter.** The east
+        window is why 19.0 was impossible in cooling; in heating the direction
+        reverses and 22.0 should be reachable, but that is an expectation, not
+        a measurement. If it clamps, the same distortion returns with a
+        smaller coefficient.
+  - [ ] **A room whose target is unreachable should say so.** `slab_target` is
+        published and `excess_wh` is clamped (D-046), but nothing announces
+        "this room's setpoint cannot be served" — which is why this sat
+        distorting the average for weeks without anyone noticing. Third
+        instance this month of the same shape: absence published, not implied.
+
 ## What the coupler swap exposed, 2026-08-24
 
 Phase D is **done** — terminals on the PFC, Modbus off the network, register

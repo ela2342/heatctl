@@ -4838,3 +4838,35 @@ Fix recorded: make `override/global` level-triggered like the per-valve topics.
 That reverses a choice I made deliberately on churn grounds two days ago, and
 the churn argument was wrong — retained state must not depend on a single
 publish landing.
+
+## 2026-08-25 / 26 — a cold night the plant sat out, and the mean that let it
+
+**2026-08-25, 07:00.** Outdoor **7.9 degC**, down from 15-17. The house had lost
+about 1 K overnight, three of seven rooms were below setpoint, and the energy
+model wanted **33.9 kWh**. The compressor had not started once — zero samples
+above 0 Hz in the journal for the whole night.
+
+Not a fault. `water_sp/reason: house -0.87 K` — the trim runs on the *mean*
+room deviation, and the mean said warm. Elternschlafzimmer, sitting 4.3 K above
+a 19.0 setpoint it has never reached, was on its own holding that mean
+negative and masking Gästebad, Badezimmer and Kinderzimmer Natalie, all
+genuinely under.
+
+Kinderzimmer Natalie had also dropped **2.8 K** against about 1 K everywhere
+else, which looked like an open window rather than a control problem.
+
+**2026-08-26, 07:36.** Outdoor back to **15.6**. Every room risen; Natalie
+21.3 -> **25.3**, confirming the window. Actionable demand collapsed 33.9 kWh
+-> 2.5, and the trim now reports *"water is more aggressive than needed
+(already at the limit)"* — it wants to go down and cannot.
+
+So the house rode out the cold night on its own thermal mass and not heating
+was, in outcome, correct. Worth recording honestly: the concern I raised on the
+25th was real in mechanism and overtaken by weather in practice. The structural
+fault — one scalar deciding for seven rooms that disagree in sign — is
+unchanged, and it did not bite this time.
+
+Owner changed Elternschlafzimmer 19.0 -> 22.0 the same morning: *"it does not
+make sense to hunt an unreachable value."* Measured effect on the mean,
+immediately: `-2.43 -> -2.03`, exactly the predicted 3.0 K / 7 rooms. It
+removes the worst distortion; it does not remove the averaging.

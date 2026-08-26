@@ -391,7 +391,28 @@ rooms:
   # rl_hk05 = Badezimmer Handtuchhalter, reserve, not installed
   - name: schlafzimmer
     label: "Elternschlafzimmer"
-    setpoint_c: 19.0
+    # 19.0 -> 22.0 on 2026-08-26. Owner: "it does not make sense to hunt an
+    # unreachable value."
+    #
+    # It was never once reached. The room has an east window and its own
+    # analysis (D-046) put the slab target needed for 19.0 at 7.78 degC - nine
+    # kelvin below the dew point, which D-039 forbids absolutely. So the plant
+    # could not legally serve it, and clamping it was the reason the clamp
+    # exists.
+    #
+    # THE HARM WAS NOT TO THIS ROOM, IT WAS TO THE MEAN. The water-setpoint
+    # trim runs on the average room deviation, and a room permanently 4-6 K
+    # "above setpoint" is a standing negative bias on that average. Measured
+    # 2026-08-25, 7.9 degC outside: three rooms genuinely below setpoint, the
+    # energy model asking for 33.9 kWh, and the trim reading `house -0.87 K`
+    # and holding the water at its minimum - because this one number said the
+    # house was warm. An unreachable setpoint does not just fail locally, it
+    # silently biases every decision taken on the average.
+    #
+    # 22.0 matches the other bedrooms and is reachable. It does NOT fix the
+    # underlying mean-versus-per-room problem - see BACKLOG, "give the energy
+    # shadow authority" - it removes the worst distortion feeding it.
+    setpoint_c: 22.0
     floor_area_m2: 11.08   # Schlafen
     circuits: [{sensor: rl_hk07, valve: valve_hk07}]
     room_temp_topic: "roomtemp/schlafzimmer"   # Shelly H&T G3, via the HA bridge
