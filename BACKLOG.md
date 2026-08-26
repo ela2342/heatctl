@@ -1600,6 +1600,50 @@ will look like a modelling problem when it is an interface one.
         repeatedly under-commit through a multi-day cold snap. 48-72 h is the
         physics-shaped horizon.
 
+## Identify `ua_sa` — the excitation experiment, in COOLING
+
+The parameter every scheduling argument rests on, and the only one in the
+model marked GUESSED. Reading it out of existing data was tried on 2026-08-26
+and **failed for lack of excitation** — the slab-air gradient sat at a constant
+−1 K all night and the slab moved 0.2 K in eleven hours, two quantisation
+steps. See LOGBOOK; do not re-run that analysis expecting a different answer.
+
+**Run it in cooling, not heating.** Both directions excite the same coupling,
+but cooling is the comfortable one in late summer and the condensation limit
+gives a generous gradient anyway.
+
+  - [ ] **The protocol.**
+        1. Evening: `mode cooling`, let the plant pull the slab down to near
+           the condensation floor. With a dew point around 16.8 the supply
+           limit is ~17.8, so a slab near 18 against rooms at ~24.5 is a
+           **6.5 K gradient — 65 quantisation steps** instead of two.
+        2. Around 22:00, `mode off`. Compressor to 0, **pump left running** so
+           the circuit returns stay valid and `rl_gate` keeps trusting them —
+           without flow the slab measurement dies exactly when it is needed.
+        3. Observe to 08:00. Ten hours spans 2–8 time constants across the
+           whole 1.2–6.2 h uncertainty, so the experiment is informative
+           wherever the true value sits.
+        4. Fit the decay of (slab − air) per room. τ gives `ua_sa` directly:
+           τ = 1 / (`ua_sa` · (1/C_slab + 1/C_air)), with C_slab 8691 and
+           C_air 6600 Wh/K.
+
+  - [ ] **Control the disturbances, all of which are known and named.**
+        * **Windows shut** — Wohnzimmer is ventilated by day and Natalie's was
+          open the night of 24→25; both would read as spurious coupling.
+        * **Fit primarily on the UNOCCUPIED rooms** — Kinderzimmer Naomi and
+          Arbeitszimmer. Both kids sleep in Natalie's room and both adults in
+          Schlafzimmer, ~100–150 W each room, which visibly holds their air up.
+        * Use the occupied pair as a **cross-check that also estimates the
+          internal gain** rather than discarding them.
+        * Skip Badezimmer and Gästebad: battery sensors at 7200 s cannot
+          resolve a 1–6 h time constant. That is the observability argument
+          for wiring them, not just a comfort one.
+        * Night, so solar is zero — which is the whole reason for the timing.
+
+  - [ ] **Analyse off the box.** Pulling the journal files to the workstation
+        costs the PFC a read; `zcat | grep | awk` over a 45 MB archive on it
+        drove load average to 6.4 on a single core running a 1 s control loop.
+
 ## The eigenvalues are COMPUTED, not identified — and one of them is soft
 
 Recorded 2026-08-26 after the owner questioned the provenance. The answer is

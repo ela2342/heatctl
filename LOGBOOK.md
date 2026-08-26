@@ -4870,3 +4870,50 @@ Owner changed Elternschlafzimmer 19.0 -> 22.0 the same morning: *"it does not
 make sense to hunt an unreachable value."* Measured effect on the mean,
 immediately: `-2.43 -> -2.03`, exactly the predicted 3.0 K / 7 rooms. It
 removes the worst distortion; it does not remove the averaging.
+
+## 2026-08-26 — trying to identify `ua_sa` from three quiet days, and failing
+
+Owner questioned the eigenvalue provenance; the fast mode inherits `ua_sa`
+entirely and `ua_sa` is a guess, so I proposed reading it out of the journal
+rather than running an experiment. The compressor had not started in three
+days, which looked like a free-decay identification we had got for nothing.
+
+It is not, and the reason is worth recording so nobody repeats the analysis.
+
+**Window:** 2026-08-25 21:00 → 08:00 CEST, owner's choice — no solar, windows
+shut, and clear of Natalie's open window (that was the night of the 24th→25th;
+she was warm and rising through this one). Compressor confirmed at 0 Hz for all
+4167 samples.
+
+**The slab–air gradient does not decay. It sits at about −1 K all night:**
+
+```
+room               0.0h   2.2h   4.4h   6.6h   8.8h  11.0h
+kind_naomi        -1.10  -1.30  -1.10  -1.00  -0.90  -1.10
+arbeitszimmer     -1.40  -1.20  -1.20  -1.10  -1.10  -1.00
+kind_natalie      -2.30  -2.20  -2.10  -2.00  -1.80  -1.50   (2 kids)
+schlafzimmer      -0.80  -1.30  -1.60  -1.50  -1.40  -1.30   (2 adults)
+```
+
+Negative means the slab is COLDER than the room — the slab is a sink, not a
+source, which is the summer situation. And the slab itself moved **0.2 K in
+eleven hours**: two quantisation steps at the PT1000's 0.1 K resolution.
+Outdoor fell only 2.7 K.
+
+**So the limiting factor is not the confounds we were guarding against — it is
+that there was no excitation.** "Compressor off for three days" does not mean
+free decay; it means the house finished decaying before the window began. A
+time constant cannot be fitted to a signal that does not move.
+
+**The data itself is good, and the disturbances the owner named are visible in
+it.** Natalie's room carries the largest gradient in the house and Schlafzimmer's
+doubles in the first two hours — people going to bed, ~150 W into 11 m².
+Wohnzimmer *rose* 0.8 K overnight against falling outdoor, the day's heat still
+leaving that large slab. That is a usable internal-gain signal; it is simply
+not the parameter we were after.
+
+**Also learned, the hard way:** running the extraction on the PFC drove load
+average to 6.4 on a single core carrying a 1 s control loop. `zcat | grep | awk`
+over 45 MB of archive is not a thing to do on the plant controller, `nice` or
+not. Pull the files and analyse on the workstation — the transfer costs the box
+far less than the decompression.
