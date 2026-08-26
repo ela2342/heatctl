@@ -1574,6 +1574,53 @@ raise on 2026-08-10 because the incident had a complete explanation without it,
 and that reasoning stands: a defensive change needs its own evidence. What is
 missing is the arithmetic, not the margin.
 
+## The layer 1 / layer 2 interface is a hard ceiling on any plan
+
+Owner has raised this repeatedly and it has never been written down as an
+item; recorded 2026-08-26 so it stops living in conversation. Not being
+tackled now.
+
+**Layer 2 can emit one scalar.** A setpoint delta, now. That is the whole
+actuation surface. Even with a perfect model and a perfect forecast it can say
+*"shift the setpoint by X"* and nothing else — it cannot express *"coast until
+03:00, then charge to 26 for four hours"*, which is exactly the shape of answer
+the planning question demands. **A plan that cannot reach the plant is not a
+plan**, and this ceiling binds after the model earns trust, not before, so it
+will look like a modelling problem when it is an interface one.
+
+  - [ ] **Decide what layer 2 is allowed to say.** A time-stamped setpoint
+        trajectory is the obvious candidate, and it interacts with the command
+        TTL work already gated in front of layer 2: a *schedule* needs an
+        expiry per element, not one for the message. Safety clamps every
+        element regardless (D-030's rule stands — layer 1 clamps, layer 2
+        proposes).
+  - [ ] **Set the horizon from the slow eigenvalue, not from a calendar day.**
+        The house integrates outdoor over ~55 h. A 24 h window is shorter than
+        the dominant mode, so it answers "can we coast tonight?" but would
+        repeatedly under-commit through a multi-day cold snap. 48-72 h is the
+        physics-shaped horizon.
+
+## The eigenvalues are COMPUTED, not identified — and one of them is soft
+
+Recorded 2026-08-26 after the owner questioned the provenance. The answer is
+already in LOGBOOK's provenance table; this makes it findable, because the
+numbers get quoted as though measured (including by me).
+
+| | value | how good |
+|---|---|---|
+| slow mode | **55.2 h** | **robust** — 52.8-58.9 h across a sixfold range of `ua_sa`, and rests on `ua_ao` 267 W/K which is measured and corroborated twice |
+| fast mode | **3.4 h** | **soft** — directly proportional to `ua_sa`, which is GUESSED. 6.2 h at 500 W/K, 1.2 h at 3000 |
+
+Neither is an eigenvalue identified from data; both are eigenvalues of a model.
+Any argument resting on the **fast** mode — notably "overnight charging
+discharges into the morning, not the afternoon" — carries a factor-of-five
+error bar and should be quoted with it.
+
+  - [ ] **`ua_sa` is the first thing the filter should identify**, because
+        every scheduling decision hangs off the fast mode and the fast mode is
+        the guess. Until then, planning arithmetic about *when* stored energy
+        arrives is not trustworthy.
+
 ## Elternschlafzimmer 19.0 -> 22.0, and what it did not fix
 
 Changed 2026-08-26. Owner: *"it does not make sense to hunt an unreachable
