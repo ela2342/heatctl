@@ -94,9 +94,16 @@ room has, and the one control depends on.
 cannot be right for two devices with a twelve-fold difference in cadence.** The
 same Shelly H&T model reports `wakeup_period: 600` on mains and **7200 on
 battery**, and the manual's guarantee is "when a reading changes by more than
-the configured delta, or every wake period at the latest". Measured 2026-08-23,
-that is a metronome - five consecutive wakes exactly 7200 s apart, to the
-second, each carrying a full status.
+the configured delta, or every wake period at the latest".
+
+**Both halves of that guarantee are live, and the first one dominates.** The
+five consecutive wakes measured exactly 7200 s apart on 2026-08-23 were a quiet
+night, not the device's nature: the delta is 0.5 K, and any room crossing it
+reports at once. Gästebad has run at `interval_s` 124 and Bad at 420. So the
+wake period is a CEILING on silence, not a cadence - which is exactly what a
+freshness window needs, and is why this mechanism is unaffected by the
+correction. What it does affect is any claim about how much data a battery
+room yields; see BACKLOG.
 
 Against the hand-set 900 s, a battery room was therefore stale 88 % of the
 time. That is how the bathroom - the room that actually drives the house dew
@@ -281,9 +288,13 @@ class Normaliser:
         THE DEVICE KNOWS ITS OWN CADENCE AND WE DO NOT. A Shelly H&T on mains
         reports `wakeup_period: 600`; the same model on battery reports 7200,
         and the manual's guarantee is "when a reading changes by more than the
-        configured delta, or every wake period at the latest". Measured
-        2026-08-23, that is a metronome: five consecutive wakes exactly 7200 s
-        apart, to the second, each carrying a full status.
+        configured delta, or every wake period at the latest".
+
+        WE WANT THE SECOND HALF OF THAT GUARANTEE, and only it. The 0.5 K delta
+        fires far more often in practice (Gästebad has run at 124 s), but it is
+        conditional on the room moving, so nothing may be built on it. The wake
+        period is the unconditional bound on silence, which is precisely the
+        question `max_age_s` asks.
 
         So one global `room_temp_max_age_s` cannot be right for both. At 900 s
         a battery room is stale 88 % of the time - which is how the bathroom,

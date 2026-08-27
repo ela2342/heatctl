@@ -1647,9 +1647,16 @@ gives a generous gradient anyway.
           Schlafzimmer, ~100–150 W each room, which visibly holds their air up.
         * Use the occupied pair as a **cross-check that also estimates the
           internal gain** rather than discarding them.
-        * Skip Badezimmer and Gästebad: battery sensors at 7200 s cannot
-          resolve a 1–6 h time constant. That is the observability argument
-          for wiring them, not just a comfort one.
+        * Skip Badezimmer and Gästebad — but **not for the reason first
+          written here.** "Battery sensors at 7200 s" was wrong (see the
+          correction below): they also report on a 0.5 K change, and have run
+          at `interval_s` 124 and 420. The cadence is adequate. The
+          RESOLUTION is not: a 0.5 K deadband on a signal whose informative
+          excursion is 1–2 K leaves a handful of levels, and the samples are
+          event-triggered, so they arrive when the room is moving and stop
+          when it settles. That biases a naive fit towards the fast dynamics
+          and hides the slow ones — the opposite of what identifying a 55 h
+          eigenvalue needs. Still the observability argument for wiring them.
         * Night, so solar is zero — which is the whole reason for the timing.
 
   - [ ] **Analyse off the box.** Pulling the journal files to the workstation
@@ -2031,6 +2038,18 @@ Measured 2026-08-22, when Bad and Gästebad came onto the plant broker:
 | Bad | battery, 6.27 V | **7200 s** | 8 | 112 min |
 | Gästebad | battery, 6.29 V | **7200 s** | 7 | 93 min |
 
+**CORRECTED 2026-08-27** (owner). `wakeup_period` is the guaranteed CEILING on
+silence, not the cadence: the device also reports whenever the reading moves
+more than its 0.5 K delta. The evidence was already in this table and was
+misread — eight reports in five hours is not a 7200 s metronome, it is the
+delta firing between wakes. Measured today: Gästebad `interval_s` 124, Bad 420.
+
+The freshness window is unaffected, because the window has to assume the
+worst case and the worst case is what `wakeup_period` states. What IS affected
+is every claim about how much DATA a battery room yields — see the
+identification item above, where the objection survives but changes from
+cadence to resolution.
+
 `room_temp_max_age_s` is 900 s and the normaliser's `ttl_s` matches it, so a
 battery room spends most of the day on `house_avg`. Bad was migrated anyway -
 its Controme sensor was dead, so an hourly real reading strictly beats a
@@ -2088,8 +2107,10 @@ publishes it.
 old-world source (Controme REST via the HA bridge) and a new-world one (Shelly
 on the PLC broker), which is how the normaliser was proven on a room with a
 working fallback. Two rooms have followed since. Note that the battery pair
-did NOT inherit the pilot's conditions — they wake every 7200 s, not 600, and
-that is what forced the per-device freshness window.
+did NOT inherit the pilot's conditions — their guaranteed wake is 7200 s
+against 600, and that is what forced the per-device freshness window. They
+report far more often than that in practice, on a 0.5 K delta; the window has
+to assume the guarantee, not the practice.
 
 ## Found while operating the plant, 2026-08-19 → 2026-08-21
 
@@ -2421,9 +2442,11 @@ decisions that supersede them. Triaging them is itself a backlog item:
         **Its dependency 1 is now met**: all 7 rooms report air temperature,
         and DESIGN.md 6.1.1 says the 3-state form is identifiable only with
         that. Two caveats the original note could not know: two of those seven
-        arrive every **7200 s** (battery), which cannot resolve a 1–6 h time
-        constant, so wiring them is an observability prerequisite and not a
-        comfort nicety; and the circuit returns are only trusted while a
+        are battery devices whose reports are **quantised to 0.5 K and
+        event-triggered** — adequate in cadence, too coarse in resolution, and
+        biased towards whatever is moving — so wiring them is an observability
+        prerequisite and not a comfort nicety (the owner also notes the
+        firmware's 0.5 K delta could be dropped to 0.1 K as an alternative); and the circuit returns are only trusted while a
         circuit flows, so **slab states go unobserved exactly when the plant is
         idle** — which is most of a mild shoulder season.  
         → LOGBOOK § *2026-08-08 — VL/RL calibration: three methods, three confounds, on*

@@ -38,7 +38,9 @@ ttl_s: 900
 # `ttl_s` above is only the FLOOR now. Each room's real window is derived from
 # what its own device reports as `wakeup_period` in `status/sys`, because the
 # same Shelly H&T model says 600 s on mains and 7200 s on battery - a twelve-
-# fold difference that no single number can serve. The derived value is
+# fold difference that no single number can serve. Note this is the WORST CASE
+# and not the cadence: the 0.5 K delta reports sooner whenever the room moves.
+# The window has to assume the worst case, so that is what is used. The derived value is
 # published on `sensors/room/<room>/max_age_s` for heatctl to adopt.
 #
 # 1.5 covers jitter and NOT a missed wake, deliberately: the period is the
@@ -89,8 +91,9 @@ sources:
   # `badezimmer` - mapped explicitly here, never inferred.
   #
   # ON BATTERY, so `wakeup_period` is 7200 s against Wohnzimmer's 600 s on
-  # mains. Measured 2026-08-22: eight temperature reports in five hours, worst
-  # gap 112 min. That is far outside `ttl_s`, so this room will show as expired
+  # mains - the guaranteed worst case, not the observed rate. Measured
+  # 2026-08-22: eight temperature reports in five hours, worst gap 112 min,
+  # which is the 0.5 K delta firing between wakes. That is far outside `ttl_s`, so this room will show as expired
   # much of the day - accepted deliberately, because its Controme sensor is
   # DEAD (two messages in eleven hours) and an hourly real reading beats a
   # permanent house average. The humidity matters more than the temperature:
