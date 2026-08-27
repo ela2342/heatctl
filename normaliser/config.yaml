@@ -21,16 +21,17 @@ out_prefix: sensors/room
 # HOW LONG A VALUE MAY BE SERVED TO A NEW SUBSCRIBER, in seconds, enforced by
 # the broker as an MQTT 5 message-expiry interval.
 #
-# KEEP THIS EQUAL TO heatctl's `control.room_temp_max_age_s`. They are the same
-# judgement - "older than this is not a measurement any more" - and the plant
-# should not hold two opinions about it. The two enforce it independently and
-# that is deliberate (see the module docstring); they should not also disagree
+# THIS IS NOW ONLY THE FLOOR, and only what a room gets before its device has
+# reported a `wakeup_period` - see the learned windows below, which supersede
+# it per room. It stays equal to heatctl's `control.room_temp_max_age_s`
+# because the two are the same judgement ("older than this is not a measurement
+# any more") and the plant should not hold two opinions about it; they enforce
+# it independently on purpose (see the module docstring), but must not disagree
 # about the number.
 #
-# Sized against the wake period, which is not yet settled: the device reports
-# `wakeup_period: 600` and 360 s was observed between connects. 900 tolerates
-# one missed wake at 360 and none at 600. `interval_s` below is published to
-# settle it - revisit this once there is a week of it.
+# 900 s came from the mains device: `wakeup_period: 600`, 360 s observed
+# between connects. The learned window reproduces it exactly at wake_factor
+# 1.5, which is why it is still a sensible floor rather than an accident.
 ttl_s: 900
 
 # --- freshness windows, learned from the devices -----------------------------
@@ -104,12 +105,13 @@ sources:
     field: humidity_pct
     json_key: rh
 
-  # GAESTEBAD. Normalised so the data is flowing and comparable, but heatctl
-  # is NOT repointed at it yet: the Controme path still publishes ~620 times a
-  # day against this device's ~7, so switching now would trade a two-minute
-  # cadence for a two-hour one. See BACKLOG - the choice is to mains-power it,
-  # or to size the freshness window per room from the device's own
-  # `wakeup_period`.
+  # GAESTEBAD. heatctl now reads this (2026-08-22), and with it the LAST room
+  # that reached the plant through a Controme Raumcontroller. The objection
+  # recorded here before - that the Controme path published ~620 times a day
+  # against this device's ~7, so switching traded a two-minute cadence for a
+  # two-hour one - was answered by the second option in it: the freshness
+  # window is now sized per room from the device's own `wakeup_period`, so the
+  # slow cadence is declared rather than mistaken for staleness.
   - topic: "sensors/shellies/gaestebad/status/temperature:0"
     room: gaestebad
     field: temperature_c

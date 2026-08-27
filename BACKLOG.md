@@ -30,13 +30,13 @@ blocking something else, cheap, or a known defect in the safety path.
 | | what | why now |
 |---|---|---|
 | 1 | **The capacity loop's raise path has no rate term** | A proven defect with a measured trace and a fix sketch. It is what put the supply 1.0 K under the condensation limit on 2026-08-21. |
-| 2 | **A cleared safety override is never published** | Two lines of code. Until then `heatctl/override/global` is a permanent false alarm after any transient, and silent when a real override clears. |
+| 2 | **The override clear is dropped at start-up** | Mostly fixed 2026-08-22 — per-valve and the transition clear both work. What remains: `_publish_no_overrides()` fires before the MQTT plane connects, so a restart inherits the previous process's retained value. Live example: `override/global` has read `stale_data` since the coupler swap. |
 | 3 | **The SD card does not come back by itself after reinsertion** | WAGO's automounter claims it by UUID, Docker starts on a tmpfs, and the plant has no controller while everything reports healthy. Bit us during the swap; recovery is in `docs/PFC200.md`. |
-| 4 | ~~CODESYS owns `/dev/kbus0`~~ — **done 2026-08-24** | `runtime-version=0` freed the node and returned its ~18 % of the core. Left off; WBM still works. |
+| 4 | **Identify `ua_sa` — the overnight cooling experiment** | The one parameter marked GUESSED, and every scheduling argument rests on the fast mode it determines. Reading it from existing data failed for lack of excitation; the protocol is written and needs one mild night. |
 | 5 | **One coupled Kalman filter for the slab estimate** | `auto_mode` is off because the estimate follows the control action. Nothing else re-enables automatic mode selection. |
 | 6 | **`supply_k_per_hz` has POOR provenance by its own comment** | The entire capacity descent rate is computed from it, and 2026-08-21 put it nearer 0.04 than the configured 0.074. Wants one controlled step test. |
 | 7 | **`dew_point_margin_c: 1.0` is unsized** | The only buffer in the condensation defence, and it has never been derived. D-039 says there is no safe amount of condensation. |
-| 8 | **Six rooms still to migrate onto Shellys** | Retires the Controme dependency room by room, and each one improves the local dew point. |
+| 8 | **Four rooms still to migrate onto the plant broker** | Badezimmer and Gästebad done; **the plant's Controme dependency is gone** — Gästebad was the last room heatctl read through a Raumcontroller. The Mini Server itself still runs for HA/HomeKit. What remains is three HA-bridged Shellys and Arbeitszimmer on rtl_433, so this now buys independence from the HA bridge, plus humidity from three more rooms for the dew point. |
 
 Longer-running and deliberately not on that list: the heat meter, the DHW
 station fast loop, and layer 2 gaining command authority. They are big, none of
@@ -73,21 +73,27 @@ them is blocked, and none of them is urgent.
       - [ ] Bridged via three HA automations onto `roomtemp/<room>` (option A).
             **This raises the layer-1 independence debt from two rooms to
             five** (`docs/HA_INTEGRATION.md` risk 2). Deliberate for today.
-- [ ] **Shellys publish to the broker directly** (option B), retiring the
-      three bridge automations. One-time RPC config; devices are at
+- [~] **Shellys publish to the broker directly** (option B), retiring the
+      three bridge automations. **PARTLY DONE:** Wohnzimmer 2026-08-19,
+      Badezimmer and Gästebad 2026-08-22, all three through the normaliser
+      (D-047). Three bridged rooms remain — see the Now table, item 8. One-time RPC config; devices are at
       `192.168.178.64/.67/.68`, Gen3, mains-powered, so MQTT runs alongside the
       HTTP/WS the Shelly integration uses and HA keeps battery/firmware.
       Blocked on: an MQTT user, since the Mosquitto App refuses anonymous
       clients. Buys: HA out of the path for three rooms.
-- [ ] **Broker on the PFC200**, then **heatctl itself on the PFC200** (owner's
-      target, 2026-08-06: "the whole control on the PFC200, an MQTT there, and
+- [x] ~~**Broker on the PFC200**, then **heatctl itself on the PFC200**~~ —
+      **DONE 2026-08-20**, and the dependency chain shortened once more on
+      2026-08-24 when the terminals moved onto the PFC's own KBUS. Five
+      containers on the box; the HA App is stopped and kept as the rollback.
+      The paragraph below is the reasoning as it stood, and its "today" is
+      2026-08-06. (owner's target, 2026-08-06: "the whole control on the PFC200, an MQTT there, and
       the Shellys connecting directly to this MQTT"). Today the 750-352 is a
       dumb Modbus TCP coupler and the control core runs on the HA host, so it
       depends on a general-purpose machine it does not own. The PLC200 is
       already on order (see the M-Bus line in the shopping list, which is
       likewise blocked on it). Note the steps are not equal: option B removes
       an automation someone can switch off by accident; this removes a whole
-      machine from the dependency chain.
+      machine from the dependency chain.)
 
 #### Opened 2026-08-06 by the energy-demand work
 
@@ -1470,10 +1476,13 @@ the order they would most likely be worked:
       only in commit messages, which is the least discoverable place in a
       project whose premise is thirty years. The rationale is well recorded at
       the point of use; the *history* is not.
-- [ ] **Retire the legacy Controme Mini Server.** Everything still depending on
-      it is now enumerated in docs/HA_INTEGRATION.md: the two wall units' room
-      temperature and dial setpoints, the humidity feeding the dew-point
-      reference, and the HomeKit bridge. Shelly H&T per room is the long-term
+- [~] **Retire the legacy Controme Mini Server. THE PLANT SIDE IS DONE**
+      (2026-08-22): heatctl reads no Controme-sourced value any more — both
+      wall-unit rooms moved to Shellys, and the dew-point reference is computed
+      locally from the plant's own humidity (D-045). What is left is house
+      infrastructure, not control: the HomeKit bridge, and the dial setpoints,
+      which nothing consumes since D-043 gave each room one setpoint in
+      `config.yaml`. Everything is enumerated in docs/HA_INTEGRATION.md. Shelly H&T per room is the long-term
       replacement (Milestone 1).
 
 
@@ -1501,9 +1510,12 @@ the order they would most likely be worked:
 
 ## Milestone 4 - production
 
-- [ ] Dedicated machine next to the coupler: mosquitto + modbus2mqtt +
-      heatctl via systemd (deploy/systemd/), hardware watchdog,
-      consider read-only rootfs
+- [x] ~~Dedicated machine next to the coupler: mosquitto + modbus2mqtt +
+      heatctl~~ — **DONE 2026-08-20/24, differently.** The machine IS the
+      coupler now (PFC200), the units are Docker containers rather than
+      systemd, and modbus2mqtt never happened — `modbus_direct` did (D-024).
+      Still open from this line: **hardware watchdog** and **read-only
+      rootfs**, both untouched.
 - [ ] HA: bridge HA-Mosquitto <-> dedicated broker; remove WAGO-related
       HA modbus config and automations
 - [ ] Backup: config.yaml + sqlite; vendor dependencies (pip download)
@@ -1760,8 +1772,14 @@ These were tracked only in that document's status table until 2026-08-21, which
 is not tracking — it is a device note that happens to have a column saying
 "not started".
 
-  - [ ] **Phase C: bench the Modbus watchdog. Gates D.** Three questions, not
-        one, and only the second was written down before 2026-08-24.
+  - [x] **Phase C — CLOSED 2026-08-24/25, dissolved into the swap.** C1 was
+        answered (below) and C2/C3 could not be tested on an empty rail, so
+        they moved onto swap day and were answered there: the watchdog accepts
+        our `0x8020` mask and is retriggered by heatctl's writes. Only the
+        expiry DIRECTION remains, and it now lives with the swap findings
+        below. Kept for the reasoning.
+        Three questions, not one, and only the second was written down before
+        2026-08-24.
 
         **C1 — ANSWERED 2026-08-24, and it dissolved most of Phase C.** The
         stock Modbus server is an **ADI device** (`/usr/lib/dal/libmbs.so`),
@@ -1798,7 +1816,10 @@ is not tracking — it is a device note that happens to have a column saying
 
         Bench it the way the 352's trip test was run on 2026-07-26: stop
         writing, prove the outputs actually move, and record which way.
-  - [ ] **Phase D — the swap, with `pfc-modbus-server` on the box. NEXT.**
+  - [x] **Phase D — DONE 2026-08-24.** Terminals on the PFC, Modbus off the
+        network, register map identical to the 352's, watchdog live. Results
+        and the three caveats are in `docs/PFC200.md` and in "What the coupler
+        swap exposed" above. Kept for the reasoning that chose this route.
         Takes Modbus off the network, which is the standing risk from
         2026-08-08, and lets the manifold wiring be finished and the cabinet
         closed. The wiring is identical for D and E; only the protocol above it
@@ -2057,15 +2078,18 @@ publishes it.
         tree in HA must use it. `bridge_protocol_version mqttv50` would carry
         the property across; untested, and it changes a working link for every
         bridged topic, so it wants a quiet moment and a quick revert path.
-  - [ ] **Six rooms still to migrate.** Each needs its Shelly pointed at the
+  - [ ] **Four rooms still to migrate** (was six; Badezimmer and Gästebad
+        went 2026-08-22). Each needs its Shelly pointed at the
         plant broker, an entry in `normaliser/config.yaml`, and heatctl's
         `room_temp_topic` repointed — three steps, deliberately separable, so
         raw and normalised can be compared on a live room first.
 
-**Wohnzimmer is the pilot** (owner): it has both an old-world source (Controme
-REST via the HA bridge) and a new-world one (Shelly on the PLC broker), so
-every one of these can be proven against a room that still has a working
-fallback before any other room moves.
+**Wohnzimmer was the pilot** (owner), and it served: it carried both an
+old-world source (Controme REST via the HA bridge) and a new-world one (Shelly
+on the PLC broker), which is how the normaliser was proven on a room with a
+working fallback. Two rooms have followed since. Note that the battery pair
+did NOT inherit the pilot's conditions — they wake every 7200 s, not 600, and
+that is what forced the per-device freshness window.
 
 ## Found while operating the plant, 2026-08-19 → 2026-08-21
 
@@ -2292,7 +2316,11 @@ the plant has changed a great deal since — the heat pump is configured
 differently, the controller has moved machines, and several were written before
 decisions that supersede them. Triaging them is itself a backlog item:
 
-  - [ ] **Re-validate the carried items below, and close what is dead.** Cheaper
+  - [~] **Re-validate the carried items below, and close what is dead.**
+        Progress 2026-08-26: the three "Sleeping sensors" items are closed
+        (all done or superseded), the Network group is annotated now that the
+        coupler is off the LAN, and the coupled-filter item has had its first
+        dependency met. The rest still stand unreviewed. Cheaper
         one theme at a time than in one pass, and each closure should say why.
 
 ### Heat pump registers and the frequency ceiling
@@ -2345,7 +2373,10 @@ decisions that supersede them. Triaging them is itself a backlog item:
 
   - [ ] A lead-time-aware delta is the missing piece  
         → LOGBOOK § *⚠️ THERE IS NO PRE-COOLING SCHEDULE. It is not time-based at all.*
-  - [ ] Validating `ua_sa` would make the fast mode trustworthy  
+  - [ ] Validating `ua_sa` would make the fast mode trustworthy — **see the
+        excitation experiment above**, which supersedes this line with a
+        protocol. Reading it from existing data was tried 2026-08-26 and failed
+        for lack of excitation.  
         → LOGBOOK § *⚠️ THERE IS NO PRE-COOLING SCHEDULE. It is not time-based at all.*
   - [ ] The trim needs a slab-referenced mode for pre-charging  
         → LOGBOOK § *THE OVERNIGHT PRE-CHARGE FAILED. Measured 2026-07-30 morning.*
@@ -2386,7 +2417,15 @@ decisions that supersede them. Triaging them is itself a backlog item:
         → LOGBOOK § *2026-08-08 — VL/RL calibration: three methods, three confounds, on*
   - [ ] Generalise the lesson: alarm on DEGRADED INPUTS, not just bad outputs  
         → LOGBOOK § *2026-08-08 — VL/RL calibration: three methods, three confounds, on*
-  - [ ] ONE coupled Kalman filter over the whole house — owner's design  
+  - [ ] ONE coupled Kalman filter over the whole house — owner's design.
+        **Its dependency 1 is now met**: all 7 rooms report air temperature,
+        and DESIGN.md 6.1.1 says the 3-state form is identifiable only with
+        that. Two caveats the original note could not know: two of those seven
+        arrive every **7200 s** (battery), which cannot resolve a 1–6 h time
+        constant, so wiring them is an observability prerequisite and not a
+        comfort nicety; and the circuit returns are only trusted while a
+        circuit flows, so **slab states go unobserved exactly when the plant is
+        idle** — which is most of a mild shoulder season.  
         → LOGBOOK § *2026-08-08 — VL/RL calibration: three methods, three confounds, on*
   - [ ] `valve_*_actual` is named as if it were valve feedback. It is not  
         → LOGBOOK § *2026-08-08 — VL/RL calibration: three methods, three confounds, on*
@@ -2400,12 +2439,15 @@ decisions that supersede them. Triaging them is itself a backlog item:
 
 ### Sleeping sensors
 
-  - [ ] Size `room_temp_max_age_s` against the wake period  
-        → LOGBOOK § *What that leaves*
-  - [ ] Publish per-room sample age  
-        → LOGBOOK § *What that leaves*
-  - [ ] A normaliser on the PFC  
-        → LOGBOOK § *What that leaves*
+  - [x] ~~Size `room_temp_max_age_s` against the wake period~~ — **SUPERSEDED
+        2026-08-23.** Not sized by hand: each room's window is now **derived
+        from what its own device reports** as `wakeup_period` and published on
+        `sensors/room/<room>/max_age_s`, which heatctl adopts within a clamp.
+        900 s for the mains device, 10800 s for the battery pair.
+  - [x] ~~Publish per-room sample age~~ — **DONE.** `sensors/room/<room>/
+        sample_ts`, and `tools/plant-status.sh rooms` shows age beside every
+        room with its `source`.
+  - [x] ~~A normaliser on the PFC~~ — **DONE 2026-08-20, D-047.**
 
 ### Fan coil and emitter capacity
 
@@ -2424,6 +2466,11 @@ decisions that supersede them. Triaging them is itself a backlog item:
         → LOGBOOK § *2026-08-01 — the moisture balance does NOT identify `n`. It identi*
 
 ### Network
+
+**Changed 2026-08-24:** these came from the incident where both Modbus
+endpoints were lost together. **The coupler is no longer on the network** —
+its Modbus is now internal to the PFC — so only the heat pump's RS485 gateway
+remains exposed. The common-mode failure these items describe is halved.
 
   - [ ] Find the loop  
         → LOGBOOK § *2026-08-08 — [!] both Modbus endpoints lost at once: a switch, pro*
