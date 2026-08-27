@@ -24,7 +24,7 @@ item's story is long, it lives in `LOGBOOK.md` and the line here points at it.
 
 ## Now — what I would pick up next
 
-Not a priority ranking of everything below; the eight things that are either
+Not a priority ranking of everything below; the ten things that are either
 blocking something else, cheap, or a known defect in the safety path.
 
 | | what | why now |
@@ -36,7 +36,9 @@ blocking something else, cheap, or a known defect in the safety path.
 | 5 | **One coupled Kalman filter for the slab estimate** | `auto_mode` is off because the estimate follows the control action. Nothing else re-enables automatic mode selection. |
 | 6 | **`supply_k_per_hz` has POOR provenance by its own comment** | The entire capacity descent rate is computed from it, and 2026-08-21 put it nearer 0.04 than the configured 0.074. Wants one controlled step test. |
 | 7 | **`dew_point_margin_c: 1.0` is unsized** | The only buffer in the condensation defence, and it has never been derived. D-039 says there is no safe amount of condensation. |
-| 8 | **Four rooms still to migrate onto the plant broker** | Badezimmer and Gästebad done; **the plant's Controme dependency is gone** — Gästebad was the last room heatctl read through a Raumcontroller. The Mini Server itself still runs for HA/HomeKit. What remains is three HA-bridged Shellys and Arbeitszimmer on rtl_433, so this now buys independence from the HA bridge, plus humidity from three more rooms for the dew point. |
+| 8 | **The condensation floor never corrects the setpoint already in the register** | Found 2026-08-27 with `setpoint_cooling` 2.4 K below the limit and no code path able to raise it. The capacity loop is currently the only condensation defence acting, which is one layer where D-036 intended two. |
+| 9 | **`plant-status.sh inputs` is silently blind to half its feeds** | An ACL gap makes four live rooms look dead. Cheap to fix, and it is the command CLAUDE.md sends a fresh session to. |
+| 10 | **Four rooms still to migrate onto the plant broker** | Badezimmer and Gästebad done; **the plant's Controme dependency is gone** — Gästebad was the last room heatctl read through a Raumcontroller. The Mini Server itself still runs for HA/HomeKit. What remains is three HA-bridged Shellys and Arbeitszimmer on rtl_433, so this now buys independence from the HA bridge, plus humidity from three more rooms for the dew point. |
 
 Longer-running and deliberately not on that list: the heat meter, the DHW
 station fast loop, and layer 2 gaining command authority. They are big, none of
@@ -2111,6 +2113,120 @@ did NOT inherit the pilot's conditions — their guaranteed wake is 7200 s
 against 600, and that is what forced the per-device freshness window. They
 report far more often than that in practice, on a 0.5 K delta; the window has
 to assume the guarantee, not the practice.
+
+## Found while operating the plant, 2026-08-27
+
+Both found while switching to cooling on a day the house gained 2-4 K in an
+hour, and both were invisible until the plant was under a real constraint.
+
+### The condensation floor is never applied to the setpoint already in the register
+
+`heatctl/hp/setpoint_cooling` sat at **15.0** while `cooling_supply_limit` was
+**17.4** — the machine commanded 2.4 K below the temperature the plant says is
+safe — and nothing in `setpoint.py` will ever correct it.
+
+The clamp is real and it fired. `water_sp/reason` read:
+
+```
+house -4.27 K and valves at 100% - not enough capacity
+  (clamped to 18 - constraint binds harder than one step)
+```
+
+Which is `Trimmer.step()` behaving exactly as designed. Trace it:
+
+  * `wants_more` and `saturated` are both true, so the capacity branch runs
+    and asks for **colder**: `delta = -step_c`, target `15 - 1 = 14`.
+  * `_clamp()` returns **18**, the dew-point floor.
+  * The reversal guard sees `delta < 0 and target > current` and returns
+    `BLOCKED` **without writing**. Correct, and load-bearing: this is the
+    2026-07-30 08:20 defect, where accepting the clamp made the water WARMER
+    on a 38 degC morning while logging "not enough capacity".
+  * The only branch that raises the cooling setpoint is `satisfied and idle`.
+    In a heat wave the house is neither, so it never runs.
+
+**So the clamp only ever constrains values the trim PROPOSES. It has no
+authority over the value already in the register.** That is fine while the
+register is legal, and today it stopped being legal without anyone touching
+it: the dew point rose 12.9 -> 16.4 as the bathroom humidity climbed, the
+floor rose with it from ~14.0 to 17.4, and 15.0 went from legal to 2.4 K
+outside — a limit moving under a stationary setpoint, not a bad write.
+
+Why this is not currently dangerous, and why it still matters. The capacity
+loop is regulating supply by frequency and is holding it at 17.6 against the
+17.4 limit, margin +0.15 K, "in band" — the defence works and was measured
+working. But:
+
+  * **Two controllers are now pulling against each other.** The unit's own
+    control chases 15.0; the plant's only way to stop it is to keep clamping
+    the frequency ceiling. The setpoint-side floor that D-036 introduced as
+    the condensation defence is contributing nothing.
+  * **It is a single-layer defence pretending to be two.** If the capacity
+    loop degrades, is bypassed, or its ceiling is ever wrong, the pump drives
+    straight for 15.0 with nothing behind it.
+  * **A real alarm is being spent on a condition that cannot clear.**
+    `water_sp/blocked` has been 1 continuously since the mode switch.
+
+  - [ ] **Enforce the clamp on the CURRENT setpoint, not only on proposals.**
+        Sketch: before the branch logic, if `current` is outside
+        `_clamp(mode, current, ...)`, step it toward the legal range and
+        return `TRIM` regardless of what the house wants. This is a
+        *correction*, not a trim, so it should ignore the cadence gate the way
+        the removed breach branch did — but it must move by at most `step_c`
+        per cycle, or it re-creates the 18 -> 21 jump that stopped the
+        compressor on 2026-07-30.
+  - [ ] **Decide whether `BLOCKED` should also be able to correct upward.**
+        The reversal guard is right that the clamp binding harder than one
+        step is not a trim in the other direction. It does not follow that the
+        right response is to write nothing: "I cannot give you more, AND the
+        current command is illegal" has an obvious safe action. Keep the two
+        concerns separate in the code so the 2026-07-30 lesson stays legible.
+  - [ ] Check whether the heating direction has the mirror of this. Same
+        branch structure, and `heating_max_c` is a clamp of the same kind.
+
+### `plant-status.sh inputs` cannot see three of the six feeds it subscribes to
+
+Six minutes of scanning showed nothing on `roomtemp/#` or `rtl_433/#`, which
+would mean four rooms had lost their sensor feed. They had not: the
+`homeassistant` account has **no read permission** on those topics.
+
+```
+user homeassistant
+topic read heatctl/#          topic write heatctl/set/#
+topic read homeassistant/#    topic write heatctl/hp/set/#
+topic read sensors/shellies/# topic write heatctl/env/#
+topic read sensors/room/#     topic write roomtemp/#     <- write only
+```
+
+Verified against the ACL **deployed on the PFC**, not the copy in the repo.
+`rtl_433/#` and `bridge/#` appear nowhere in that block; only the `heatctl`
+user can read them.
+
+**It fails silently, and in the direction that invents faults.** Mosquitto
+grants the SUBACK (confirmed: `Subscribed (mid: 1): 0, 0, 0` for all three)
+and drops the messages at delivery, so an empty result is indistinguishable
+from a dead feed. This is the same shape as the retained-snapshot trap in
+README, and worse: that one makes a healthy recorder look 25 % short, this one
+makes four live rooms look dead. `CLAUDE.md` points at this command as *the*
+way to inspect inbound feeds.
+
+  - [ ] **Grant `homeassistant` read on `roomtemp/#`, `rtl_433/#` and
+        `bridge/#`.** It already writes `roomtemp/#`, so this concedes
+        nothing. The rule the ACL actually protects — heatctl must not write
+        what it reads as measurement — is untouched.
+  - [ ] **Make the script refuse to be silently blind.** Subscribing with
+        `-d` and checking the granted QoS is not enough, since mosquitto
+        grants the subscription and filters on publish. The honest fix is for
+        `inputs` to state which patterns the account can read, or to run as an
+        account that can read all of them.
+  - [ ] Audit the other accounts the same way. This was found by accident;
+        nothing tests that a diagnostic tool can see what it claims to.
+
+**Left unresolved:** the owner reports Arbeitszimmer now publishes to the plant
+broker. It could not be located — no new device appeared in a six-minute
+full-tree scan, and the three patterns it would plausibly use are exactly the
+ones this account is blind to. `config.yaml` still points it at the rtl_433
+topic and heatctl reports `source: sensor`, so *something* is feeding it.
+Fix the ACL before looking again.
 
 ## Found while operating the plant, 2026-08-19 → 2026-08-21
 

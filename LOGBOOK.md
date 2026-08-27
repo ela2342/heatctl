@@ -4917,3 +4917,53 @@ average to 6.4 on a single core carrying a 1 s control loop. `zcat | grep | awk`
 over 45 MB of archive is not a thing to do on the plant controller, `nice` or
 not. Pull the files and analyse on the workstation — the transfer costs the box
 far less than the decompression.
+
+## 2026-08-27 — cooling under a dew point that moved, and a setpoint that did not
+
+Owner asked for cooling urgently. The house had gained **2–4 K across all seven
+rooms in roughly an hour** with outdoor at 15.6 degC — Natalie 23.6 → 27.6,
+Wohnzimmer 24.6 → 26.7, Gästebad 23.4 → 25.8. Conduction cannot do that against
+a 10 K negative outdoor gradient; it is solar through glazing, and it is the
+concrete version of the argument for external shading.
+
+`heatctl/set/mode cooling`, retained. Mode took within one cycle, `mode_agrees
+1`, compressor 0 → 49 → 69 → 66 Hz.
+
+**The capacity loop found the limit and held it.** Supply 23.6 → 17.6 in about
+twelve minutes; `cooling_supply_limit` 17.4; margin **+0.15 K, "in band"**.
+Return 21.5, spread 3.9 K. This is the same loop that overshot on 2026-08-21,
+behaving correctly on the descent — worth recording, because the raise-path
+defect is real and it would be easy to read this loop as broken in general. It
+is not. On the way down it did exactly the right thing.
+
+**The dew point is the binding constraint, and the bathroom sets it.** House
+dew point went 12.9 → 16.4 during the session, source `badezimmer` (it had been
+`gaestebad`). Every 1 K of house dew point is 1 K of supply depression the plant
+may not use, so bathroom ventilation is directly cooling capacity. Three rooms
+contribute humidity; the migration to per-room Shellys is what widens that.
+
+**What the constraint exposed:** the heat pump's `setpoint_cooling` was 15.0
+while the limit was 17.4, and `setpoint.py` has no path that can raise it. This
+morning 15.0 was legal (dew point 12.9, floor ~14.0); the floor rose under it.
+The clamp is only ever applied to values the trim *proposes*, never to the value
+already in the register, and the branch that could raise a cooling setpoint runs
+only when the house is `satisfied and idle` — which in a heat wave it is not.
+The reversal guard correctly returns `BLOCKED` rather than writing, so nothing
+moves. Full trace and fix sketch in BACKLOG, 2026-08-27.
+
+Not dangerous today, because the capacity loop is regulating supply by
+frequency. But D-036 put a condensation floor on the setpoint precisely so it
+would not be the only layer, and right now it is.
+
+**And a tooling defect that nearly produced a false diagnosis.** Six minutes of
+scanning showed nothing on `roomtemp/#` or `rtl_433/#`, which reads as four dead
+room feeds. The `homeassistant` account simply has no read permission on those
+topics — verified against the ACL deployed on the PFC. Mosquitto grants the
+SUBACK and drops the messages at delivery, so "denied" and "silent" are
+indistinguishable from the subscriber's side. `tools/plant-status.sh inputs`
+subscribes to six patterns and can see three. CLAUDE.md sends a fresh session to
+that command.
+
+The rule this belongs to is already in memory as *my connectivity is not plant
+state*; this is a sharper form of it. **Not seeing a message is not evidence
+that it was not sent** — the broker may simply not be showing it to me.
