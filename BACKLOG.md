@@ -2183,6 +2183,19 @@ absent. The log line was the more damaging half — CLAUDE.md calls this watchdo
         * **Go to E sooner.** If the watchdog is absent, D is no longer buying
           the thing it was chosen for, and the native KBUS backend can own the
           failsafe properly instead of inheriting one.
+  - [ ] **Do the test and the pending deploy in ONE window — they want the
+        same conditions.** `deploy-heatctl.sh` refuses without
+        `SOURCE_STOPPED=1`, because a controller gap lets the watchdog zero
+        the outputs, the NC actuators close, flow collapses and a running
+        compressor trips Er03, which latches (2026-08-20). The physical test
+        needs exactly the same thing: compressor at 0 Hz, then heatctl
+        stopped. So: `mode off` → wait for 0 Hz → watch the terminal for the
+        answer → deploy → restart → `mode cooling`.
+        Note the deploy gate's own rationale is NOT evidence that the current
+        watchdog works. The Er03 it describes happened on 2026-08-20, four
+        days BEFORE the coupler swap, on the real 750-352 whose watchdog was
+        never in doubt. It says nothing about `pfc-modbus-server`, and it is
+        the kind of thing that reads like confirmation.
   - [ ] Ask whether the answer changes the swap. It does not — Modbus off the
         network was worth doing on its own, and the wiring is identical for D
         and E. What changes is only what we may claim about the failsafe.
