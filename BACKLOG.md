@@ -37,7 +37,7 @@ blocking something else, cheap, or a known defect in the safety path.
 | 6 | **`supply_k_per_hz` has POOR provenance by its own comment** | The entire capacity descent rate is computed from it, and 2026-08-21 put it nearer 0.04 than the configured 0.074. Wants one controlled step test. |
 | 7 | **`dew_point_margin_c: 1.0` is unsized** | The only buffer in the condensation defence, and it has never been derived. D-039 says there is no safe amount of condensation. |
 | 8 | **The condensation floor never corrects the setpoint already in the register** | Found 2026-08-27 with `setpoint_cooling` 2.4 K below the limit and no code path able to raise it. The capacity loop is currently the only condensation defence acting, which is one layer where D-036 intended two. |
-| 9 | **The coupler watchdog is unverified** | Phase D was chosen over E *because* it keeps this watchdog, and `0x1006` has read INACTIVE since the swap. A five-minute attended test settles it; until then the outermost failsafe cannot be claimed. |
+| 9 | **Phase E: the native KBUS backend, and it now owns the failsafe** | The watchdog D was chosen to preserve cannot be shown to exist, so nothing is gained by staying on the emulated one. E has to implement the failsafe natively regardless — owner, 2026-08-28. |
 | 10 | **`plant-status.sh inputs` is silently blind to half its feeds** | An ACL gap makes four live rooms look dead. Cheap to fix, and it is the command CLAUDE.md sends a fresh session to. |
 | 11 | **Four rooms still to migrate onto the plant broker** | Badezimmer and Gästebad done; **the plant's Controme dependency is gone** — Gästebad was the last room heatctl read through a Raumcontroller. The Mini Server itself still runs for HA/HomeKit. What remains is three HA-bridged Shellys and Arbeitszimmer on rtl_433, so this now buys independence from the HA bridge, plus humidity from three more rooms for the dew point. |
 
@@ -2145,8 +2145,28 @@ absent. The log line was the more damaging half — CLAUDE.md calls this watchdo
 "the only failsafe that survives a bridge crash", and a reassuring message at
 1 Hz made that look checked.
 
-  - [ ] **THE PHYSICAL TEST. Attended, about five minutes, and it settles the
-        question.** Nothing else can.
+**PRIORITY, owner 2026-08-28: do not chase this.** "Once we go down the KBUS
+route, we have to implement this ourselves anyways." Correct, and it follows
+that the verification is worth little: the emulated watchdog is a transitional
+artefact either way, and effort belongs in E's own failsafe. What does NOT
+follow is continuing to CLAIM the watchdog — the docs asserted it as live
+protection and have been corrected. The test below is kept because it is five
+minutes and rides along with the next deploy window, not because it blocks
+anything.
+
+**The residual exposure, so the decision is made with it in view.** Docker
+`--restart always` covers a crashed heatctl, which is the likely failure. The
+uncovered case is a WEDGED heatctl still holding the bus: valves frozen where
+they are, while the heat pump keeps making water to its own setpoint. In
+heating that is benign — CLAUDE.md's "an unsupervised open circuit still gets
+sane water". **In cooling it is not**: P04 is currently 16.0 against a
+condensation limit of 16.8, so a wedged controller leaves the plant making
+water below the limit indefinitely with nothing watching the dew point. That
+is the one failure the watchdog would actually have caught here, and it is an
+argument for E's timing rather than for testing the old one.
+
+  - [ ] **THE PHYSICAL TEST, if a window comes up anyway. Attended, about five
+        minutes.** Nothing else can settle it.
         1. Pick a circuit and command its valve open — `heatctl/set/...`, or
            simply one that distribution already has open. Confirm the analog
            output is non-zero at the 750-559 terminal (multimeter, 0–10 V) or

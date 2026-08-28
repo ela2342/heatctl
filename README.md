@@ -186,13 +186,17 @@ to it.
 
 - Previous: HA add-on, `deploy/ha-addon/`. **Stopped, not removed** — it is the
   rollback, and its config directory is still the seed for the PFC's.
-- Next: swap the coupler for the PFC so the control↔I/O link stops crossing the
-  network. Gated on a watchdog bench test — see `docs/PFC200.md`.
+- Done 2026-08-24: the coupler is swapped for the PFC and the control↔I/O
+  link no longer crosses the network. The watchdog check that gated it was
+  never answered, and the emulated watchdog is **unverified** — see the banner
+  in `docs/PFC200.md`.
 
 **Moving control between machines needs a procedure**, not just a stop and a
 start: stop the *source* first, or the coupler watchdog closes the valves under
-a running compressor and trips a latching Er03. Cutover steps in
-`docs/PFC200.md`.
+a running compressor and trips a latching Er03. That is what happened on
+2026-08-20, on the 750-352. Keep doing it even though the current watchdog is
+unverified — the procedure costs a few minutes and the fault it avoids latches.
+Cutover steps in `docs/PFC200.md`.
 
 ## Development
 See `ROADMAP.md` for milestones, `BACKLOG.md` for what is open, and
