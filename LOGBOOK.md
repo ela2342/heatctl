@@ -5012,3 +5012,45 @@ entirely rather than timing around it.
 
 Second time Er03 has self-cleared without a physical reset. Recorded, not
 relied on.
+
+## 2026-08-28, later — parking `off` open, and a safety gate that had inverted
+
+Owner's call: park the manifold open when the plant is off. Checking the code
+before implementing turned up the real mechanism, which was not the one I had
+guessed.
+
+`main.py` set every circuit to **0.0** in `off`, and bypassed distribution
+specifically so an all-zero set could not normalise back to open — with a
+comment arguing all-open was "exactly wrong when the plant is meant to be off".
+But **heatctl never touches the heat pump's circulator**, and that circulator is
+configured `pump_non_stop` at 100 %. So `off` shut every valve in front of a
+running pump: dead-heading by construction. My stroke-race hypothesis was wrong,
+or at best secondary.
+
+**Confirmed by recurrence, which the deploy handed us for free.** Shipping the
+fix needs the source stopped, and that `off` window necessarily runs the OLD
+code. Er03 fired again. Two data points now: **~6 minutes of shut manifold, and
+~2 minutes.** Both self-cleared in about four. Three self-clears counting
+2026-08-20 and none needing a physical reset — recorded, not relied on.
+
+The fix itself is therefore still unproven in the field. Its first real test is
+the next `mode off`: watch `heatctl/valve/#` settle at 100 rather than 0.
+
+**And the thing I would most want a later session to know: the `SOURCE_STOPPED`
+gate had inverted.** It exists because a controller gap lets the watchdog zero
+the outputs under a running compressor. Both premises died this morning — there
+is no watchdog, so a gap now leaves the valves exactly where they are and flow
+continues; and `mode off`, the thing the gate demands, was itself the flow
+collapse. For a few hours, obeying the gate was strictly more dangerous than
+skipping it. I obeyed it twice and caused Er03 twice.
+
+I do not think obeying it was the wrong call in the moment — bypassing an
+owner-set safety gate on the strength of a conclusion an hour old is a worse
+habit than eating a self-clearing fault. But the general shape is worth naming:
+**a gate whose premises have both silently changed is no longer a safety gate,
+it is a ritual**, and the cost of noticing late was paid in a latching fault.
+Parking open makes it harmless again. It should be re-derived when Phase E
+lands a real failsafe.
+
+Plant after all of it: cooling, 36 Hz, supply 16.3 against a 16.9 limit, no
+faults, 7 heat-pump writes in the hour.

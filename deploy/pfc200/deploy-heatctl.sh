@@ -36,6 +36,24 @@ fi
 # water-flow fault - which latches. It self-cleared in 4.5 min that time and
 # has needed a physical reset before.
 #
+# READ THIS BEFORE TRUSTING THE PARAGRAPH ABOVE. Both of its premises changed
+# on 2026-08-28 and the gate briefly INVERTED - obeying it caused the fault it
+# exists to prevent.
+#
+#   * There is no watchdog any more. `pfc-modbus-server` does not implement
+#     the expiry behaviour (proved by a 30 s controller stop that left process
+#     data flowing), so a controller gap does NOT zero the outputs. Valves
+#     hold their last position and flow continues.
+#   * `mode off` was the thing collapsing the flow. It parked every valve shut
+#     in front of a circulator configured `pump_non_stop` at 100 %. Er03 twice
+#     that morning: once after ~6 minutes of it, once after ~2.
+#
+# `off` now parks the manifold OPEN (`control.off_valve_pct`), which makes the
+# gate harmless again - but harmless is not the same as load-bearing, and its
+# stated reason is no longer true. Re-derive it when Phase E lands a real
+# failsafe; until then keep it, because stopping the source before a cutover is
+# still cheap and still correct for reasons that do not depend on a watchdog.
+#
 # Not automated here on purpose: stopping the source is `mode off`, and
 # watching the frequency reach 0 before pulling the controller is a judgement
 # a script should not fake. The full procedure is in docs/PFC200.md. This flag

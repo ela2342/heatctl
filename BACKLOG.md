@@ -2159,9 +2159,35 @@ travel.
         it only has to be re-throttled by distribution when demand returns.
         This would remove the transition hazard entirely rather than time
         around it.
-  - [ ] It self-cleared in ~4 min, as it did on 2026-08-20. **That is twice
-        now, and neither needed a physical reset** - worth recording against
-        the standing belief that Er03 may need one, without relying on it.
+  - [x] ~~Establish where `off` parks the valves~~ — **ANSWERED from the code,
+        2026-08-28: at 0.0.** `main.py` set every circuit to zero in `off`, and
+        deliberately bypassed distribution so the all-zero set could not
+        normalise back to open. **FIXED the same day** (`control.off_valve_pct`,
+        default 100): heatctl does not control the heat pump's circulator, and
+        that circulator is `pump_non_stop` at 100 %, so the old behaviour
+        dead-headed a running pump by construction. The stroke-race hypothesis
+        recorded above was wrong, or at most secondary.
+  - [x] ~~Do not command the source on until the manifold is open~~ —
+        **DISSOLVED.** Parking open removes the race rather than timing around
+        it, which is the better shape. Owner chose it.
+  - [ ] **CONFIRMED BY RECURRENCE, and the threshold is short.** Er03 fired
+        again during the very deploy that shipped the fix, because the `off`
+        window necessarily ran the OLD parking code: **~6 minutes of shut
+        manifold the first time, ~2 minutes the second.** Both self-cleared in
+        about four minutes. Three self-clears now counting 2026-08-20, none
+        needing a physical reset — recorded, not relied on. What is still
+        unproven is the fix itself: the next `mode off` is its first real test,
+        so watch `heatctl/valve/#` go to 100 rather than 0.
+  - [ ] **The `SOURCE_STOPPED` gate inverted, and that is the lesson worth
+        keeping.** It exists because a controller gap + a watchdog zeroing
+        outputs + a running compressor = Er03. There is no watchdog now, so the
+        gap is harmless — while `mode off`, the thing the gate demands, was
+        itself collapsing the flow. For a few hours on 2026-08-28, obeying the
+        gate was strictly more dangerous than skipping it, and I obeyed it
+        twice. Parking open makes it harmless again, but **a safety gate whose
+        premises have both silently changed is not a safety gate**, and this
+        one should be re-derived when Phase E lands a real failsafe. Comment
+        in `deploy-heatctl.sh` updated meanwhile.
 
 ## The coupler watchdog is unverified, and D's rationale rests on it, 2026-08-28
 
