@@ -9,6 +9,7 @@ strip out, so they are tested as behaviour rather than left as comments.
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import pytest
 
@@ -547,3 +548,94 @@ def test_configured_host_is_used_without_an_override(cfg, monkeypatch):
     monkeypatch.delenv("HEATCTL_MODBUS_PORT", raising=False)
     b = ModbusDirectBackend(cfg)
     assert (b.host, b.port) == ("192.0.2.52", 502)
+
+
+# ---------- REGRESSION: the write storm on pfc-modbus-server, 2026-08-28 ----------
+
+class StuckStatusCoupler(FakeCoupler):
+    """A coupler whose watchdog STATUS register never leaves 0.
+
+    This is `pfc-modbus-server` after the 2026-08-24 swap: 0x1006 answers 0
+    (inactive) whatever we write to 0x1000/0x1001. Whether the watchdog is
+    actually running behind that is unknown and cannot be learned over Modbus.
+    """
+    def _write_watchdog(self, addr, value):
+        if addr == WD_MASK_1_16:
+            self.regs[addr] = value
+            return Response()          # <- deliberately does NOT go ACTIVE
+        return super()._write_watchdog(addr, value)
+
+
+async def test_unconfirmable_watchdog_is_not_rearmed_every_cycle(backend,
+                                                                 monkeypatch):
+    """Real defect: two register writes per second, for ever.
+
+    `_watchdog_maintain` armed whenever STATUS was not ACTIVE. On a coupler
+    whose STATUS is stuck at 0 that is every single read cycle - measured on
+    the plant 2026-08-28 at 1 Hz, with an INFO line beside each pair of
+    writes. The log noise was the worse half: it read "coupler watchdog armed"
+    once a second while nothing had confirmed a watchdog existed at all.
+    """
+    b, c = backend(StuckStatusCoupler(), watchdog_rearm_interval_s=60.0)
+
+    t = [1000.0]
+    monkeypatch.setattr(md.time, "monotonic", lambda: t[0])
+
+    # Ten seconds of a 1 Hz control loop.
+    for _ in range(10):
+        await b._watchdog_maintain()
+        t[0] += 1.0
+
+    assert b._wd_arm_attempts == 1, (
+        f"armed {b._wd_arm_attempts} times in 10 s - the rate limit is not "
+        "holding, which is the defect this test exists for")
+
+    # Past the interval it tries again: an unconfirmable watchdog must not be
+    # silently abandoned either.
+    t[0] += 60.0
+    await b._watchdog_maintain()
+    assert b._wd_arm_attempts == 2
+
+
+async def test_unconfirmable_watchdog_warns_once_and_does_not_claim_armed(
+        backend, monkeypatch, caplog):
+    """The failsafe must not be REPORTED as present when it is unverified.
+
+    docs/PFC200.md records that Phase D was chosen over E because it keeps the
+    coupler watchdog. An INFO line claiming "armed" on a status register that
+    never confirms turns that decision's premise into something that looks
+    checked. It was not checked.
+    """
+    b, c = backend(StuckStatusCoupler(), watchdog_rearm_interval_s=60.0)
+
+    t = [1000.0]
+    monkeypatch.setattr(md.time, "monotonic", lambda: t[0])
+
+    with caplog.at_level(logging.WARNING):
+        for _ in range(4):
+            await b._watchdog_maintain()
+            t[0] += 60.0
+
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING
+                and "WATCHDOG UNCONFIRMED" in r.getMessage()]
+    assert len(warnings) == 1, "warn once, not once per attempt"
+    assert "ABSENT" in warnings[0].getMessage(), (
+        "the operator has to be told the outermost failsafe cannot be relied "
+        "on - 'unconfirmed' alone reads as a cosmetic complaint")
+
+
+async def test_confirmed_watchdog_still_reports_active_and_stops_arming(
+        backend, monkeypatch):
+    """The normal 750-352 path must be untouched by the rate limit."""
+    b, c = backend(FakeCoupler(), watchdog_rearm_interval_s=60.0)
+
+    t = [1000.0]
+    monkeypatch.setattr(md.time, "monotonic", lambda: t[0])
+
+    for _ in range(5):
+        await b._watchdog_maintain()
+        t[0] += 1.0
+
+    assert c.regs[WD_STATUS] == WD_STATUS_ACTIVE
+    assert b._wd_ever_active is True
+    assert b._wd_arm_attempts == 1, "armed once, then left alone"

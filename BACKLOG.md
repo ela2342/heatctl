@@ -24,7 +24,7 @@ item's story is long, it lives in `LOGBOOK.md` and the line here points at it.
 
 ## Now — what I would pick up next
 
-Not a priority ranking of everything below; the ten things that are either
+Not a priority ranking of everything below; the eleven things that are either
 blocking something else, cheap, or a known defect in the safety path.
 
 | | what | why now |
@@ -37,8 +37,9 @@ blocking something else, cheap, or a known defect in the safety path.
 | 6 | **`supply_k_per_hz` has POOR provenance by its own comment** | The entire capacity descent rate is computed from it, and 2026-08-21 put it nearer 0.04 than the configured 0.074. Wants one controlled step test. |
 | 7 | **`dew_point_margin_c: 1.0` is unsized** | The only buffer in the condensation defence, and it has never been derived. D-039 says there is no safe amount of condensation. |
 | 8 | **The condensation floor never corrects the setpoint already in the register** | Found 2026-08-27 with `setpoint_cooling` 2.4 K below the limit and no code path able to raise it. The capacity loop is currently the only condensation defence acting, which is one layer where D-036 intended two. |
-| 9 | **`plant-status.sh inputs` is silently blind to half its feeds** | An ACL gap makes four live rooms look dead. Cheap to fix, and it is the command CLAUDE.md sends a fresh session to. |
-| 10 | **Four rooms still to migrate onto the plant broker** | Badezimmer and Gästebad done; **the plant's Controme dependency is gone** — Gästebad was the last room heatctl read through a Raumcontroller. The Mini Server itself still runs for HA/HomeKit. What remains is three HA-bridged Shellys and Arbeitszimmer on rtl_433, so this now buys independence from the HA bridge, plus humidity from three more rooms for the dew point. |
+| 9 | **The coupler watchdog is unverified** | Phase D was chosen over E *because* it keeps this watchdog, and `0x1006` has read INACTIVE since the swap. A five-minute attended test settles it; until then the outermost failsafe cannot be claimed. |
+| 10 | **`plant-status.sh inputs` is silently blind to half its feeds** | An ACL gap makes four live rooms look dead. Cheap to fix, and it is the command CLAUDE.md sends a fresh session to. |
+| 11 | **Four rooms still to migrate onto the plant broker** | Badezimmer and Gästebad done; **the plant's Controme dependency is gone** — Gästebad was the last room heatctl read through a Raumcontroller. The Mini Server itself still runs for HA/HomeKit. What remains is three HA-bridged Shellys and Arbeitszimmer on rtl_433, so this now buys independence from the HA bridge, plus humidity from three more rooms for the dew point. |
 
 Longer-running and deliberately not on that list: the heat meter, the DHW
 station fast loop, and layer 2 gaining command authority. They are big, none of
@@ -2113,6 +2114,78 @@ did NOT inherit the pilot's conditions — their guaranteed wake is 7200 s
 against 600, and that is what forced the per-device freshness window. They
 report far more often than that in practice, on a 0.5 K delta; the window has
 to assume the guarantee, not the practice.
+
+## The coupler watchdog is unverified, and D's rationale rests on it, 2026-08-28
+
+`docs/PFC200.md` states the gating check for the swap in as many words:
+
+> **Does it implement the coupler watchdog at `0x1000+`?** If it does not, D
+> silently loses the failsafe too and is no longer the safe step it looks
+> like [...] This is the single most important thing to establish.
+
+**It was never established, and the evidence now available leans negative.**
+`0x1006` (WD_STATUS) has read 0 — INACTIVE — continuously since the swap, on a
+plant that was writing the arming registers once a second. Two independent
+hints that nothing is armed:
+
+  * the status register never transitions to ACTIVE, though we arm it
+    constantly;
+  * `0x1000` (WD_TIME) is documented as writable **only while the watchdog is
+    stopped**, and our writes to it are accepted rather than rejected.
+
+Neither is proof. A server can implement the watchdog and not implement its
+status register. Modbus cannot distinguish the two cases, so no amount of
+further reading will settle it.
+
+Fixed today, and it is only the symptom: arming is now rate-limited to
+`watchdog_rearm_interval_s` (60 s) instead of running at the read cadence, and
+the once-a-second INFO line claiming "coupler watchdog armed" is replaced by a
+single WARNING saying the failsafe is unconfirmed and should be treated as
+absent. The log line was the more damaging half — CLAUDE.md calls this watchdog
+"the only failsafe that survives a bridge crash", and a reassuring message at
+1 Hz made that look checked.
+
+  - [ ] **THE PHYSICAL TEST. Attended, about five minutes, and it settles the
+        question.** Nothing else can.
+        1. Pick a circuit and command its valve open — `heatctl/set/...`, or
+           simply one that distribution already has open. Confirm the analog
+           output is non-zero at the 750-559 terminal (multimeter, 0–10 V) or
+           that the actuator is visibly driven.
+        2. `docker stop heatctl`. This stops the output writes, which are the
+           watchdog's only heartbeat (mask 0x8020 is write-only by design).
+        3. Wait past `watchdog_timeout_s` = 10 s, with margin. Watch the
+           terminal voltage.
+        4. **Falls to 0 V → the watchdog exists and works.** D's premise
+           holds, the item closes, and the expiry direction is confirmed at
+           the same time.
+        5. **Holds its last value → there is no watchdog.** See below.
+        6. `docker start heatctl` either way. If it fired, heatctl clears the
+           trip itself on the next I/O error (`_watchdog_kick_after_error`),
+           which is also worth watching happen.
+        Safe in both directions: a watchdog that fires closes NC valves for
+        the few seconds until heatctl is back, and one that does not fire
+        leaves them exactly where they were. Do it in mild weather, not on a
+        38 degC afternoon.
+  - [ ] **If there is no watchdog, D's rationale is void and the failsafe
+        question is live NOW, not at E.** It was deferred (owner, 2026-08-24)
+        specifically because D was believed to keep the watchdog. Options, none
+        of them free:
+        * **Accept the gap and say so.** `--restart always` covers a crashed
+          heatctl, which is the likely failure. It does NOT cover a wedged one
+          that still holds the bus, which is the failure a watchdog exists for.
+        * **A watchdog in `pfc-modbus-server`'s own configuration**, if it has
+          one that the emulated register map does not expose. Unread; the
+          image is a closed 24 KB binary, but WAGO may document it.
+        * **The PFC's hardware watchdog** (still open from Milestone 4). It
+          reboots the box; it does not zero outputs, so it is a different
+          guarantee — recovery rather than safe-state — and on its own it is
+          not a substitute.
+        * **Go to E sooner.** If the watchdog is absent, D is no longer buying
+          the thing it was chosen for, and the native KBUS backend can own the
+          failsafe properly instead of inheriting one.
+  - [ ] Ask whether the answer changes the swap. It does not — Modbus off the
+        network was worth doing on its own, and the wiring is identical for D
+        and E. What changes is only what we may claim about the failsafe.
 
 ## Found while operating the plant, 2026-08-27
 

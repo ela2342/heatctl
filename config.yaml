@@ -45,6 +45,21 @@ io:
     watchdog_enabled: true
     watchdog_timeout_s: 10.0
     watchdog_mask: 0x8020      # FC6 (write single) + FC16 (write multiple)
+    # How long to wait before trying to arm again while 0x1006 does not read
+    # ACTIVE. Added 2026-08-28: on `pfc-modbus-server` that register answers 0
+    # unconditionally, so the old code re-armed on EVERY read - two register
+    # writes a second, for ever, each with an INFO line claiming success.
+    #
+    # 60 s is a compromise, not a derivation. Long enough that the storm is
+    # gone; short enough that a coupler which really did lose its watchdog is
+    # unprotected for at most a minute. Do NOT raise it far without deciding
+    # what the unprotected window is worth.
+    #
+    # THIS DOES NOT ANSWER WHETHER THE WATCHDOG EXISTS. Modbus cannot tell
+    # "armed but the status register is unimplemented" from "not armed".
+    # Only the physical test in BACKLOG can. Until then heatctl warns once and
+    # says to treat the outermost failsafe as absent.
+    watchdog_rearm_interval_s: 60.0
 
   mqtt_io:                     # used by the mqtt backend
     # Topics produced/consumed by modbus2mqtt. Adjust templates to match
@@ -599,17 +614,63 @@ control:
   # immediate. Every write wears the unit's flash, hence minutes not seconds.
   capacity:
     enabled: true
+    # ---------------------------------------------------------------------
+    # THE CONDENSATION ARITHMETIC, IN ONE PLACE. Two settings look like
+    # margins and they are NOT the same quantity. Written out here on
+    # 2026-08-28 because the owner asked "what is added and subtracted when",
+    # and because I had just recommended changing the wrong one.
+    #
+    #     dew_point                             the MAXIMUM across every
+    #                                           room reporting humidity
+    #   + safety.dew_point_margin_c   (1.0)     uncertainty in WHERE THE DEW
+    #                                           POINT IS: sensor error, and
+    #                                           the spread between rooms
+    #   ------------------------------------
+    #   = cooling_supply_limit                  the coldest supply allowed
+    #
+    #     margin = supply - cooling_supply_limit
+    #     the loop drives  margin -> target_margin_c
+    #
+    # So with `target_margin_c: 0.0` the loop already aims at exactly
+    # **dew point + 1.0 K**, which is the stated intent. Setting it to 1.0
+    # would aim at dew point + 2.0 - the two margins STACK, they do not
+    # replace each other.
+    #
+    # WHY BOTH EXIST, since one number would be simpler. They have different
+    # owners and answer different questions, and the fix for each is
+    # different:
+    #   * `safety.dew_point_margin_c` - "we are not sure where the dew point
+    #     is". Owned by safety.py, which computes the limit. Shrinks by
+    #     instrumenting more rooms. Currently 3 of 7 report humidity.
+    #   * `target_margin_c` - "the loop does not sit exactly on its
+    #     setpoint". Owned by control. Shrinks by tuning. It is an allowance
+    #     for TRACKING ERROR, not for measurement error.
+    #
+    # At 0.0 this asserts the loop tracks its setpoint without undershoot.
+    # Measured 2026-08-27/28: it does not - worst excursion -1.82 K, i.e.
+    # 0.82 K below the actual dew point, because supply keeps falling after
+    # the ceiling moves. `lower_settle_s` was raised to 180 s to attack that.
+    # Re-measure the overshoot distribution before deciding whether this
+    # wants to be non-zero; sizing it from data beats picking a number, and
+    # every 0.1 K here is cooling capacity given up.
+    #
+    # NOTE the code's default is 1.0 (`capacity.py`) and the test config uses
+    # 1.0. Only this file sets 0.0, so the value the plant runs is the one
+    # the suite does not exercise.
+    # ---------------------------------------------------------------------
     # Owner, 2026-07-31: "By measuring at the manifold with 0.1 degree
     # precision, and by controlling max compressor power much more fine grained
     # than the coarse step point, we have much better control that make the
     # 1.5K headroom we are currently seeing seem excessive." Correct on both
     # counts, and this should have moved when it was said.
-    # ZERO, deliberately (owner, 2026-07-31: "Trip at 0, target 1K"). The
-    # limit already IS the control target - dew point plus
-    # safety.dew_point_margin_c - so aiming at it needs no second margin. This
-    # was only ever buying separation from the guard, and the guard now trips
-    # at the dew point itself rather than at the target.
+    # ZERO, deliberately (owner, 2026-07-31: "Trip at 0, target 1K", and
+    # confirmed 2026-08-28: "the intent is to have a set point for the loop
+    # aim at 1K above the calculated dew point"). Zero here IS that 1 K - see
+    # the arithmetic above. The limit already carries it.
     target_margin_c: 0.0
+    # Half-width of the do-nothing band around `target_margin_c`, so +-0.25 K.
+    # Note this is NOT extra safety headroom: the band is symmetric, so the
+    # loop tolerates being 0.25 K BELOW the limit before it reacts at all.
     deadband_c: 0.25
     # 5 Hz was ~0.37 K of supply movement per step at the measured ~0.074 K/Hz -
     # coarse enough that it was itself a reason to keep a wide margin. 2 Hz is
@@ -951,6 +1012,12 @@ safety:
   # no hidden reserve behind it. The margin covers measurement error and the
   # spread of indoor dew point between rooms. And note condensation inside the
   # slab is INVISIBLE - nothing will prompt anyone to notice it.
+  # THIS IS ONE OF TWO SETTINGS THAT LOOK LIKE CONDENSATION MARGINS. It is
+  # the uncertainty in WHERE THE DEW POINT IS. The other is
+  # `control.capacity.target_margin_c`, which is an allowance for the loop's
+  # TRACKING ERROR, and the two STACK. The full arithmetic is written out at
+  # `control.capacity` - read it there before changing either.
+  #
   # REDUCED 2.0 -> 1.0 on 2026-07-29 (owner). The 2 K was sized for the HEAT
   # PUMP's leaving-water register, which is scaled 0.5 and therefore quantised
   # to 0.5 K. But the guard that actually closes valves reads `vl_total` - a

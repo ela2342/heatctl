@@ -70,7 +70,15 @@ class ModbusDirectBackend(IOBackend):
         # register unit is 100 ms
         self.wd_time_units = int(round(float(m.get("watchdog_timeout_s", 10.0)) * 10))
         self.wd_mask = int(m.get("watchdog_mask", 0x8020))
+        # How long to wait before trying to arm again when the status register
+        # does not come back ACTIVE. See `_watchdog_maintain`.
+        self.wd_rearm_interval_s = float(m.get("watchdog_rearm_interval_s",
+                                               60.0))
         self._wd_armed_logged = False
+        self._wd_last_arm: float | None = None
+        self._wd_arm_attempts = 0
+        self._wd_ever_active = False
+        self._wd_unconfirmed_logged = False
         self.client: AsyncModbusTcpClient | None = None
         # current backoff and the earliest monotonic time we may retry
         self._backoff = self.reconnect_delay
@@ -212,6 +220,26 @@ class ModbusDirectBackend(IOBackend):
         actuators closes the valves. That is deliberate and is the right
         direction for a DEAD controller - see the failure-policy docstring in
         safety.py for why it does not contradict fail-open.
+
+        ARMING IS RATE-LIMITED, AND A REFUSAL TO ARM IS REPORTED AS SUCH.
+        Both because of what this did on `pfc-modbus-server` after the
+        2026-08-24 coupler swap: 0x1006 answers 0 - INACTIVE - unconditionally,
+        so every read cycle fell through to the arming branch and wrote 0x1000
+        and 0x1001 again. Two register writes per second, for ever, and an
+        INFO line saying "coupler watchdog armed" beside each one.
+
+        The writes were the smaller problem. The log line was a false
+        assurance: `docs/PFC200.md` records that Phase D was chosen over E
+        precisely because it KEEPS the coupler watchdog, and a once-a-second
+        "armed" made that look verified when nothing had verified it. If the
+        status register never reports ACTIVE we do not know that the watchdog
+        exists, and the honest output is a warning that says so once - not a
+        reassurance repeated 86 400 times a day.
+
+        Note this cannot distinguish "armed but the status register is not
+        implemented" from "not armed at all". Only a physical observation
+        can - stop the writes with a valve commanded open and see whether the
+        output falls to zero. That test is in BACKLOG.
         """
         if not self.wd_enabled:
             return
@@ -222,18 +250,43 @@ class ModbusDirectBackend(IOBackend):
             await self._watchdog_kick_after_error()
             return
         if st == WD_STATUS_ACTIVE:
+            self._wd_ever_active = True
             if not self._wd_armed_logged:
                 log.info("coupler watchdog active (%.1f s, mask 0x%04X)",
                          self.wd_time_units / 10, self.wd_mask)
                 self._wd_armed_logged = True
             return
-        # Inactive: set the time first - 0x1000 is writable only while stopped -
-        # then arm by writing a non-zero coding mask.
+
+        # Inactive. Back off between attempts: re-arming at the read cadence
+        # is pointless if the first write did not take, and expensive if it
+        # did but the status register cannot say so.
+        now = time.monotonic()
+        if (self._wd_last_arm is not None
+                and now - self._wd_last_arm < self.wd_rearm_interval_s):
+            return
+        self._wd_last_arm = now
+        self._wd_arm_attempts += 1
+
+        # Set the time first - 0x1000 is writable only while stopped - then arm
+        # by writing a non-zero coding mask.
         await self._reg_write(WD_TIME, self.wd_time_units)
-        if await self._reg_write(WD_MASK_1_16, self.wd_mask):
-            log.info("coupler watchdog armed: %.1f s, mask 0x%04X (FC6+FC16)",
+        armed = await self._reg_write(WD_MASK_1_16, self.wd_mask)
+        if armed and self._wd_arm_attempts == 1:
+            log.info("coupler watchdog arm written: %.1f s, mask 0x%04X "
+                     "(FC6+FC16) - waiting for the status register to confirm",
                      self.wd_time_units / 10, self.wd_mask)
-            self._wd_armed_logged = True
+            return
+        if self._wd_arm_attempts >= 2 and not self._wd_ever_active \
+                and not self._wd_unconfirmed_logged:
+            self._wd_unconfirmed_logged = True
+            log.warning(
+                "COUPLER WATCHDOG UNCONFIRMED: 0x%04X still reads %d "
+                "(inactive) after %d arming attempts. Either it is not armed "
+                "or the status register is not implemented - and heatctl "
+                "cannot tell which. Treat the outermost failsafe as ABSENT "
+                "until a physical test says otherwise; re-arming continues "
+                "every %.0f s.",
+                WD_STATUS, st, self._wd_arm_attempts, self.wd_rearm_interval_s)
 
     async def _read_back_valves(self) -> None:
         """Compare the coupler's actual outputs against what we commanded.
