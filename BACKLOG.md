@@ -37,7 +37,7 @@ blocking something else, cheap, or a known defect in the safety path.
 | 6 | **`supply_k_per_hz` has POOR provenance by its own comment** | The entire capacity descent rate is computed from it, and 2026-08-21 put it nearer 0.04 than the configured 0.074. Wants one controlled step test. |
 | 7 | **`dew_point_margin_c: 1.0` is unsized** | The only buffer in the condensation defence, and it has never been derived. D-039 says there is no safe amount of condensation. |
 | 8 | **The condensation floor never corrects the setpoint already in the register** | Found 2026-08-27 with `setpoint_cooling` 2.4 K below the limit and no code path able to raise it. The capacity loop is currently the only condensation defence acting, which is one layer where D-036 intended two. |
-| 9 | **Phase E: the native KBUS backend, and it now owns the failsafe** | The watchdog D was chosen to preserve cannot be shown to exist, so nothing is gained by staying on the emulated one. E has to implement the failsafe natively regardless — owner, 2026-08-28. |
+| 9 | **Phase E: the native KBUS backend, and it now owns the failsafe** | **Settled 2026-08-28: `pfc-modbus-server` has no working watchdog.** A 30 s controller gap — 3× the timeout — left process data flowing on restart, where a 750-352 refuses it with exception 4 until cleared. So there is no outermost failsafe today, and E is the step that provides one. |
 | 10 | **`plant-status.sh inputs` is silently blind to half its feeds** | An ACL gap makes four live rooms look dead. Cheap to fix, and it is the command CLAUDE.md sends a fresh session to. |
 | 11 | **Four rooms still to migrate onto the plant broker** | Badezimmer and Gästebad done; **the plant's Controme dependency is gone** — Gästebad was the last room heatctl read through a Raumcontroller. The Mini Server itself still runs for HA/HomeKit. What remains is three HA-bridged Shellys and Arbeitszimmer on rtl_433, so this now buys independence from the HA bridge, plus humidity from three more rooms for the dew point. |
 
@@ -2115,6 +2115,54 @@ against 600, and that is what forced the per-device freshness window. They
 report far more often than that in practice, on a 0.5 K delta; the window has
 to assume the guarantee, not the practice.
 
+## Resuming from `off` starts the source before the valves have opened, 2026-08-28
+
+Caused while restoring cooling after the deploy, and it is not specific to a
+deploy — it will fire on any `off` -> `cooling` transition.
+
+Sequence, all of it measured:
+
+```
+09:00   mode off          compressor 0 Hz, power 0
+09:00   deploy (SOURCE_STOPPED=1, correctly gated)
+09:04   heatctl stopped 30 s for the watchdog observation, restarted
+09:06   mode cooling
+09:06   flow floor engages, valves raised to 41% mean
+~09:07  Er03 water flow  <- the LATCHING fault
+~09:11  cleared itself; compressor 34 Hz, no faults
+```
+
+**The documented Er03 mechanism does not explain this one.** That mechanism is
+a controller gap under a RUNNING compressor; here the compressor was at 0 Hz
+and the unit unpowered throughout the gap, and the SOURCE_STOPPED procedure was
+followed. The fault appeared on the *resume*.
+
+**Likely mechanism, and it is inference, not measurement:** the source is
+commanded on the moment the mode changes, while the manifold is still opening.
+The actuators need ~150 s of stroke, so for the first couple of minutes the
+pump is pushing against a partly closed manifold. Supporting it: the flow floor
+engaged at exactly the transition and has held valves up since. Not established:
+where `off` actually leaves the valves, which decides how far they had to
+travel.
+
+  - [ ] **Establish where `off` parks the valves.** One log line, and it turns
+        the paragraph above from inference into a fact. Do this before
+        designing the fix.
+  - [ ] **Do not command the source on until the manifold is open.** The plant
+        already knows the stroke time and already has a flow floor; what is
+        missing is making the SOURCE wait for it rather than reacting after
+        the fault. A delay on the off -> heating/cooling edge is the cheap
+        form.
+  - [ ] Consider whether `mode off` should leave the valves OPEN rather than
+        parked. D-003 fails open on lost knowledge for exactly this kind of
+        reason, and an open manifold costs nothing while the source is off -
+        it only has to be re-throttled by distribution when demand returns.
+        This would remove the transition hazard entirely rather than time
+        around it.
+  - [ ] It self-cleared in ~4 min, as it did on 2026-08-20. **That is twice
+        now, and neither needed a physical reset** - worth recording against
+        the standing belief that Er03 may need one, without relying on it.
+
 ## The coupler watchdog is unverified, and D's rationale rests on it, 2026-08-28
 
 `docs/PFC200.md` states the gating check for the swap in as many words:
@@ -2144,6 +2192,38 @@ single WARNING saying the failsafe is unconfirmed and should be treated as
 absent. The log line was the more damaging half — CLAUDE.md calls this watchdog
 "the only failsafe that survives a bridge crash", and a reassuring message at
 1 Hz made that look checked.
+
+### ANSWERED 2026-08-28, and the answer is no
+
+Established remotely, at zero risk, in the deploy window that was open anyway:
+**heatctl was stopped for 30 s — three times the 10 s timeout — and on restart
+read process data immediately.**
+
+```
+09:04:53  modbus connected: modbus-server:502
+09:04:53  coupler watchdog arm written ... waiting for the status register
+09:04:53  source ON: no_room_data          <- process data flowing at once
+```
+
+A 750-352 with an armed watchdog does not do this. On expiry it refuses ALL
+process data with exception 0x04 until the trigger register is toggled — that
+is the documented behaviour, it is what `FakeCoupler` models, and it is the
+2026-07-27 field failure that blocked the plant for 3.5 h. There was no
+exception 4, and `_watchdog_kick_after_error` never fired.
+
+That is the third independent negative, after `0x1006` never reporting ACTIVE
+and `0x1000` accepting writes while supposedly running.
+
+**What this does and does not prove.** It proves `pfc-modbus-server` does not
+implement the 750-352's expiry behaviour. It does not strictly prove the
+outputs were left alive during those 30 s — a server could zero outputs on
+timeout without implementing the refuse-until-cleared half. Only a multimeter
+settles that, and it no longer matters much: a watchdog that does not block
+I/O is not the failsafe the design was relying on either way.
+
+So the Now-list item is closed and Phase E carries the failsafe. The physical
+test below is retained only for completeness; there is nothing left riding on
+it.
 
 **PRIORITY, owner 2026-08-28: do not chase this.** "Once we go down the KBUS
 route, we have to implement this ourselves anyways." Correct, and it follows

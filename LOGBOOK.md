@@ -4967,3 +4967,48 @@ that command.
 The rule this belongs to is already in memory as *my connectivity is not plant
 state*; this is a sharper form of it. **Not seeing a message is not evidence
 that it was not sent** — the broker may simply not be showing it to me.
+
+## 2026-08-28 — the watchdog answered by accident, and an Er03 on the way back
+
+Three things in one window, all with the compressor stopped.
+
+**The `lower_settle_s` change works.** 60 -> 180 s took `writes_last_hour` from
+**31 to 9** and cleared `write_budget_exceeded`. Supply held at 16.7–16.9
+against a 16.8 limit at 33–37 Hz. The loop still lives on the constraint — that
+is what `target_margin_c: 0.0` asks for — but it is no longer walking down
+through it one write a minute.
+
+**The watchdog is not there.** Deploying the arming fix needed the compressor
+off, so the window was open anyway; heatctl was stopped for **30 s**, three
+times the 10 s timeout, and on restart read process data immediately with no
+exception 0x04 and no trigger toggle. A 750-352 refuses everything after expiry
+until 0x1003 is toggled — that is the 2026-07-27 failure that blocked the plant
+for 3.5 h. Third independent negative, after 0x1006 never reporting ACTIVE and
+0x1000 accepting writes while supposedly running.
+
+Worth being precise: this proves `pfc-modbus-server` does not implement the
+*expiry* behaviour. It does not prove the outputs stayed alive during those
+30 s. But a watchdog that does not block I/O is not the failsafe the design was
+leaning on, so the distinction no longer changes anything.
+
+The arming fix itself behaves as designed: one `arm written` line, one
+`COUPLER WATCHDOG UNCONFIRMED` warning 60 s later, and the container log went
+from **~90 lines/minute to 0**.
+
+**And I tripped Er03 restoring cooling.** Not by the documented mechanism — the
+compressor was at 0 Hz and unpowered through the whole gap, and the
+SOURCE_STOPPED procedure was followed. The fault appeared on the *resume*: mode
+went to cooling, the flow floor engaged in the same second and raised the valves
+to 41 % mean, and the water-flow fault tripped about a minute later. It cleared
+itself in ~4 min, as it did on 2026-08-20.
+
+The likely cause is that the source is commanded on while the manifold is still
+stroking — ~150 s — so the pump spends the first minutes pushing against a
+partly closed circuit. That is inference; what is not yet established is where
+`mode off` parks the valves, which decides how far they had to travel. One log
+line settles it, and it should be settled before anyone designs a fix, because
+the attractive fix (leave the valves OPEN during `off`) removes the hazard
+entirely rather than timing around it.
+
+Second time Er03 has self-cleared without a physical reset. Recorded, not
+relied on.
