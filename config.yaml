@@ -641,7 +641,27 @@ control:
     # delayed. This is control, not wear management: the plant responds in
     # 1-3 min, so judging the error again after one second means acting on
     # your own un-responded move.
-    lower_settle_s: 60
+    #
+    # 60 -> 180 on 2026-08-28, because 60 was the same mistake one order
+    # smaller. The comment above says 1-3 min and the value was set to the
+    # bottom of that range, so the loop was still re-judging before its
+    # previous move had arrived. Measured that morning, from 60 Hz:
+    #
+    #   07:25  60->58   margin -0.33     07:28  47->39   margin -1.25
+    #   07:26  58->55   margin -0.43     07:29  39->31   margin -1.15
+    #   07:27  55->47   margin -1.25     07:30  31->30   margin -0.85
+    #                                    07:31  compressor OFF at the floor
+    #
+    # Thirty Hz of reduction and the margin got WORSE throughout: the cold
+    # water already made was still arriving. Six writes, an excursion to
+    # -1.82 K over the night, a self-induced compressor stop, and a restart
+    # ten minutes later. 180 s is the TOP of the stated response range, which
+    # is the right end to pick for a lag-dominated loop.
+    #
+    # This does NOT fix the loop, it detunes it. The excursion depth is set by
+    # how far supply keeps falling after the ceiling moves, and that is a
+    # transport lag nobody has measured. See BACKLOG 2026-08-28.
+    lower_settle_s: 180
     min_hz: 30.0   # the device's own floor; 35 left 5 Hz of range unused
     max_hz: 90.0
     # Raising the ceiling only helps if the ceiling is what limits the machine.
