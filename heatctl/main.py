@@ -103,6 +103,9 @@ class Controller:
                              for c in r["circuits"] if c.get("valve")]
         self.unowned_valves = [c["name"] for c in cfg["valves"]["channels"]
                                if c["name"] not in self.owned_valves]
+        # WHERE `off` PARKS THE MANIFOLD. Open, since 2026-08-28 (owner).
+        # See `step()` for the incident that changed it.
+        self.off_valve_pct = float(c.get("off_valve_pct", 100.0))
 
         self.rl_gate = RLGate(cfg)
 
@@ -682,7 +685,7 @@ class Controller:
                     continue
                 sensor = circ["sensor"]
                 if self.mode == "off":
-                    proposed = 0.0
+                    proposed = self.off_valve_pct
                 elif room_out is not None:
                     # Room air drives the valve directly; RL is not consulted,
                     # so its validity is irrelevant on this path.
@@ -696,9 +699,28 @@ class Controller:
         # distribution is a property of the whole manifold, not of one room.
         raw = {v: d for v, (d, _) in demands.items()}
         self._peak_demand = max(raw.values()) if raw else None
-        # `off` bypasses distribution entirely. Normalising a set of all-zero
-        # demands correctly yields all-valves-open - which is right at thermal
-        # equilibrium and exactly wrong when the plant is meant to be off.
+        # `off` bypasses distribution entirely - there is nothing to
+        # distribute, and a uniform set would normalise to the same place
+        # anyway. Kept explicit so the parked position is `off_valve_pct` and
+        # not whatever the normaliser happens to produce.
+        #
+        # THAT PARKED POSITION IS NOW OPEN, AND IT USED TO BE SHUT. The old
+        # comment here argued all-valves-open was "exactly wrong when the plant
+        # is meant to be off". It had the physics backwards, and 2026-08-28
+        # showed how: heatctl does not control the heat pump's circulator, and
+        # that circulator is configured `pump_non_stop` at 100 %. So `off`
+        # closed every valve while the pump kept running - dead-heading it by
+        # construction - and the plant sat that way for the six minutes it was
+        # off before the deploy. Er03, the LATCHING water-flow fault, followed.
+        #
+        # With the source stopped, valve position buys nothing: no compressor,
+        # so the circulating water is already at slab temperature and moves no
+        # energy. Closing them has no benefit to trade against dead-heading a
+        # running pump, and open also removes the 150 s stroke race when the
+        # mode comes back. Owner, 2026-08-28: "Parking at open seems to be the
+        # right solution."
+        #
+        # Safety still runs after this and can still force a circuit shut.
         commanded = raw if self.mode == "off" else self.dist.apply(raw)
 
         # Pump minimum flow. Runs AFTER distribution (it needs the final

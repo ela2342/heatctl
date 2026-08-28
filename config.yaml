@@ -493,6 +493,31 @@ control:
   # currently names one - so this only catches a room added later without a
   # target of its own. 22.0 is the owner's figure, matching the majority.
   default_setpoint_c: 22.0
+
+  # WHERE `mode: off` PARKS THE MANIFOLD. Open, and that is a reversal.
+  #
+  # It parked SHUT until 2026-08-28, on the reasoning that an off plant should
+  # not have its valves open. The physics is the other way round, and the
+  # reason is one heatctl does not control: the heat pump's circulator is
+  # configured `pump_non_stop` at 100 %, so it runs whatever the plant mode
+  # is. `off` therefore closed every valve in front of a running pump -
+  # dead-heading it by construction. Measured that morning: six minutes of it
+  # raised **Er03, the LATCHING water-flow fault**, which then delayed the
+  # return to cooling by four more.
+  #
+  # With the source stopped there is nothing to trade against that. No
+  # compressor means the circulating water is already at slab temperature, so
+  # valve position moves no energy and closing them buys nothing. Open also
+  # removes the ~150 s actuator stroke from the path when the mode comes back,
+  # which is the other way this transition can starve the pump.
+  #
+  # Owner, 2026-08-28: "Parking at open seems to be the right solution."
+  #
+  # NOT a safety limit - `safety.failsafe_valve_pct` is the one that matters
+  # for lost knowledge (D-003), and safety still runs after this and can still
+  # force a circuit shut. This is only the resting position of a plant that
+  # has been told to do nothing.
+  off_valve_pct: 100.0
   # Applies to rooms WITHOUT a wall-unit dial - for Gaestebad and Wohnzimmer
   # the dial overrides this within a minute.
   #

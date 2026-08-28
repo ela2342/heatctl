@@ -145,7 +145,22 @@ async def test_circuit_with_no_return_reading_fails_open(controller):
     assert ctl.io.last_write["valve_hk02"] == 100
 
 
-async def test_mode_off_closes_every_valve(controller):
+async def test_mode_off_parks_the_manifold_OPEN(controller):
+    """REVERSED 2026-08-28. This asserted `{0.0}` until then.
+
+    `off` closed every valve. heatctl does not control the heat pump's
+    circulator, and that circulator is configured `pump_non_stop` at 100 %, so
+    `off` dead-headed a running pump by construction. The plant sat that way
+    for six minutes on 2026-08-28 and raised Er03, the LATCHING water-flow
+    fault.
+
+    Direction matters here and the old assertion had it backwards, which is
+    why this is a retarget and not a tweak: with the source stopped, valve
+    position moves no energy - there is no compressor, so the circulating
+    water is already at slab temperature. Closing them bought nothing to trade
+    against dead-heading the pump, and open also removes the 150 s stroke race
+    when the mode comes back.
+    """
     ctl = controller(
         control={"mode": "off"},
         temps={"rl_hk01": 24.0, "rl_hk02": 18.0, "rl_hk03": 18.0,
@@ -154,7 +169,9 @@ async def test_mode_off_closes_every_valve(controller):
     )
     ctl.io.touch(time.monotonic())
     await ctl.step(1.0)
-    assert set(ctl.io.last_write.values()) == {0.0}
+    assert set(ctl.io.last_write.values()) == {100.0}, (
+        "off must leave the manifold OPEN - a shut manifold dead-heads the "
+        "heat pump's non-stop circulator")
 
 
 async def test_safety_overrides_the_control_output(controller):
@@ -614,22 +631,35 @@ async def test_auto_mode_off_leaves_the_mode_alone(controller):
     assert ctl.mode == "heating"
 
 
-async def test_off_mode_is_not_normalised_into_wide_open(controller):
-    """Defect caught on wiring distribution up, 2026-07-27.
+async def test_off_mode_parked_position_is_deliberate_not_normalised(controller):
+    """Defect caught on wiring distribution up, 2026-07-27; retargeted
+    2026-08-28.
 
-    In `off` every demand is zero, and normalising an all-zero set correctly
+    The invariant this test exists for is that the parked position in `off` is
+    a DELIBERATE value and not whatever the distributor happens to emit. That
+    survives the 2026-08-28 reversal intact - only the value changed, from
+    shut to open, and the reason the value is now open has nothing to do with
+    distribution.
+
+    The original reasoning, kept because it reads plausibly and is wrong: "in
+    `off` every demand is zero, and normalising an all-zero set correctly
     yields all-valves-open - which is right at thermal equilibrium and exactly
-    wrong when the plant is meant to be off. `off` bypasses distribution.
+    wrong when the plant is meant to be off." It is not wrong for the plant to
+    be open when off; see the sibling test. Bypassing distribution is still
+    right, for the narrower reason that a parked position should be chosen
+    rather than derived.
     """
     ctl = controller(
-        control={"mode": "off"},
+        control={"mode": "off", "off_valve_pct": 42.0},
         temps={"rl_hk01": 24.0, "rl_hk02": 18.0, "rl_hk03": 18.0,
                "vl_total": 30.0},
         room_temps={"gaestebad": 15.0},
     )
     ctl.io.touch(time.monotonic())
     await ctl.step(1.0)
-    assert set(ctl.io.last_write.values()) == {0.0}
+    assert set(ctl.io.last_write.values()) == {42.0}, (
+        "the parked position must be off_valve_pct verbatim - if distribution "
+        "ran, a uniform demand set would normalise to full_open_pct instead")
 
 
 # ---------- pump minimum flow vs safety: ordering ----------
