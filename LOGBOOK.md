@@ -5054,3 +5054,58 @@ lands a real failsafe.
 
 Plant after all of it: cooling, 36 Hz, supply 16.3 against a 16.9 limit, no
 faults, 7 heat-pump writes in the hour.
+
+## 2026-09-10 — a power outage, three days of nothing, and a guard
+
+Owner reported a power outage. The PFC was up 3 days 1:50 and **`docker ps` was
+empty** — no containers at all. The documented SD-card trap, and this time it
+had been running that way since the boot: WAGO's automounter had claimed
+`/dev/mmcblk0p1` by UUID at `/media/<uuid>`, `/media` is a tmpfs, so Docker's
+data-root was an empty directory on tmpfs. dockerd started on it with 0 images
+and 0 containers and reported nothing wrong.
+
+**Three days. No control at all. Every surface said healthy.** That is the part
+worth sitting with — `plant-status.sh` returning nothing was the only signal,
+and it is indistinguishable from "I cannot reach the broker", which is a thing
+that happens routinely and which I have a standing memory not to over-read.
+
+Recovery was the documented one and nothing was lost: 17 entries on the card,
+every config and `*.env`, and `--restart always` brought all five containers
+back.
+
+**The fix, at the owner's instruction.** `plant-storage-guard.sh` runs as the
+first line of `do_docker_start()` in WAGO's init script. It self-heals the
+stray mount and, if it cannot, exits non-zero so **dockerd refuses to start**.
+The refusal is the point. Self-healing is nice; converting a silent three-day
+outage into a visible failure-to-start is what actually changes the outcome.
+
+Patching WAGO's script rather than adding an init unit is deliberate: the
+failure is a race, and anything ordered against other boot scripts has to win
+the same race we already lost.
+
+Tested on a scratch loopback rather than the live mount — stray mount healed,
+wrong card refused, healthy state a no-op, plant confirmed untouched after. A
+real reboot was done too and came up clean with all five containers.
+
+**But that reboot did not reproduce the race**, so only the check path ran at
+boot, and winning a race once proves nothing about the next attempt. The
+guarantee that does not depend on luck is the refusal.
+
+Two bugs in my own guard, found by testing it rather than by reading it. It
+matched the first mount in `/proc/mounts`, and the card is legitimately mounted
+twice — there is a bind of its own `docker-root` onto itself — so a healthy
+system could have been diagnosed as broken and "repaired". And the mount step
+assumed an fstab entry, on a box where a firmware update rewrites `/etc`, which
+is exactly the boot where this has to work.
+
+**Still open and it blocks heating: Er03 is latched and the unit has shut its
+own circulator** (`water_pump 0`, compressor 0 Hz). The two earlier Er03s
+self-cleared because the pump kept running; this one cannot, because a
+water-flow fault with no pump has no flow with which to clear itself. That
+wants a reset at the machine. Toggling register 0 bit 0 is an untested
+hypothesis, not a remedy, and this is not the day to test it unattended.
+
+And the thing nobody has: **nothing outside the box noticed.** The guard is
+loud on the PFC, but if dockerd refuses there is no broker to publish to and no
+journal to record it. Three days of silence went unremarked, and that gap is
+untouched by today's work.

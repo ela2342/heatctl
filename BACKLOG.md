@@ -31,7 +31,7 @@ blocking something else, cheap, or a known defect in the safety path.
 |---|---|---|
 | 1 | **The capacity loop's raise path has no rate term** | A proven defect with a measured trace and a fix sketch. It is what put the supply 1.0 K under the condensation limit on 2026-08-21. |
 | 2 | **The override clear is dropped at start-up** | Mostly fixed 2026-08-22 — per-valve and the transition clear both work. What remains: `_publish_no_overrides()` fires before the MQTT plane connects, so a restart inherits the previous process's retained value. Live example: `override/global` has read `stale_data` since the coupler swap. |
-| 3 | **The SD card does not come back by itself after reinsertion** | WAGO's automounter claims it by UUID, Docker starts on a tmpfs, and the plant has no controller while everything reports healthy. Bit us during the swap; recovery is in `docs/PFC200.md`. |
+| 3 | **Er03 is latched and the unit has shut its own circulator** | `water_pump 0`, compressor 0 Hz, so there is no flow with which to clear a flow fault — the two earlier Er03s self-cleared only because the pump kept running. Needs a reset AT THE MACHINE; register-0 toggling is an untested hypothesis (CLAUDE.md), not a remedy. **The plant cannot heat until this is cleared.** |
 | 4 | **Identify `ua_sa` — the overnight cooling experiment** | The one parameter marked GUESSED, and every scheduling argument rests on the fast mode it determines. Reading it from existing data failed for lack of excitation; the protocol is written and needs one mild night. |
 | 5 | **One coupled Kalman filter for the slab estimate** | `auto_mode` is off because the estimate follows the control action. Nothing else re-enables automatic mode selection. |
 | 6 | **`supply_k_per_hz` has POOR provenance by its own comment** | The entire capacity descent rate is computed from it, and 2026-08-21 put it nearer 0.04 than the configured 0.074. Wants one controlled step test. |
@@ -2114,6 +2114,84 @@ did NOT inherit the pilot's conditions — their guaranteed wake is 7200 s
 against 600, and that is what forced the per-device freshness window. They
 report far more often than that in practice, on a 0.5 K delta; the window has
 to assume the guarantee, not the practice.
+
+## The power outage, and the storage guard, 2026-09-10
+
+**Three days with no controller, and every check said healthy.** The box was up
+3 days 1:50, all five containers gone, `docker ps` empty. The documented
+SD-card trap: WAGO's hotplug automounter had claimed `/dev/mmcblk0p1` by UUID
+at `/media/<uuid>`, `/media` is a tmpfs, so Docker's data-root
+`/media/sdcard/docker-root` was an empty directory on that tmpfs. dockerd
+started on it with **0 images and 0 containers** and reported no error.
+
+Recovered by the procedure already in `docs/PFC200.md` — stop dockerd, unmount
+the stray, `mount /media/sdcard`, start dockerd. Nothing was lost: 17 entries
+on the card, all configs and `*.env` files intact, `--restart always` brought
+all five containers back.
+
+### The fix: `deploy/pfc200/plant-storage-guard.sh`
+
+Owner: "Do what needs to be done to ensure that on next power outage, the
+system comes up clean." Installed by `install-storage-guard.sh`, which also
+patches WAGO's `/etc/init.d/dockerd` to call it as the first thing
+`do_docker_start()` does.
+
+**Patching WAGO's script rather than adding an init unit is deliberate.** The
+failure is a RACE, so anything ordered against other boot scripts has to win
+the same race we already lost. Hanging it off `do_docker_start` has no ordering
+question: it runs exactly when dockerd is about to start, at boot, by hand or
+after a crash.
+
+Two behaviours, and the second matters more:
+
+  * **self-heal** — unmount the stray, mount the card where it belongs, waiting
+    up to 30 s for the device to enumerate;
+  * **refuse** — exit non-zero if it cannot, so dockerd does not start. *An
+    empty plant that says so beats an empty plant that looks fine.* The entire
+    cost of this outage was that it was silent.
+
+Proven on a scratch loopback filesystem so the live mount was never at risk —
+all three cases, with the plant confirmed untouched afterwards:
+
+| case | result |
+|---|---|
+| card mounted elsewhere (the real failure) | unmounts the stray, remounts, exit 0 |
+| card mounted but carries no `docker-root` | refuses, exit 1 |
+| already healthy | no-op, exit 0 |
+
+A real reboot was also done: card correct, all five containers up.
+
+**What is NOT proven.** That reboot came up clean on its own, so the boot did
+not reproduce the race and only the *check* path ran at boot. Winning a race
+once says nothing about the next attempt. What is now guaranteed is the
+refusal, which converts a silent three-day outage into a visible failure to
+start — that is the property worth having, and it does not depend on winning
+anything.
+
+Two things found while building it, both fixed:
+  * `where()` returned the first `/proc/mounts` match, and the card is legitimately
+    mounted twice (there is a bind of its own `docker-root` onto itself). A
+    healthy system could have been read as broken and "healed". Now asks
+    directly whether `$MNT` is backed by `$DEV`, and ignores mounts *under* it.
+  * The mount step depended on the fstab entry existing. It now falls back to
+    an explicit `mount $DEV $MNT` and says loudly that fstab needs fixing —
+    because a RAUC firmware update rewrites `/etc`, which is the boot where
+    this script most needs to work.
+
+  - [ ] **Reinstall the guard after any WAGO firmware update.** `/etc` is on
+        the active RAUC slot, so an update reverts both the script and the
+        dockerd patch. `grep PLANT-STORAGE-GUARD /etc/init.d/dockerd` and
+        `/etc/plant-storage-guard.sh --check` are the two checks.
+  - [ ] **Nothing alerts on "dockerd refused to start".** The guard is loud in
+        the boot log and to `logger`, but if docker does not come up there is
+        no broker to publish to and no journal to record it. A dead plant is
+        now visible ON THE BOX and still invisible from anywhere else. The
+        honest options are the PFC's own LEDs (`ledserver`) or something
+        outside the box noticing the broker is gone — the latter is what
+        actually failed here, since nothing complained for three days.
+  - [ ] Ask why the automounter takes it at all. Suppressing it would remove
+        the race rather than recover from it; this fix is a backstop and does
+        not make that question go away.
 
 ## Resuming from `off` starts the source before the valves have opened, 2026-08-28
 
