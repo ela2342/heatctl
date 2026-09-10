@@ -2182,6 +2182,37 @@ Two things found while building it, both fixed:
         the active RAUC slot, so an update reverts both the script and the
         dockerd patch. `grep PLANT-STORAGE-GUARD /etc/init.d/dockerd` and
         `/etc/plant-storage-guard.sh --check` are the two checks.
+  - [ ] **THE PUSH PATH HAS BEEN DEAD SINCE ~2026-09-08 — found 2026-09-10,
+        and it invalidates the alerting we thought we had.** Owner noticed the
+        daily sunrise/sunset pushes, which double as a keepalive, had not
+        arrived for two days.
+        Home Assistant is NOT at fault and reports no error: the sunrise
+        automation fired 06:30, sunset 19:35 the evening before, and the
+        heatctl alarm itself fired at 08:33 with `notify.power_armor_13`
+        logging a send at 08:36. Nothing in `system_log` mentions notify.
+        The delivery path is what is broken. `ha_get_system_health` shows
+        **`cloud.relayer_connected: false`**, `subscription_expiration`
+        `2018-01-01` (HA's no-subscription placeholder) and all three
+        `can_reach_cloud*` probes stuck at `pending`. Android Companion push
+        goes through the Nabu Casa relay, so with that down HA accepts the
+        call and it goes nowhere, silently.
+        **This is the same defect shape as the outage itself**: a
+        success-looking call whose failure is invisible, and an alarm nobody
+        can tell is dead. An alerting path with no self-test is not alerting.
+        - [ ] Owner: check Settings → Home Assistant Cloud — subscription
+              lapsed, or the relayer merely failing to connect? Not
+              distinguishable from the API. AdGuard Home runs on this box and
+              other components log DNS timeouts, so a resolution problem is a
+              live candidate for the second case.
+        - [ ] **Decide whether the alarm should depend on Nabu Casa at all.**
+              A local path — ntfy, Gotify, Telegram, SMTP — has no
+              subscription and no relay to lose. For an alarm whose whole
+              purpose is to fire when infrastructure fails, depending on a
+              cloud service is the wrong shape.
+        - [ ] **Give the alarm a heartbeat of its own.** The keepalive that
+              exposed this was accidental: the owner noticed sunset pushes had
+              stopped. Something should verify weekly that a push actually
+              ARRIVES, rather than that HA dispatched one.
   - [ ] **Nothing alerts on "dockerd refused to start".** The guard is loud in
         the boot log and to `logger`, but if docker does not come up there is
         no broker to publish to and no journal to record it. A dead plant is
