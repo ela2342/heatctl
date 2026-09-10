@@ -549,6 +549,28 @@ class ControlPlane:
                 f"{self.disc_prefix}/{component}/heatctl/{uid}/config",
                 json.dumps(conf), retain=True)
 
+        # THE ONE ENTITY THAT DETECTS SILENCE. `expire_after` makes HA mark it
+        # `unavailable` when no message arrives for that long, which is a
+        # native state transition - an automation can trigger on it with no
+        # template and no last_updated arithmetic.
+        #
+        # 300 s against a 1 s control loop is ~300 missed cycles: far beyond
+        # any plausible hiccup, short enough that a dead plant is known within
+        # five minutes rather than three days (2026-09-10).
+        #
+        # NO availability_topic on this one, deliberately. Availability is
+        # driven by `heatctl/status`, which is retained - so on the failure
+        # this exists to catch, HA would keep believing the plant is available
+        # and `expire_after` would never get to speak.
+        await self._client.publish(
+            f"{self.disc_prefix}/sensor/heatctl/heartbeat/config",
+            json.dumps({"unique_id": "heatctl_heartbeat",
+                        "name": "Loop heartbeat",
+                        "state_topic": f"{self.base}/heartbeat",
+                        "unit_of_measurement": "s",
+                        "expire_after": 300,
+                        "device": dev}), retain=True)
+
         async def undisc(component: str, uid: str) -> None:
             """Remove a previously discovered entity.
 

@@ -107,6 +107,10 @@ class Controller:
         # See `step()` for the incident that changed it.
         self.off_valve_pct = float(c.get("off_valve_pct", 100.0))
 
+        # Start time, for the heartbeat in `telemetry()`. Monotonic, so it is
+        # unaffected by NTP stepping the wall clock at boot.
+        self._started_monotonic = time.monotonic()
+
         self.rl_gate = RLGate(cfg)
 
         # House demand / source engagement. A RECONCILER, not an on/off
@@ -1290,6 +1294,27 @@ class Controller:
             await self.plane.publish("override/global", "none")
 
     async def telemetry(self, state) -> None:
+        # HEARTBEAT FIRST, and it is the only thing here that exists for an
+        # observer rather than for the plant.
+        #
+        # `heatctl/status` plus its LWT covers heatctl dying. It does NOT cover
+        # the broker dying, the PFC dying, or the bridge to Home Assistant
+        # breaking - in all three the LWT is never delivered and HA keeps
+        # serving the last retained value, so every entity looks fine and
+        # frozen. That is exactly what happened on 2026-09-10: three days with
+        # no controller at all and nothing anywhere complained.
+        #
+        # So: one topic that means "a control cycle just completed", carrying
+        # the monotonic uptime so it changes every time. Its discovery config
+        # sets `expire_after`, which makes HA mark it `unavailable` when the
+        # messages stop - a native state transition an automation can trigger
+        # on, with no template and no staleness arithmetic.
+        #
+        # Deliberately NOT a real measurement. Putting `expire_after` on, say,
+        # `vl_total` would also fire when that one sensor faulted, and would
+        # then blame the whole plant for a broken PT1000.
+        await self.plane.publish(
+            "heartbeat", f"{time.monotonic() - self._started_monotonic:.0f}")
         for n, t in state.temps.items():
             await self.plane.publish(f"temp/{n}", f"{t:.1f}")
         for n, p in state.valves_pct.items():
