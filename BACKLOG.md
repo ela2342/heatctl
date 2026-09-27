@@ -31,7 +31,7 @@ blocking something else, cheap, or a known defect in the safety path.
 |---|---|---|
 | 1 | **The capacity loop's raise path has no rate term** | A proven defect with a measured trace and a fix sketch. It is what put the supply 1.0 K under the condensation limit on 2026-08-21. |
 | 2 | **The override clear is dropped at start-up** | Mostly fixed 2026-08-22 — per-valve and the transition clear both work. What remains: `_publish_no_overrides()` fires before the MQTT plane connects, so a restart inherits the previous process's retained value. Live example: `override/global` has read `stale_data` since the coupler swap. |
-| 3 | **Er03 is latched and the unit has shut its own circulator** | `water_pump 0`, compressor 0 Hz, so there is no flow with which to clear a flow fault — the two earlier Er03s self-cleared only because the pump kept running. Needs a reset AT THE MACHINE; register-0 toggling is an untested hypothesis (CLAUDE.md), not a remedy. **The plant cannot heat until this is cleared.** |
+| 3 | **The heating raise path ignores stored energy, and banked 66.7 kWh into a house that did not need it** | 2026-09-25: two weeks in heating took the house to 27 degC while `house_blocked_wh` sat at 66757 saying so. A one-sided gate — never raise the water setpoint while the slab is over-target — cannot cycle, unlike `auto_mode`. | `water_pump 0`, compressor 0 Hz, so there is no flow with which to clear a flow fault — the two earlier Er03s self-cleared only because the pump kept running. Needs a reset AT THE MACHINE; register-0 toggling is an untested hypothesis (CLAUDE.md), not a remedy. **The plant cannot heat until this is cleared.** |
 | 4 | **Identify `ua_sa` — the overnight cooling experiment** | The one parameter marked GUESSED, and every scheduling argument rests on the fast mode it determines. Reading it from existing data failed for lack of excitation; the protocol is written and needs one mild night. |
 | 5 | **One coupled Kalman filter for the slab estimate** | `auto_mode` is off because the estimate follows the control action. Nothing else re-enables automatic mode selection. |
 | 6 | **`supply_k_per_hz` has POOR provenance by its own comment** | The entire capacity descent rate is computed from it, and 2026-08-21 put it nearer 0.04 than the configured 0.074. Wants one controlled step test. |
@@ -2114,6 +2114,124 @@ did NOT inherit the pilot's conditions — their guaranteed wake is 7200 s
 against 600, and that is what forced the per-device freshness window. They
 report far more often than that in practice, on a 0.5 K delta; the window has
 to assume the guarantee, not the practice.
+
+## The house reached 27 degC in heating mode, 2026-09-25
+
+Left alone for two weeks, the plant coasted — and then overshot badly. Found by
+the owner, not by anything we built.
+
+```
+mode heating                outdoor 11.2 degC
+deviation -4.32 K           (+ = too cold, so the house is 4.3 K TOO WARM)
+setpoint_heating 25.0       walked up from 20.0
+return_water 30.4           slab loaded
+house_excess_wh 66757       ALL of it "blocked" = wrong mode
+rooms: 27.5 27.4 27.3 26.9 25.0 24.6 23.4   against setpoints 22.0-23.5
+```
+
+**Nothing here malfunctioned. The plant did exactly what it was told, for two
+weeks, while the thing it was told stopped being true.** `auto_mode` is off
+(Now item 5), so the mode only ever changes when a human says so — and the last
+human to say so was me, switching to heating on a 9.4 degC morning. The weather
+turned, solar gains arrived, and there is no mechanism anywhere in layer 1 that
+leaves heating.
+
+Worse than passive: while the house was still genuinely cold, the setpoint trim
+did its job and walked the water setpoint 20 -> 25, banking **66.7 kWh** into
+the slab. By the time the air was too warm, the heat was already stored, and a
+slab does not give it back on request. The trim can only unwind at 1 K / 30 min
+and the slab discharges on its own multi-hour constant.
+
+This is the concrete instance of what the owner argued for on 2026-08-26:
+*"can we allow the slab to cool out during the night, because day temperatures
+will compensate? Or do we need to start heating it? Can't answer that without
+the weather prediction and physical model."* A controller that cannot see
+tomorrow cannot avoid this class of overshoot; it can only react after the
+energy is already in the building.
+
+Switched to cooling. The compressor started at once and the trim went straight
+to its limit — `house -4.32 K and valves at 100% - not enough capacity (already
+at the limit)` — because the condensation floor caps supply at 19.4 degC.
+
+  - [ ] **Nothing noticed for two weeks.** The heartbeat alarm catches a plant
+        that has stopped talking; it says nothing about a plant that is
+        confidently doing the wrong thing. An alarm on *sustained* deviation —
+        say house |deviation| > 2 K for an hour — is a different and cheaper
+        guard than the Kalman work, and would have caught this on day one.
+  - [ ] **THE FIX IS A CHARGING LIMIT, NOT A MODE SWITCH.** My first draft
+        of this entry named `auto_mode` as the missing piece. Owner,
+        2026-09-25: *"auto_mode is not the answer, it will just lead to
+        cycling."* Correct, and the reason is structural rather than a matter
+        of tuning:
+          * The plant integrates. `auto_mode` is bang-bang on a system whose
+            slow mode is **55 h**, so it commits energy many hours before the
+            air can show the result, then reverses on the air it finally sees.
+            A wider deadband does not fix it — the lag does the hunting, not
+            the threshold.
+          * Each flip is a refrigerant-cycle reversal and a slab re-loaded the
+            other way. The cost per oscillation is not small.
+          * **Mode is a SEASON. Charge is a control.** Conflating them makes a
+            slow, near-irreversible decision respond to a fast, noisy signal.
+        So: leave mode where it is, and bound the charging instead.
+  - [ ] **Gate the heating raise path on stored energy, not on air deviation.**
+        This is the actual defect and it is narrow. `Trimmer.step()` raises the
+        water setpoint whenever the air is cold and the valves are saturated —
+        it never asks whether the slab already holds what the house will need.
+        D-046 **already computes that number**: `house_blocked_wh` read
+        **66757** through the whole episode, which is the model saying *this
+        energy is in the building and is in the wrong direction*. Nothing
+        consulted it.
+        Note the asymmetry that makes this worth doing on its own: raising the
+        setpoint is nearly free to reverse **in the water** and very expensive
+        to reverse **in the slab**. A one-sided limit — refuse to raise while
+        stored energy exceeds target — cannot cycle, because it only ever
+        withholds. That is the whole difference from `auto_mode`.
+  - [ ] Once there is a forecast, the same gate takes its ceiling from the next
+        24 h instead of from the present balance. The mechanism does not
+        change; only where the target comes from. Until then the present
+        balance is strictly better than nothing, and is already published.
+
+### NOT a bug, and it looks exactly like one — do not "fix" this
+
+Two config pairs read as a dead-on-arrival trap, and I nearly filed them:
+
+```
+idle_pct: 30.0        vs   min_open_pct: 41.0    (flow floor)
+saturated_pct: 85.0   vs   full_open_pct: 50.0   (effective range, D-041)
+```
+
+Read as valve COMMANDS, neither `idle` (<=30) nor `saturated` (>=85) could ever
+be true, which would make both branches of `Trimmer.step()` unreachable and the
+water setpoint a one-way ratchet. That is wrong: `main.py:1154` passes
+`max_open=self._peak_demand`, the **raw demand** on a 0-100 scale, published as
+`heatctl/demand/peak` — not the commanded valve percentage. Both thresholds are
+reachable and the trim works.
+
+Checked at the call site before changing anything, which is the only reason
+this is a note instead of a regression. If the parameters are ever renamed,
+`max_open` is the misleading half of the name.
+
+  - [ ] Rename `max_open` to `peak_demand_pct` in `setpoint.py`, and say in the
+        config comments that `idle_pct`/`saturated_pct` are demand, not valve
+        position. The trap costs an afternoon every time someone reads it.
+
+### Gästebad has stopped reporting entirely
+
+No `sample_ts`, no humidity, `source: house_avg`. Its Shelly was on battery at
+6.29 V on 2026-08-22. `kind_natalie` is also on `house_avg`.
+
+That leaves the house dew point computed from **two** rooms, and Badezimmer —
+59.8 % RH at 26.9 degC, dew point 18.4 — is setting it alone. That single
+reading is what caps cooling supply at 19.4 degC across all ten circuits.
+
+  - [ ] Replace or recharge the Gästebad sensor. It is not a comfort loss, it
+        is a **capacity** loss: the dew point is a `max()` across rooms, so the
+        wettest reporting room governs the whole plant, and losing dry rooms
+        can only make the cap tighter.
+  - [ ] With outdoor at 11 degC, ventilation dumps heat far faster than a
+        19.4 degC supply can — and it lowers the dew point, which unlocks more
+        supply depression. Worth saying out loud in any overshoot: the window
+        beats the heat pump here.
 
 ## The power outage, and the storage guard, 2026-09-10
 

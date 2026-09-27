@@ -5109,3 +5109,66 @@ And the thing nobody has: **nothing outside the box noticed.** The guard is
 loud on the PFC, but if dockerd refuses there is no broker to publish to and no
 journal to record it. Three days of silence went unremarked, and that gap is
 untouched by today's work.
+
+## 2026-09-25 — 27 degC in heating mode, and why the mode was not the problem
+
+Two quiet weeks, then the owner found the house at 27 degC.
+
+```
+mode heating                outdoor 11.2 degC
+deviation -4.32 K           + = too cold, so 4.3 K TOO WARM
+setpoint_heating 25.0       walked up from 20.0
+return_water 30.4
+house_excess_wh 66757       every Wh of it "blocked" = wrong mode
+rooms 27.5 27.4 27.3 26.9 25.0 24.6 23.4   against setpoints 22.0-23.5
+```
+
+Nothing malfunctioned. The plant did exactly what it was told for two weeks
+while the instruction quietly stopped being true — I set heating on a 9.4 degC
+morning, the weather turned, and layer 1 has no mechanism that leaves heating.
+
+The damage was not passive. While the house was still genuinely cold the trim
+did its job and walked the water setpoint 20 -> 25, banking **66.7 kWh** into
+the slab. By the time the air was too warm the heat was already stored, and a
+slab does not give it back on request.
+
+Switched to cooling; the compressor started at once and went straight to its
+limit — *"house -4.32 K and valves at 100% - not enough capacity (already at
+the limit)"* — because an 18.4 degC dew point caps supply at 19.4.
+
+**I got the conclusion wrong first and the owner corrected it.** I wrote up
+`auto_mode` as the missing piece. Their answer: *"auto_mode is not the answer,
+it will just lead to cycling."* That is right for a structural reason, not a
+tuning one. The plant integrates and its slow mode is 55 h, so a mode chosen
+from air temperature commits energy many hours before the air can show the
+result, then reverses on the air it finally sees — bang-bang on a long dead
+time, and every flip is a cycle reversal plus a slab re-loaded the other way. A
+wider deadband does not help; the lag does the hunting.
+
+The distinction worth keeping: **mode is a season, charge is a control.** The
+house did not get warm because the mode was wrong. It got warm because the
+plant kept charging a slab that was already over-charged — and
+`house_blocked_wh` had been saying so, at 66757, the whole time. Nothing reads
+it.
+
+So the fix is a one-sided gate on the heating raise path: never raise the water
+setpoint while stored energy is over target. It cannot cycle, because it only
+ever withholds. That is the entire difference from `auto_mode`, and it needs no
+forecast — when there is one, the same gate simply takes its ceiling from the
+next 24 h instead of from the present balance.
+
+**Also found, and it costs capacity rather than comfort:** Gästebad has stopped
+reporting entirely (battery, 6.29 V back in August) and kind_natalie is on
+`house_avg` too. The house dew point is now computed from two rooms, and
+Badezimmer alone — 59.8 % RH at 26.9 degC — sets it at 18.4, which caps supply
+at 19.4 degC across all ten circuits. The dew point is a `max()` across rooms,
+so losing rooms can only tighten the cap. With outdoor at 11 degC the window
+beats the heat pump anyway, and airing also drops the dew point.
+
+**A trap I nearly filed as a bug.** `idle_pct: 30` against a `min_open_pct: 41`
+flow floor, and `saturated_pct: 85` against a `full_open_pct: 50` ceiling, read
+as though neither branch of `Trimmer.step()` could ever fire — a one-way
+ratchet on the water setpoint. It is not: `main.py:1154` passes
+`max_open=self._peak_demand`, the raw 0-100 demand published as
+`heatctl/demand/peak`, not the valve command. Checking the call site before
+changing anything is the only reason this is a note and not a regression.
