@@ -5301,3 +5301,12 @@ as theories, unvalidated: a heat-pump mode flip 2 -> 1 -> 2 in two seconds at
 start-up; `outdoor_source` going station 24.2 -> hp_register 28.0 -> forecast
 16.5 across the restart; and the D-051 house target averaging in two bathrooms
 whose recovery term asks for 27-31 degC slab in cooling.
+
+16:27-16:36, first compressor start on 1ea5293: the falling-margin veto
+refused every raise as designed, and the supply still reached 14.0 against a
+14.1 dew point (worst margin -1.14 K, ~1 min at or under the dew point),
+because the ceiling was already 76 Hz from 14:40. Recovery again came from the
+compressor throttling itself at its return setpoint (74 -> 39 Hz at 16:34),
+coinciding with the loop's second lower 74 -> 67. Two further theories in
+BACKLOG: the ceiling outliving the off period, and the P04 floor assuming the
+low-frequency spread.

@@ -2948,6 +2948,32 @@ before fixing; "the obvious cause" has been wrong here before.
         does not. Needs the owner's view on what a room the mode cannot serve
         should contribute before any change.
 
+  - [ ] **The ceiling outlives the compressor's off period, so every restart
+        starts at the last ceiling (theory).** OBSERVED 16:27-16:36, the first
+        start after the raise vetoes went in: the ceiling was still 76 Hz from
+        14:40, the compressor went straight to 75, the veto correctly refused
+        every raise ("1.40 K down in 120 s - still falling") - and the supply
+        still went to **14.0 against a 14.1 dew point**, because nothing had
+        to be raised. Lowering then stepped 76->74 and waited 180 s, same as
+        14:37. THEORY: while the compressor runs far below the ceiling
+        ("not the constraint", 38-40 Hz under 67-76) the ceiling is left where
+        the last transient put it, and the next start inherits it. Options,
+        none chosen: pull the ceiling down to near the running frequency when
+        it is not binding (one write per cycle); or set a start ceiling on
+        stop. The raise vetoes are necessary but, on this evidence, not
+        sufficient.
+  - [ ] **The water setpoint's condensation floor may assume today's spread,
+        not the spread at full ramp (theory).** OBSERVED: both excursions
+        (14:41 and 16:34) ended when the COMPRESSOR throttled itself on its
+        setpoint (return reached 18.0 -> 83/74 Hz fell to 39), not when the
+        ceiling moved; `spread_est` read 3.30 at 75 Hz against 2.0 at 38 Hz.
+        A return setpoint of 18 at a 4 K manifold spread is a supply near 14,
+        i.e. at the dew point. THEORY: the P04 floor (D-036, `supply_limit`
+        in setpoint.py) is computed with the spread at the moment of writing,
+        which is the low-frequency spread, so it permits a setpoint that the
+        start ramp's spread carries below the limit. Check the floor's
+        arithmetic in `_bounds` against these two traces before believing it.
+
 ## Carried over from the investigation log
 
 Fifty-five items that were still open inside the dated entries when the log was
