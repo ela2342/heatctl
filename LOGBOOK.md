@@ -5257,3 +5257,10 @@ direction flip, rate limit, start-up settle, stale-target fallback, dew floor
 + demand-unmet, out-of-band correction, derived ratio, wiring); 12 mutants, all
 caught — the direction-flip test first let its mutant through (it checked
 before the missing reset could matter) and was tightened. 741 passed.
+
+Deployed d99d51f (mode off, 0 Hz, deploy; mode back as cooling). First read:
+`direct: 19.3, holding 20` — 0.74 K from the register, inside the 0.75 K
+hysteresis. The house target had fallen from the morning's 20.41 to 18.57
+because the sun arrived: Wohnzimmer 22.5 → 25.7 °C, Schlafzimmer 22.4 → 24.0,
+both slab targets now on the condensation clamp (14.10). The law following
+the day's solar load is the intended behaviour; count its writes per day.
