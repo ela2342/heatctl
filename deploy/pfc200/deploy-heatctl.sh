@@ -15,9 +15,20 @@ D=/media/sdcard/docker-root/heatctl
 # SINGLE WRITER, checked from here because this machine can reach both. Fails
 # CLOSED: if the App's state cannot be determined, refuse rather than assume.
 if [ "${SKIP_PEER_CHECK:-0}" != "1" ]; then
-    state=$(ssh -o ConnectTimeout=5 "root@$HA" \
-            'ha addons info local_heatctl --raw-json 2>/dev/null' \
-            | grep -o '"state":"[a-z]*"' | head -1) || state=""
+    info=$(ssh -o ConnectTimeout=5 "root@$HA" \
+           'ha addons info local_heatctl --raw-json 2>/dev/null') || info=""
+    state=$(printf '%s' "$info" | grep -o '"state":"[a-z]*"' | head -1)
+    # STOPPED IS NOT ENOUGH. A stopped App with boot=auto comes back on the next
+    # HA reboot and nothing notices: 2026-09-15 to 09-28 it ran for 13 days,
+    # polling the heat pump's gateway alongside this controller. Refuse unless
+    # it also cannot start by itself.
+    case "$(printf '%s' "$info" | grep -o '"boot":"[a-z]*"' | head -1)" in
+        *manual*) : ;;
+        *) echo "REFUSING: the HA App would restart on an HA reboot (boot != manual)." >&2
+           echo "Disable it: POST {\"boot\":\"manual\",\"watchdog\":false} to" >&2
+           echo "  http://supervisor/addons/local_heatctl/options on $HA." >&2
+           exit 1 ;;
+    esac
     case "$state" in
         *stopped*) : ;;
         "")  echo "REFUSING: cannot determine whether the HA App is running." >&2

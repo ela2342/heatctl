@@ -5209,3 +5209,27 @@ the air is not asking for more, so it cannot fight an August pre-charge. 11 new
 tests incl. both incidents replayed, all mutation-verified (the first version
 of the August-night test did NOT catch removing the `satisfied` guard, because
 the capacity branch fired first; tightened). 722 passed.
+
+## 2026-09-28 — The rollback App had been running for 13 days
+
+Found by the deploy of the charging gate, whose peer check refused: the HA App
+`local_heatctl` was `started`. The HA host rebooted on 2026-09-15 13:35 and the
+App was `boot: auto`, so it came straight back. Its log: `FAILSAFE: stale_data
+(still, since 1103530 s)` — every valve write failing against the old coupler
+address (.52, gone since the 08-24 swap), so no valve harm. But its heat pump
+client WAS connected to the gateway, and receiving the PFC's replies:
+`request ask for transaction_id=14070 but got id=49101`. Two masters on one bus
+for 13 days; no sign it wrote anything (its reads never completed, and it does
+not write without them). Nothing alerted — the heartbeat watches the PFC, not
+the absence of a second controller.
+
+Owner: "Immediately make sure the HA app is gone!" Stopped, then `boot: manual`,
+`watchdog: false` via the supervisor API (`ha apps options` has no `--boot`
+flag). `deploy-heatctl.sh` now refuses unless the App is stopped AND
+`boot: manual`.
+
+Then deployed be7116a (mode off first, compressor already 0 Hz). The restart
+brought the mode back as cooling (the device config default). Gate telemetry
+after the RL gate settled: `water_sp/slab_excess_k -7.50` in cooling, i.e.
+7.5 K of whole slab past target — over-charged, so the first trim after the
+1800 s settle should raise P04 from 15.

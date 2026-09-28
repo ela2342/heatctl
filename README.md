@@ -184,8 +184,8 @@ box, Modbus still over the network to the 750-352 coupler. The PFC has no
 Python and no pip, so it runs containerised — `deploy/systemd/` does not apply
 to it.
 
-- Previous: HA add-on, `deploy/ha-addon/`. **Stopped, not removed** — it is the
-  rollback, and its config directory is still the seed for the PFC's.
+- Previous: HA add-on, `deploy/ha-addon/`. **Stopped, not removed, and `boot: manual`** —
+  a reboot must never start it (it did, 2026-09-15). It is the rollback, and its config directory is still the seed for the PFC's.
 - Done 2026-08-24: the coupler is swapped for the PFC and the control↔I/O
   link no longer crosses the network. The watchdog check that gated it was
   never answered, and the emulated watchdog is **unverified** — see the banner
