@@ -31,9 +31,9 @@ blocking something else, cheap, or a known defect in the safety path.
 |---|---|---|
 | 1 | **The capacity loop's raise path has no rate term** | A proven defect with a measured trace and a fix sketch. It is what put the supply 1.0 K under the condensation limit on 2026-08-21. |
 | 2 | **The override clear is dropped at start-up** | Mostly fixed 2026-08-22 — per-valve and the transition clear both work. What remains: `_publish_no_overrides()` fires before the MQTT plane connects, so a restart inherits the previous process's retained value. Live example: `override/global` has read `stale_data` since the coupler swap. |
-| 3 | **The heating raise path ignores stored energy, and banked 66.7 kWh into a house that did not need it** | 2026-09-25: two weeks in heating took the house to 27 degC while `house_blocked_wh` sat at 66757 saying so. A one-sided gate — never raise the water setpoint while the slab is over-target — cannot cycle, unlike `auto_mode`. | `water_pump 0`, compressor 0 Hz, so there is no flow with which to clear a flow fault — the two earlier Er03s self-cleared only because the pump kept running. Needs a reset AT THE MACHINE; register-0 toggling is an untested hypothesis (CLAUDE.md), not a remedy. **The plant cannot heat until this is cleared.** |
+| 3 | **~~The trim ignores stored energy~~ — the charging gate, DONE 2026-09-28** | Both directions: the trim backs off while the smoothed slab is over-charged for the mode, or the air over-shoots, and the air is not asking for more (D-048, `setpoint.py`). Watch `water_sp/slab_excess_k` and `water_sp/reason` after the deploy: it should step P04 up from 15 on the first overcooled morning. |
 | 4 | **Identify `ua_sa` — the overnight cooling experiment** | The one parameter marked GUESSED, and every scheduling argument rests on the fast mode it determines. Reading it from existing data failed for lack of excitation; the protocol is written and needs one mild night. |
-| 5 | **One coupled Kalman filter for the slab estimate** | `auto_mode` is off because the estimate follows the control action. Nothing else re-enables automatic mode selection. |
+| 5 | **The control overhaul: coupled filter + 72 h planner** | Agreed 2026-09-28, `docs/DESIGN_ESTIMATION_PLANNING.md` §7 carries the phases and gates; D-048/049/050. Next: phase 1 (fix `heat_input_w` mode-blindness; wall areas by hand — owner; HA read on `roomtemp/#`), then the replay harness. It is also what retires return-temperature-as-slab and re-opens automatic mode choice. |
 | 6 | **`supply_k_per_hz` has POOR provenance by its own comment** | The entire capacity descent rate is computed from it, and 2026-08-21 put it nearer 0.04 than the configured 0.074. Wants one controlled step test. |
 | 7 | **`dew_point_margin_c: 1.0` is unsized** | The only buffer in the condensation defence, and it has never been derived. D-039 says there is no safe amount of condensation. |
 | 8 | **The condensation floor never corrects the setpoint already in the register** | Found 2026-08-27 with `setpoint_cooling` 2.4 K below the limit and no code path able to raise it. The capacity loop is currently the only condensation defence acting, which is one layer where D-036 intended two. |
@@ -2216,6 +2216,12 @@ this is a note instead of a regression. If the parameters are ever renamed,
         position. The trap costs an afternoon every time someone reads it.
 
 ### Gästebad has stopped reporting entirely
+
+> **WRONG, corrected 2026-09-28.** Gästebad was reporting again that morning
+> (`interval_s 7200`, sample 40 min old) and the dew point came from three
+> rooms. A battery unit sits silent for up to its 7200 s ceiling when the room
+> moves less than 0.5 K; that silence was read as death. `kind_natalie` is
+> still on `house_avg`.
 
 No `sample_ts`, no humidity, `source: house_avg`. Its Shelly was on battery at
 6.29 V on 2026-08-22. `kind_natalie` is also on `house_avg`.

@@ -49,6 +49,15 @@ project is not ignorance, it is **drift between what is written and what runs**.
     "slightly" are not mitigations. · D-039
 6. **One writer per actuator.** A second writer is a design error. · D-030
 
+### Control structure
+6b. **Mode is a season, charge is a control.** The mode is chosen on the
+    slow mode's timescale; the charge is bounded continuously by stored energy,
+    and the trim backs off while the slab is over target. · D-048
+6c. **Layer 1 tracks slab temperature**; room air is the objective of whoever
+    sets the slab target. Layer 2 speaks through a plan whose elements expire
+    one by one, and control (never safety) may use its estimates only while
+    fresh. · D-049
+
 ### Parameters and constants
 6a. **`open_threshold_pct` and `full_open_pct` bound the whole command range**,
     and `min_open_pct`, `enforce_flow_floor` and `rl_gating.min_opening_pct`
@@ -1534,3 +1543,119 @@ Assistant, so on that side these are ordinary retained values that never
 expire. `sensors/room/<room>/sample_ts` is published for exactly that reason —
 it is the only staleness signal available there, and anything built on this
 tree in HA must use it. Bridging in MQTT 5 instead is untested; see BACKLOG.
+
+## D-048 · Mode is a season, charge is a control
+Two decisions the code had been treating as one. **Mode** is the direction
+heat moves; changing it reverses the refrigerant cycle, swaps the setpoints
+and dead zone (D-043), and — the real cost — every Wh already stored must be
+pumped back out at the price it took to put in. With a ~55 h slow mode a mode
+choice commits the house for days. **Charge** is how much energy to move and
+when: continuous, cheap to adjust, and the actual control input.
+
+So: **mode is chosen on the timescale of the slow mode, from what the next
+days need; charge is bounded continuously by stored energy.** "Season" is a
+metaphor, not a calendar — D-020 still stands, the site has seen frost in
+August.
+
+**Why:** 2026-09-25 and 2026-09-28, opposite in sign, identical in shape. Both
+times the mode was right when chosen (heating on a 9 °C morning; cooling a
+27 °C house). Both times the charge was unbounded: +66.7 kWh banked in
+heating, then −85.9 kWh in cooling three days later. A charging bound would
+have stopped both with no mode switch at all. Owner, 2026-09-25: *"It should
+have never gotten this warm. auto_mode is not the answer, it will just lead to
+cycling."* `auto_mode` picks the mode from today's error — feedback across a
+dead time of hours, on a plant that integrates for days. That oscillates by
+construction, and a wider deadband does not help: the lag does the hunting.
+
+**What follows:**
+* The trim's back-off may not depend on valve idleness alone. While the
+  smoothed house slab energy is past target in the charging direction and the
+  air is not asking for more, it steps toward neutral
+  (DESIGN_ESTIMATION_PLANNING §5.3). This is layer 1's permanent guarantee.
+* The planner decides heat, cool **or coast** in blocks of ≥24 h, with a
+  sign-change penalty in its objective. Coast — source stopped, valves open,
+  pump running — is the usual correct answer in the shoulder season, not an
+  indecision.
+* Mode switching stays with the owner until the planner has a track record
+  (owner, 2026-09-28). `auto_mode` stays off; D-046's energy-based picker is
+  not re-enabled by this entry.
+
+**Cost:** in layer 1 alone the plant under-delivers on a day that genuinely
+swings — it will not pre-cool on a cold morning for a hot afternoon. That is
+layer 2's job, and doing it needs the forecast.
+
+## D-049 · What the layer split is for, and the plan interface
+D-001 stands, but two of its original premises have gone and the reasons
+that remain are different, so it is restated.
+
+**No longer true:** that layer 2 is an optional optimiser on another machine
+(it runs on the PFC beside heatctl), and that layer 1 is the real controller
+which layer 2 merely nudges. Layer 1 alone has now failed in both directions
+(D-048). **Layer 2 becomes the primary controller of house energy.**
+
+**Still true, and why the split is necessary:**
+* **Failure domains.** The forecast needs the internet, a filter can diverge,
+  a planner can emit nonsense. None of it reaches an actuator unclamped, and
+  none of it reaches safety at all (principle 5).
+* **The 1 s loop.** heatctl is one asyncio event loop; a matrix exponential or
+  a 72-variable QP inside it stalls the cycle. A separate process is the
+  cheapest protection there is.
+* **Deploys.** The estimator can be redeployed ten times a week without
+  restarting the safety core.
+* **Timescales** (D-030): seconds to minutes are layer 1's, hours to days
+  layer 2's.
+
+**What changes:**
+* Layer 1 with layer 2 dead must be **safe and non-oscillating**, no longer
+  good. The charging gate (D-048) is what makes it so.
+* **The setpoint variable layer 1 tracks is slab temperature per room.** Room
+  air is the objective of whoever computes the slab target: the plan when
+  fresh, `energy.slab_target_c` otherwise. Valves follow per-room slab deficit
+  (DESIGN_ENERGY_DEMAND §4); the room PID remains for the fan-coil room and as
+  fallback.
+* **Layer 1's control code — never its safety code — may consume layer 2's
+  estimates while they are fresh**, falling back to its own when stale. That
+  retires return-temperature-as-slab, the cause of the 78-minute
+  oscillation of 2026-08-19.
+* **The interface widens from one scalar to a plan**: `heatctl/set/plan`,
+  hourly elements each with its own expiry, never retained, clamped by layer
+  1. A dead optimizer degrades an hour at a time to the fallback, never to an
+  old plan. Supersedes the setpoint half of DESIGN.md §2.2 and retires
+  `opt/setpoint_delta` once the plan is live.
+
+**Cost:** layer 1 gains a second path (plan fresh / plan stale) that must be
+tested in both states, and every consumer of an estimate must say what it does
+when the estimate expires.
+
+## D-050 · One coupled Kalman filter over the whole house
+Supersedes DESIGN.md §7.1 ("one Kalman filter per room … no giant coupled
+EKF"). Owner, 2026-08-10: *"a large Kalman filter with all the state
+variables for all rooms, modeling all transmissions between inside and
+outside, as well as between the rooms."* Recorded then as undecided against
+§7.1; decided now.
+
+**Why coupled, with today's sensors:**
+* The neighbour temperatures §7.1 would feed in as "measured inputs" are
+  Shelly samples 6–120 min apart in 0.5 K steps. As shared states they carry
+  their uncertainty; as inputs they are treated as exact.
+* Several unknowns are common to every room — forecast bias, solar factor,
+  flow scale, one supply temperature — and decoupled filters would each
+  estimate their own disagreeing copy.
+* Interior-wall conductances are identifiable only where both sides are
+  states.
+
+**What survives of §7.1:** 60 s LTV discretisation, native missing
+measurements, and the innovation gate — published **per room** from the one
+filter, so a bad room is still visible on its own. Parameters are released
+one at a time (WP-R).
+
+**Designed to work without a heat meter.** Heat input is `ṁ·c_p·(VL − RL)`
+per circuit with flow from the valve map; `flow_scale` stays at its prior
+because without a meter it is confounded with `UA_sa`. The resulting
+energy-scale error is an actuator-gain error, which hourly replanning against
+measured slab temperatures corrects. The meter, when it comes, is one more
+measurement and changes no structure (DESIGN_ESTIMATION_PLANNING §6).
+
+**Cost:** failure isolation. A badly wrong room can pull its neighbours'
+estimates; the per-room innovation gate is what catches it. ~15–19 states in
+pure Python at 60 s, to be measured on the PFC.

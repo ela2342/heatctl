@@ -775,6 +775,20 @@ control:
     step_c: 1.0
     saturated_pct: 85.0     # valves this open = not enough capacity
     idle_pct: 30.0          # valves this shut = water more aggressive than needed
+    # THE CHARGING GATE (D-048, DESIGN_ESTIMATION_PLANNING 5.3). The trim also
+    # backs off while the house slab is over-charged for the current mode and
+    # the air is not asking for more - whatever the valves say, because one
+    # warm room holding peak demand at 100 defeated `idle_pct` in both
+    # directions (2026-09-25 heating +66.7 kWh, 2026-09-28 cooling -85.9 kWh).
+    #
+    # overcharge_slab_k: 1 K of whole slab (~8.7 kWh). The water setpoint's own
+    #   resolution is 1 K; a finer band asks the trim to resolve what its
+    #   actuator cannot.
+    # gate_smoothing_s: the slab estimate falls back to raw return, which moves
+    #   with the water in minutes. 1 h is 20x the water loop's 1-3 min and ~6x
+    #   below the fast mode: rejects the actuator's echo, keeps slab motion.
+    overcharge_slab_k: 1.0
+    gate_smoothing_s: 3600.0
     deviation_band_c: 0.3
     cooling_min_c: 14.0     # operating bounds, inside the register's 7-30
     cooling_max_c: 25.0

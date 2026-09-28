@@ -5172,3 +5172,40 @@ ratchet on the water setpoint. It is not: `main.py:1154` passes
 `max_open=self._peak_demand`, the raw 0-100 demand published as
 `heatctl/demand/peak`, not the valve command. Checking the call site before
 changing anything is the only reason this is a note and not a regression.
+
+## 2026-09-28 — The mirror image of 09-25, and the control overhaul agreed
+
+**07:31, plant check.** Healthy (five containers up two weeks, no faults), and
+still in cooling three days after the 27 °C incident — with the compressor at
+49 of 50 Hz and P04 on its 15 °C floor. Rooms 20.6–23.6 °C, all but one below
+setpoint; Badezimmer 2.9 K under. `house_blocked_wh` **−85 899**, from
++66 757 on 09-25: ~150 kWh moved through the slab in three days, overshooting
+both ways. Supply 13.1 °C against a 12.8 limit (dew point 11.8, Badezimmer).
+Gästebad was reporting again — the 09-25 "stopped reporting" was its 7200 s
+silence, corrected in BACKLOG.
+
+**Mechanism, and it is the same as 09-25.** Arbeitszimmer (fan coil, 23.6 °C
+against 22.0) was the only room above setpoint; its demand of 100 was the peak.
+The trim's back-off requires the most demanding valve at ≤ `idle_pct` 30, so it
+never fired. The flow floor (`min_open_pct` 41) then pushed 13 °C water through
+every other room. On 09-25 the same test held P05 at 25 in heating.
+
+**A withhold-only gate would not have fixed it** — P04 was already at its
+floor, so "never lower it" changes nothing. The back-off branch is the defect.
+
+**Owner-agreed overhaul** (`docs/DESIGN_ESTIMATION_PLANNING.md`, D-048/049/050):
+one coupled Kalman filter over the whole house fed by every sensor (per-circuit
+returns as the first direct slab measurement); a 72 h box-constrained QP
+replanned hourly, deciding heat / cool / coast; a plan interface with
+per-element expiry; layer 1 tracks per-room slab temperature. Designed to work
+without the heat meter. Owner points worth keeping: the Controme system flushed
+circuits to keep returns fresh — here flushing becomes a variance-driven
+measurement decision; mode switching stays manual at first.
+
+**Phase 0 implemented: the charging gate in `setpoint.py`.** The back-off now
+also fires when the air over-shoots its band or the smoothed slab (1 h, as
+kelvin of whole slab, band 1 K) is over-charged for the mode — always only when
+the air is not asking for more, so it cannot fight an August pre-charge. 11 new
+tests incl. both incidents replayed, all mutation-verified (the first version
+of the August-night test did NOT catch removing the `satisfied` guard, because
+the capacity branch fired first; tightened). 722 passed.

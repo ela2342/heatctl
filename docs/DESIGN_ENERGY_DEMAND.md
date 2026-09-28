@@ -1,6 +1,7 @@
 # Energy-demand control — proposal against DESIGN.md §4 and §7
 
-**Status: PROPOSAL, not implemented.** Written 2026-08-06. Supersedes the
+**Status: §1–§3 implemented in `heatctl/energy.py`; §4 adopted by D-049 and
+`docs/DESIGN_ESTIMATION_PLANNING.md` §5.** Originally a proposal, written 2026-08-06. Supersedes the
 cascade sketch in §4 (outer room PID biasing an inner RL PID), which was
 rejected for ignoring the plant's time constants — it would have needed heavy
 detuning to survive the 5.62 h air↔slab mode, i.e. loop tuning spent fighting

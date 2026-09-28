@@ -93,6 +93,10 @@ Layer 2 never touches hardware. HA never touches hardware (post-migration);
 HA is UI + sensor source only.
 
 ### 2.2 MQTT contract (layer 2 → layer 1), additions
+
+> **Setpoint half superseded 2026-09-28 by D-049**: layer 2 sends a plan of
+> hourly elements with per-element expiry (`heatctl/set/plan`,
+> `docs/DESIGN_ESTIMATION_PLANNING.md` §4). The no-retain rule below stands.
 Existing: `heatctl/set/setpoint/<room>`, `heatctl/set/mode`.
 New (all values clamped by safety, all with TTL — on expiry heatctl
 reverts to its built-in defaults):
@@ -802,6 +806,10 @@ from buffer/room residuals. If a stove-loop VL/RL sensor pair gets wired
 ## 7. Estimation and identification
 
 ### 7.1 Filter structure: decoupled, not monolithic
+> **SUPERSEDED 2026-09-28 by D-050** — one coupled filter over the whole
+> house. Current design: `docs/DESIGN_ESTIMATION_PLANNING.md` §2. Kept for
+> the reasoning; the innovation gate below survives, per room.
+
 One Kalman filter per room (3 states + disturbance), one for the buffer
 (5 states + Q_stove), all linear time-varying (matrices switch with pump/
 valve/mode status). No giant coupled EKF — decoupled filters are
@@ -888,6 +896,11 @@ this is the 30-year system-identification asset.
 ---
 
 ## 8. Planning (layer 2) — energy storage and retrieval
+
+> **SUPERSEDED 2026-09-28** for the floor: a 72 h box-constrained QP replanned
+> hourly, emitting `heatctl/set/plan` (D-048, D-049,
+> `docs/DESIGN_ESTIMATION_PLANNING.md` §3–§4). The storage table stays valid
+> for the buffer and DHW, which are not built.
 
 State everything in kWh with temperature-window constraints:
 

@@ -994,6 +994,12 @@ class Controller:
         # blind, which is the signal to fall back rather than a zero - a zero
         # would read as "the house is exactly on target".
         self._last_house_excess_wh = total
+        # And to the trim's charging gate (D-048), which smooths it itself.
+        self.water_sp.observe_excess(total, self.energy.slab_capacity_wh(), now)
+        gate_k = self.water_sp.slab_excess_k
+        await self.plane.publish(
+            "water_sp/slab_excess_k",
+            "unknown" if gate_k is None else f"{gate_k:+.2f}")
         act = self.energy.house_actionable_wh(rooms)
         blocked = self.energy.house_blocked_wh(rooms)
         n_valid = sum(1 for r in rooms if r.valid)

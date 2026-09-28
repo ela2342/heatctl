@@ -377,3 +377,113 @@ def test_a_legitimate_clamped_step_is_still_taken(sp):
     assert d.target == 19 and d.kind == TRIM
 
 
+
+
+# ---------- the charging gate (D-048) ----------
+#
+# The back-off used to need the MOST demanding valve nearly shut. One warm room
+# holding peak demand at 100 defeated it twice, in opposite directions.
+
+C_SLAB = 8691.0      # Wh/K of whole slab, the synthetic figure for these tests
+
+
+def primed_gate(c, excess_wh, now=10_000.0):
+    """Feed a steady excess long enough that the smoothing has converged."""
+    for t in range(0, 10 * int(c.gate_smoothing_s), 60):
+        c.observe_excess(excess_wh, C_SLAB, now - 10 * c.gate_smoothing_s + t)
+    return c
+
+
+def test_2026_09_28_overcooled_house_backs_the_cooling_off(sp):
+    """Three days of cooling after the 27 degC incident: P04 on its floor at
+    15, Arbeitszimmer's fan coil holding peak demand at 100, house mean +0.73 K
+    (too cold), slab 85.9 kWh short. The trim held at 15 because the valves
+    were not idle, and the plant kept cooling a house that was already cold.
+
+    The back-off must move the water WARMER - toward neutral - not merely
+    stop making it colder."""
+    c = primed_gate(sp(), -85_899.0)
+    d = call(c, mode="cooling", dev=+0.73, open_pct=100.0, current=15.0,
+             limit=12.8)
+    assert d.kind == TRIM
+    assert d.target == 16, "cooling back-off must make the water warmer"
+
+
+def test_2026_09_25_overheated_house_backs_the_heating_off(sp):
+    """Two weeks in heating: P05 walked to 25, house at 27 degC, mean deviation
+    -4.32 K, 66.7 kWh banked. Nothing backed off because peak demand was high."""
+    c = primed_gate(sp(), +66_757.0)
+    d = call(c, mode="heating", dev=-4.32, open_pct=90.0, current=25.0)
+    assert d.kind == TRIM
+    assert d.target == 24, "heating back-off must make the water colder"
+
+
+def test_air_overshoot_alone_backs_off_with_the_energy_model_blind(sp):
+    """No slab estimate at all - the gate must still see an air over-shoot."""
+    c = sp()
+    assert c.slab_excess_k is None
+    d = call(c, mode="cooling", dev=+0.73, open_pct=100.0, current=15.0,
+             limit=12.8)
+    assert d.target == 16
+
+
+def test_overcharged_slab_backs_off_before_the_air_overshoots(sp):
+    """The slab leads the air by hours; that is the point of watching it. Air
+    inside its band, slab over-charged -> back off already."""
+    c = primed_gate(sp(), +3.0 * C_SLAB)
+    d = call(c, mode="heating", dev=0.0, open_pct=90.0, current=30.0)
+    assert d.target == 29
+
+
+def test_gate_never_fights_a_warm_house_on_a_cold_slab(sp):
+    """August night: slabs cold from the day's cooling read as over-charged
+    with coolth, but the air is still warm. Backing off here would throw away
+    the pre-charge for tomorrow - the gate needs the air satisfied too."""
+    c = primed_gate(sp(), -3.0 * C_SLAB)
+    d = call(c, mode="cooling", dev=-1.0, open_pct=95.0, current=20.0)
+    assert d.target == 19, "a warm house must still get colder water"
+    # And with the valves busy but not saturated, where no capacity step is
+    # due: hold, never warm the water under a house that wants cooling.
+    c = primed_gate(sp(), -3.0 * C_SLAB)
+    d = call(c, mode="cooling", dev=-1.0, open_pct=60.0, current=20.0)
+    assert d.target is None, "gate must not back off while the air wants more"
+
+
+def test_slab_within_band_and_busy_valves_still_hold(sp):
+    """Nothing over-charged, air in band, valves busy: the old hold stands."""
+    c = primed_gate(sp(), +0.5 * C_SLAB)
+    d = call(c, mode="heating", dev=0.0, open_pct=90.0, current=30.0)
+    assert d.target is None
+
+
+def test_a_one_off_excess_spike_does_not_trip_the_gate(sp):
+    """A flowing return moves with the water within minutes, so the raw
+    estimate echoes the actuator. Unsmoothed, the gate would chase its own
+    output - the 78-minute auto_mode oscillation of 2026-08-19."""
+    c = sp()
+    c.observe_excess(0.0, C_SLAB, 0.0)
+    c.observe_excess(+5.0 * C_SLAB, C_SLAB, 60.0)     # one minute of spike
+    assert not c.overcharged("heating")
+    d = call(c, mode="heating", dev=0.0, open_pct=90.0, current=30.0)
+    assert d.target is None
+
+
+def test_a_blind_model_forgets_old_energy(sp):
+    """Stale energy is not evidence: after one smoothing constant of silence
+    the gate stops acting on the last value."""
+    c = primed_gate(sp(), +3.0 * C_SLAB, now=0.0)
+    assert c.overcharged("heating")
+    c.observe_excess(None, C_SLAB, c.gate_smoothing_s + 1.0)
+    assert c.slab_excess_k is None
+    assert not c.overcharged("heating")
+
+
+def test_overcharge_is_mode_relative(sp):
+    """A slab surplus is over-charged in heating and stored heat to remove in
+    cooling; swapping them is the direction error that would back cooling off
+    on a hot slab."""
+    c = primed_gate(sp(), +3.0 * C_SLAB)
+    assert c.overcharged("heating") and not c.overcharged("cooling")
+    c = primed_gate(sp(), -3.0 * C_SLAB)
+    assert c.overcharged("cooling") and not c.overcharged("heating")
+    assert not c.overcharged("off")

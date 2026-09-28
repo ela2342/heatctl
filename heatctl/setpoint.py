@@ -45,6 +45,11 @@ the precision: it means the soft loop and the hard guard can disagree about
 whether a breach is happening. The heat pump register remains as a FALLBACK
 for when the manifold sensor is faulted, because some reading beats none.
 
+**Stored energy bounds the charge** (D-048). Valve idleness alone cannot
+trigger the back-off, because one warm room holds the peak open: the trim also
+backs off while the smoothed slab is over-charged for this mode, or the air
+over-shoots, and the air is not asking for more. It never switches the mode.
+
 **`max_open` under-reports load**, so in practice this loop runs mostly on
 house deviation. Why, and how far, is measured in
 `docs/FLOW_CHARACTERISATION.md` - do not restate the numbers here, they have
@@ -138,6 +143,13 @@ class SetpointController:
         self.spread_max_c = float(s.get("spread_max_c", 8.0))
         self._spread_est: float | None = None
 
+        # --- the charging gate (D-048, 2026-09-28) ---
+        # Stored energy, as kelvin of whole slab, smoothed. See observe_excess.
+        self.overcharge_slab_k = float(s.get("overcharge_slab_k", 1.0))
+        self.gate_smoothing_s = float(s.get("gate_smoothing_s", 3600.0))
+        self._excess_k: float | None = None
+        self._excess_t: float | None = None
+
     def observe_spread(self, spread: float | None) -> None:
         """Feed the measured leaving/return delta-T. None means "not running".
 
@@ -162,6 +174,58 @@ class SetpointController:
     @property
     def spread_estimate(self) -> float | None:
         return self._spread_est
+
+    def observe_excess(self, excess_wh: float | None,
+                       capacity_wh_per_k: float | None, now: float) -> None:
+        """Feed the house slab excess (`energy.house_excess_wh`). None = blind.
+
+        Held as KELVIN OF WHOLE SLAB so the band survives a change of floor
+        area, the same unit D-046 chose for the mode deadband.
+
+        SMOOTHED, first order, `gate_smoothing_s`. The slab estimate falls back
+        to the raw return temperature, and a flowing return moves with the
+        water within minutes - so unsmoothed, this gate would react to its own
+        actuator. That is the mechanism of the 78-minute `auto_mode`
+        oscillation of 2026-08-19. One hour is 20x the water loop's 1-3 min
+        settling and ~6x below the fast mode, so it rejects the actuator's echo
+        and keeps real slab motion.
+
+        A blind model leaves the last value in place for one smoothing
+        constant and then forgets it: stale energy is not evidence.
+        """
+        if excess_wh is None or not capacity_wh_per_k:
+            if (self._excess_t is not None
+                    and now - self._excess_t > self.gate_smoothing_s):
+                self._excess_k = None
+            return
+        k = excess_wh / capacity_wh_per_k
+        if self._excess_k is None or self._excess_t is None:
+            self._excess_k = k
+        else:
+            dt = max(0.0, now - self._excess_t)
+            a = 1.0 - math.exp(-dt / self.gate_smoothing_s)
+            self._excess_k += a * (k - self._excess_k)
+        self._excess_t = now
+
+    @property
+    def slab_excess_k(self) -> float | None:
+        return self._excess_k
+
+    def overcharged(self, mode: str) -> bool:
+        """Is the slab past target in the direction this mode charges it?
+
+        Heating charges heat, so a SURPLUS is over-charged; cooling charges
+        coolth, so a DEFICIT is. Unknown is not over-charged - the gate then
+        falls back to the air over-shoot, see step().
+        """
+        e = self._excess_k
+        if e is None:
+            return False
+        if mode == "heating":
+            return e > self.overcharge_slab_k
+        if mode == "cooling":
+            return e < -self.overcharge_slab_k
+        return False
 
     def step(self, mode: str, deviation: float | None, max_open: float | None,
              current: float | None, dew_point: float | None,
@@ -222,6 +286,21 @@ class SetpointController:
         satisfied = abs(deviation) <= self.deviation_band_c or not wants_more
         saturated = max_open is not None and max_open >= self.saturated_pct
         idle = max_open is not None and max_open <= self.idle_pct
+        # THE CHARGING GATE (D-048). The back-off used to need `idle` - the
+        # MOST demanding valve nearly shut - and one warm room defeats that.
+        # 2026-09-25: P05 held at 25 with the house at 27 degC and 66.7 kWh
+        # banked. 2026-09-28: P04 held at 15 for three days while Arbeitszimmer
+        # kept peak demand at 100 and the slab went 85.9 kWh short.
+        #
+        # So the air over-shooting its band, or the slab being over-charged
+        # for this mode, is also reason to back off. Only ever toward neutral
+        # and only on the comfort cadence, and only when the air is not asking
+        # for more (`satisfied`): a cold slab under a warm house on an August
+        # night keeps cooling. The charging branch is untouched; it already
+        # requires the air to want more.
+        overshoot = (deviation < -self.deviation_band_c if mode == "heating"
+                     else deviation > self.deviation_band_c)
+        overcharged = self.overcharged(mode)
 
         # The cadence gate, now that the regime is known.
         interval = (self.saturated_interval_s if (wants_more and saturated)
@@ -237,11 +316,18 @@ class SetpointController:
             delta = self.step_c if mode == "heating" else -self.step_c
             why = (f"house {deviation:+.2f} K and valves at {max_open:.0f}% - "
                    "not enough capacity")
-        elif satisfied and idle:
-            # Back off. This is the efficiency half.
+        elif satisfied and (idle or overshoot or overcharged):
+            # Back off. This is the efficiency half, and the charging gate.
             delta = -self.step_c if mode == "heating" else self.step_c
-            why = (f"house {deviation:+.2f} K and valves at {max_open:.0f}% - "
-                   "water is more aggressive than needed")
+            if idle:
+                why = (f"house {deviation:+.2f} K and valves at "
+                       f"{max_open:.0f}% - water is more aggressive than needed")
+            elif overcharged:
+                why = (f"house {deviation:+.2f} K and slab "
+                       f"{self._excess_k:+.2f} K past target - over-charged")
+            else:
+                why = (f"house {deviation:+.2f} K past its band - "
+                       "over-shooting")
         else:
             return SetpointDecision(None, f"house {deviation:+.2f} K, valves "
                                           f"{max_open if max_open is None else round(max_open)}%")

@@ -1067,6 +1067,20 @@ class TestEnergyShadow:
         assert ctl.plane.topic("energy/wohnzimmer/slab_target") is not None
         assert ctl.plane.topic("energy/rooms_valid") is not None
 
+    async def test_the_house_total_reaches_the_charging_gate(self, controller):
+        """D-048's gate is only as live as this wire. The trim can be tested
+        to death and still never see an excess if the shadow stops feeding it.
+
+        Mutation-verified: deleting the observe_excess call fails this."""
+        _, ctl = self._both(controller)
+        ctl.io.touch(time.monotonic())
+        await ctl.step(1.0)
+        total = ctl._last_house_excess_wh
+        assert total is not None, "fixture no longer produces a house total"
+        assert ctl.water_sp.slab_excess_k == pytest.approx(
+            total / ctl.energy.slab_capacity_wh())
+        assert ctl.plane.topic("water_sp/slab_excess_k") not in (None, "unknown")
+
     async def test_a_room_with_no_floor_area_is_reported_not_guessed(
             self, controller):
         """The synthetic rooms have no area unless the test adds it.
