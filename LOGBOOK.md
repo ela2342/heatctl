@@ -5264,3 +5264,33 @@ hysteresis. The house target had fallen from the morning's 20.41 to 18.57
 because the sun arrived: Wohnzimmer 22.5 → 25.7 °C, Schlafzimmer 22.4 → 24.0,
 both slab targets now on the condensation clamp (14.10). The law following
 the day's solar load is the intended behaviour; count its writes per day.
+
+## 2026-09-28 — Supply 0.4 K under the dew point: the raise path again
+
+Compressor start ~14:25 in cooling, dew point 14.1, limit 15.1. From the
+journal at 30 s:
+
+```
+time      vl    freq  ceil  margin  capacity/reason
+14:30   18.2    59     60   +3.06   within the raise interval
+14:31   17.6    66     70   +2.66   RAISE (compressor 66 over a 60 ceiling)
+14:33   17.0    78     80   +1.86   RAISE, margin falling ~0.4 K/min
+14:35   16.0    84     86   +0.86   RAISE
+14:37   14.6    83     84   -0.54   first lower: 2 Hz
+14:40   13.9    83     76   -1.24   second lower, after lower_settle_s 180
+14:41   13.7    39     76   -1.44   worst; compressor throttled by ITS OWN setpoint
+14:44   15.2    39     76   +0.06   back in band
+```
+
+Three raises while the margin fell monotonically — the 2026-08-21 defect,
+unchanged, and this time deeper: **13.7 against a 14.1 dew point for about
+three minutes**. Valves were not touched (D-035: the compressor stop is the
+only enforcement), and the stop never came because the ceiling was still at
+76-84 when the compressor backed off on its own. Eight R32 writes in 15 min.
+My 14:57 monitoring check read the recovered state and reported the margin as
+fine; the journal is what showed the excursion.
+
+Fix in `capacity.py`: no raise while the margin is 0.2 K below its 120 s peak;
+no raise while the compressor runs over the ceiling (start ramp, 08-12); a
+supply-reading gap re-arms the start-up settle. Lowering untouched — its lag
+is the other half (BACKLOG). 6 new tests, 3 mutants caught; 747 passed.

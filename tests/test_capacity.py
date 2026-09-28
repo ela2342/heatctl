@@ -299,3 +299,94 @@ def test_a_healthy_margin_with_no_usable_ceiling_still_just_blocks(cap):
     missing register read would stop the plant on a perfectly good margin."""
     d = call(cap(), supply=18.0, limit=16.0, silent=False)
     assert d.kind == BLOCKED and d.target_hz is None
+
+
+def _ramp(c, trace, limit=15.1, t0=10_000.0, dt=30.0):
+    """Feed (supply, ceiling, hz) samples every `dt` seconds, with 1 s cycles
+    in between as the real loop does, and return the decisions at each sample.
+    The trace opens just after a raise, as both measured ones did."""
+    c._last_raise = t0
+    out = []
+    for i, (supply, ceiling, hz) in enumerate(trace):
+        base = t0 + i * dt
+        for k in range(int(dt)):
+            d = call(c, supply=supply, limit=limit, ceiling=ceiling, hz=hz,
+                     now=base + k)
+            if d.kind == RAISE:
+                out.append(d)
+                break
+        else:
+            out.append(d)
+    return out
+
+
+def test_2026_09_28_a_falling_margin_is_not_spent(cap):
+    """2026-09-28 14:30-14:35, the journal's trace at 30 s. The compressor was
+    AT a 60 Hz ceiling and the margin (limit 15.1) was falling ~0.2 K every
+    30 s from +3.1. The loop raised 60->70->80->86 on the level alone, and the
+    supply went on to 13.7 - 0.4 K under the dew point itself - before the
+    compressor backed off by its own setpoint.
+
+    Mutation-verified: with the falling-margin veto removed this raises."""
+    c = cap(target_margin_c=0.0, deadband_c=0.25, raise_interval_s=120.0)
+    trace = [(18.2 - 0.1 * i, 60.0, 59.0) for i in range(12)]   # 18.2 -> 17.1
+    decisions = _ramp(c, trace)
+    assert not any(d.kind == RAISE for d in decisions)
+    assert "still falling" in decisions[-1].reason
+
+
+def test_a_flickering_steady_margin_still_raises(cap):
+    """The veto must not cost steady-state capacity. 2026-09-28 15:00 the
+    margin sat at +0.96/+1.06 - one count of flicker - for half an hour."""
+    c = cap(target_margin_c=0.0, deadband_c=0.25, raise_interval_s=120.0)
+    trace = [(16.2 if i % 2 else 16.1, 45.0, 45.0) for i in range(8)]
+    assert any(d.kind == RAISE for d in _ramp(c, trace))
+
+
+def test_a_margin_that_has_stopped_falling_is_spent(cap):
+    """The veto withholds a raise; it does not forbid one. Once the drop has
+    left the window the level decides again."""
+    c = cap(target_margin_c=0.0, deadband_c=0.25, raise_interval_s=120.0)
+    falling = [(18.0 - 0.1 * i, 45.0, 45.0) for i in range(4)]
+    flat = [(17.7, 45.0, 45.0)] * 8
+    decisions = _ramp(c, falling + flat)
+    assert not any(d.kind == RAISE for d in decisions[:4])
+    assert any(d.kind == RAISE for d in decisions[4:])
+
+
+def test_a_falling_margin_does_not_delay_lowering(cap):
+    """Direction of failure: the veto is on spending, never on protecting.
+    A margin falling fast through the band must still back off at once."""
+    c = cap(target_margin_c=0.0, deadband_c=0.25)
+    for k in range(60):
+        call(c, supply=16.0 - 0.01 * k, limit=15.1, ceiling=80.0, hz=80.0,
+             now=10_000.0 + k)
+    d = call(c, supply=14.7, limit=15.1, ceiling=80.0, hz=80.0, now=10_060.0)
+    assert d.kind == LOWER and d.target_hz < 80.0
+
+
+def test_a_compressor_over_its_ceiling_is_in_its_start_ramp(cap):
+    """The ceiling does not grip in the first minute after a start (measured
+    2026-08-12). 2026-09-28 14:31: 66 Hz against a 60 Hz ceiling, read as "at
+    the ceiling", and the ceiling went up.
+
+    Mutation-verified: without the over-the-ceiling check this raises."""
+    d = call(cap(), supply=18.0, limit=16.0, ceiling=60.0, hz=66.0)
+    assert d.kind != RAISE and "start ramp" in d.reason
+
+
+def test_a_reading_gap_re_arms_the_start_up_settle(cap):
+    """An empty history is not a flat one. After the supply reading drops out,
+    the first readings back must not be spent before a trend has been watched.
+
+    Mutation-verified: without the re-arm this raises on the first reading."""
+    c = cap(target_margin_c=0.0, deadband_c=0.25, raise_interval_s=120.0)
+    assert call(c, supply=None, limit=15.1, now=10_000.0).target_hz is None
+    d = call(c, supply=16.1, limit=15.1, ceiling=45.0, hz=45.0, now=10_001.0)
+    assert d.kind != RAISE and "settling" in d.reason
+    for k in range(2, 125):
+        d = call(c, supply=16.1, limit=15.1, ceiling=45.0, hz=45.0,
+                 now=10_000.0 + k)
+        if d.kind == RAISE:
+            break
+    assert d.kind == RAISE

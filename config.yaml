@@ -752,6 +752,15 @@ control:
     max_hz: 90.0
     # Raising the ceiling only helps if the ceiling is what limits the machine.
     at_ceiling_hz: 3.0
+    # No raise while the margin is falling: a veto on the raise path only,
+    # never on lowering. Vetoed when the margin is this far below its highest
+    # value in the window. 0.2 K = two counts of the 0.1 K manifold reading, so
+    # flicker cannot trip it; 120 s = raise_interval_s, the span one raise is
+    # meant to be judged over. Derived, not tuned - 2026-09-28's ramp fell
+    # 0.4 K/min, so any threshold from one to four counts would have vetoed
+    # all three raises. See BACKLOG "raise path has no rate term".
+    raise_trend_window_s: 120
+    raise_veto_drop_c: 0.2
     # R32 only binds in silent mode, and silent mode's own fan cap (D09,
     # 0x00F4) defaults to 60 against the ~800 RPM the condenser actually needs.
     # Refuse to touch the ceiling unless that has been raised - a frequency cap

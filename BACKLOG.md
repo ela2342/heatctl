@@ -29,7 +29,7 @@ blocking something else, cheap, or a known defect in the safety path.
 
 | | what | why now |
 |---|---|---|
-| 1 | **The capacity loop's raise path has no rate term** | A proven defect with a measured trace and a fix sketch. It is what put the supply 1.0 K under the condensation limit on 2026-08-21. |
+| 1 | **The capacity loop's raise path: fix written 2026-09-28, NOT YET DEPLOYED** | It happened again 2026-09-28 14:31–14:41: three raises into a falling margin, supply 0.4 K under the dew point itself. Falling-margin veto + start-ramp veto in `capacity.py`; deploy, then watch the next cold start. The lowering path's lag (2 Hz, then 180 s) is the other half and is untouched — see the section. |
 | 2 | **The override clear is dropped at start-up** | Mostly fixed 2026-08-22 — per-valve and the transition clear both work. What remains: `_publish_no_overrides()` fires before the MQTT plane connects, so a restart inherits the previous process's retained value. Live example: `override/global` has read `stale_data` since the coupler swap. |
 | 3 | **Watch the direct water-setpoint law (D-051, DONE 2026-09-28)** | The setpoint is now computed from the house slab target and written in one step; the walk + charging gate (D-048) are the fallback. Watch `water_sp/direct_target`, `energy/house_slab_target`, `water_sp/reason` against the room air for a week. Expected failure shape: a steady air offset (target error ÷ ~3) from `ua_ao`/`q_internal`/solar — a parameter to identify, NOT a reason to add an integrator. |
 | 4 | **Identify `ua_sa` — the overnight cooling experiment** | The one parameter marked GUESSED, and every scheduling argument rests on the fast mode it determines. Reading it from existing data failed for lack of excitation; the protocol is written and needs one mild night. |
@@ -2827,17 +2827,36 @@ comment already warns about it for `_last_raise`. `raise_interval_s` was also
 cut 600 -> 120 when the step became proportional, which makes it raise three
 times through a transient where it used to raise once.
 
-  - [ ] **Do not raise while the margin is falling.** The cheapest form is a
+  - [x] **Do not raise while the margin is falling.** DONE 2026-09-28:
+        veto when the margin is `raise_veto_drop_c` (0.2 K) below its peak in
+        the last `raise_trend_window_s` (120 s); a supply-reading gap re-arms
+        the start-up settle so the window is never judged empty. Would have
+        vetoed all three 09-28 raises and the second and third on 08-21 - NOT
+        the first 08-21 one, where the margin was still rising (+2.0).
+        Original note: The cheapest form is a
         sign test on the change in margin since the last sample; a small
         negative-slope veto would have blocked all three raises above without
         affecting steady-state behaviour at all. It must not become a
         derivative *controller* - the lowering path stays purely proportional,
         because the protective direction must never depend on an estimate of
         a rate.
+  - [x] **A compressor running OVER its ceiling is in its start ramp** and
+        is no longer read as "at the ceiling" (09-28 14:31: 66 Hz under 60).
+        DONE 2026-09-28. That covers the ungripped first minute; whether a
+        cold start should raise at all for longer stays open:
   - [ ] **Consider whether a cold start should raise at all** for the first few
         minutes. `_last_raise` is seeded on first use precisely so a restart
         cannot ratchet; a compressor start from 0 Hz is the same situation and
         is not currently covered.
+  - [ ] **The lowering path is too slow to catch a ramp it did not start.**
+        2026-09-28: first move 86->84 (err -0.34 K x 0.5 / 0.074 = 2 Hz), then
+        `lower_settle_s` 180 held it while the margin went -0.34 -> -1.24 K.
+        The supply turned only when the compressor's OWN setpoint throttled it
+        (83 -> 39 Hz at 14:41), not because of the ceiling. 180 s was chosen on
+        2026-08-28 to stop the loop overdriving itself, so shortening it
+        re-opens that. The honest fix is the transport lag measured and the
+        gain below corrected; with the raise vetoes in, the excursions this
+        path has to catch should also get rarer. Measure before tuning.
   - [ ] **`supply_k_per_hz: 0.074` still has POOR provenance by its own
         comment.** This log is not a clean step test either - the limit moved
         at 11:42 and again at 11:48 - but it does give a usable check: 75 -> 42

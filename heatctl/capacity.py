@@ -46,6 +46,7 @@ for water colder than the condensation limit in the first place (see the
 from __future__ import annotations
 
 import logging
+from collections import deque
 from dataclasses import dataclass
 
 log = logging.getLogger("heatctl.capacity")
@@ -141,6 +142,24 @@ class CapacityController:
         # but a flash cycle.
         self.at_ceiling_hz = float(c.get("at_ceiling_hz", 3.0))
         self._last_raise: float | None = None
+        # DO NOT RAISE WHILE THE MARGIN IS FALLING. The raise path reads the
+        # margin's LEVEL, and during a start ramp into a large demand the level
+        # is headroom being consumed, not headroom available. Measured
+        # 2026-08-21 (48->58->68->75 Hz while the margin fell +2.0 -> +0.7,
+        # then 1.0 K under the limit) and again 2026-09-28 14:31-14:35
+        # (60->70->80->86 Hz while it fell +2.7 -> +0.9 at ~0.4 K/min, then
+        # the supply 0.4 K under the DEW POINT itself).
+        #
+        # A VETO, not a derivative term. It can only withhold a raise; the
+        # lowering path stays purely proportional on the level, because the
+        # protective direction must never depend on an estimate of a rate.
+        #
+        # The test is the drop from the highest margin seen in the window, not
+        # a fitted slope: two counts of the 0.1 K sensor resolution, so
+        # steady-state flicker (+0.96/+1.06 on 2026-09-28) never trips it.
+        self.raise_trend_window_s = float(c.get("raise_trend_window_s", 120.0))
+        self.raise_veto_drop_c = float(c.get("raise_veto_drop_c", 0.2))
+        self._margins: deque[tuple[float, float]] = deque()
 
     def step(self, mode: str, supply_temp: float | None,
              supply_limit: float | None, current_ceiling: float | None,
@@ -160,6 +179,7 @@ class CapacityController:
                 return CapacityDecision(
                     None, "stopped, and no supply reading to judge a restart")
             margin = supply_temp - supply_limit
+            self._observe(now, margin)
             if self._stopped_at is not None and now - self._stopped_at < self.min_off_s:
                 return CapacityDecision(
                     None, f"stopped, margin {margin:+.2f} K - within the "
@@ -195,10 +215,18 @@ class CapacityController:
         if supply_temp is None or supply_limit is None:
             # No measurement of the constrained quantity means no basis to
             # spend capacity. Holding is safe; the setpoint loop still runs.
+            #
+            # And the gap RE-ARMS the start-up settle: when the reading comes
+            # back the trend window is empty, and no evidence of falling is not
+            # evidence of not falling. Seeding again buys a full interval of
+            # fresh samples before the falling-margin veto can be trusted.
+            self._last_raise = None
+            self._margins.clear()
             return CapacityDecision(None, "no supply measurement")
 
         margin = supply_temp - supply_limit
         err = margin - self.target_margin_c
+        self._observe(now, margin)
 
         # THE STOP PATH DOES NOT NEED THE CEILING, and used to be gated behind
         # it anyway. Both gates below are about R32: it only binds in silent
@@ -278,9 +306,24 @@ class CapacityController:
                 None, f"margin {margin:+.2f} K spare but running "
                       f"{compressor_hz or 0:.0f} Hz under a "
                       f"{current_ceiling:.0f} Hz ceiling - not the constraint")
+        # ABOVE the ceiling is not AT it: the ceiling does not grip during a
+        # start ramp (module docstring, measured 2026-08-12), so a compressor
+        # running past it says nothing about whether it binds. 2026-09-28
+        # 14:31: 66 Hz under a 60 Hz ceiling read as "at the ceiling".
+        if compressor_hz > current_ceiling + self.at_ceiling_hz:
+            return CapacityDecision(
+                None, f"margin {margin:+.2f} K spare but running "
+                      f"{compressor_hz:.0f} Hz over a {current_ceiling:.0f} Hz "
+                      "ceiling - start ramp, the ceiling is not gripping")
         if self._last_raise is not None and now - self._last_raise < self.raise_interval_s:
             return CapacityDecision(None, f"margin {margin:+.2f} K spare, "
                                           "within the raise interval")
+        drop = max(m for _, m in self._margins) - margin
+        if drop >= self.raise_veto_drop_c:
+            return CapacityDecision(
+                None, f"margin {margin:+.2f} K spare but {drop:.2f} K down in "
+                      f"{self.raise_trend_window_s:.0f} s - still falling, "
+                      "not raising")
         target = min(self.max_hz, current_ceiling + self._step_for(err))
         if target <= current_ceiling:
             return CapacityDecision(
@@ -291,6 +334,12 @@ class CapacityController:
             target, f"margin {margin:+.2f} K above target "
                     f"{self.target_margin_c:.1f} at the ceiling - taking more "
                     "capacity", RAISE)
+
+    def _observe(self, now: float, margin: float) -> None:
+        """Keep the margins of the last `raise_trend_window_s`."""
+        self._margins.append((now, margin))
+        while self._margins and now - self._margins[0][0] > self.raise_trend_window_s:
+            self._margins.popleft()
 
     def _step_for(self, err: float) -> float:
         """Hz needed to close `err` kelvin of margin, bounded.
