@@ -29,7 +29,7 @@ blocking something else, cheap, or a known defect in the safety path.
 
 | | what | why now |
 |---|---|---|
-| 1 | **The capacity loop's raise path: fix written 2026-09-28, NOT YET DEPLOYED** | It happened again 2026-09-28 14:31–14:41: three raises into a falling margin, supply 0.4 K under the dew point itself. Falling-margin veto + start-ramp veto in `capacity.py`; deploy, then watch the next cold start. The lowering path's lag (2 Hz, then 180 s) is the other half and is untouched — see the section. |
+| 1 | **The capacity loop's raise path: fix DEPLOYED 2026-09-28 15:32 (1ea5293), not sufficient** | It happened again 2026-09-28 14:31–14:41: three raises into a falling margin, supply 0.4 K under the dew point itself. Falling-margin veto + start-ramp veto in `capacity.py`, deployed 15:32. At the 16:27 start the veto held but the supply still reached 14.0 vs a 14.1 dew point on a ceiling inherited from 14:40 — see the THEORIES section. The lowering path's lag (2 Hz, then 180 s) is the other half and is untouched — see the section. |
 | 2 | **The override clear is dropped at start-up** | Mostly fixed 2026-08-22 — per-valve and the transition clear both work. What remains: `_publish_no_overrides()` fires before the MQTT plane connects, so a restart inherits the previous process's retained value. Live example: `override/global` has read `stale_data` since the coupler swap. |
 | 3 | **Watch the direct water-setpoint law (D-051, DONE 2026-09-28)** | The setpoint is now computed from the house slab target and written in one step; the walk + charging gate (D-048) are the fallback. Watch `water_sp/direct_target`, `energy/house_slab_target`, `water_sp/reason` against the room air for a week. Expected failure shape: a steady air offset (target error ÷ ~3) from `ua_ao`/`q_internal`/solar — a parameter to identify, NOT a reason to add an integrator. |
 | 4 | **Identify `ua_sa` — the overnight cooling experiment** | The one parameter marked GUESSED, and every scheduling argument rests on the fast mode it determines. Reading it from existing data failed for lack of excitation; the protocol is written and needs one mild night. |
@@ -2973,6 +2973,23 @@ before fixing; "the obvious cause" has been wrong here before.
         which is the low-frequency spread, so it permits a setpoint that the
         start ramp's spread carries below the limit. Check the floor's
         arithmetic in `_bounds` against these two traces before believing it.
+
+  - [ ] **The estimator's disconnects cost everything after `load_forecast`
+        (theory, links #13 and theory 2 above).** OBSERVED 2026-09-28
+        ~16:50: the broker drops `heatctl-optimizer` for "exceeded timeout"
+        ~151 s after each connect (k60); the estimator's traceback is always
+        "client is not currently connected" at the room `solar_w` publish
+        (estimator.py ~893), directly after `forecast_hourly`. In 5 min of
+        subscription `load_forecast` arrived twice; `forecast_hourly`,
+        `outdoor_avg_c` and `setpoint_delta` never did. THEORY: the CPU-bound
+        part of `_loop` (hourly forecast / load forecast on the saturated ARM
+        core) blocks the event loop past 1.5x keepalive, the publish that
+        follows fails, and the loop restarts before reaching the tail. That
+        would explain #13, the 72 h hourly series being absent, and
+        `outdoor_avg_c` expiring so layer 1's outdoor source flips (theory 2).
+        Validate by timing `_loop`'s steps before changing anything; a
+        candidate fix is `asyncio.to_thread` for the model work, or publishing
+        the tail first.
 
 ## Carried over from the investigation log
 
