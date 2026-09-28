@@ -24,7 +24,7 @@ item's story is long, it lives in `LOGBOOK.md` and the line here points at it.
 
 ## Now — what I would pick up next
 
-Not a priority ranking of everything below; the eleven things that are either
+Not a priority ranking of everything below; the things that are either
 blocking something else, cheap, or a known defect in the safety path.
 
 | | what | why now |
@@ -40,6 +40,8 @@ blocking something else, cheap, or a known defect in the safety path.
 | 9 | **Phase E: the native KBUS backend, and it now owns the failsafe** | **Settled 2026-08-28: `pfc-modbus-server` has no working watchdog.** A 30 s controller gap — 3× the timeout — left process data flowing on restart, where a 750-352 refuses it with exception 4 until cleared. So there is no outermost failsafe today, and E is the step that provides one. |
 | 10 | **`plant-status.sh inputs` is silently blind to half its feeds** | An ACL gap makes four live rooms look dead. Cheap to fix, and it is the command CLAUDE.md sends a fresh session to. |
 | 11 | **Four rooms still to migrate onto the plant broker** | Badezimmer and Gästebad done; **the plant's Controme dependency is gone** — Gästebad was the last room heatctl read through a Raumcontroller. The Mini Server itself still runs for HA/HomeKit. What remains is three HA-bridged Shellys and Arbeitszimmer on rtl_433, so this now buys independence from the HA bridge, plus humidity from three more rooms for the dew point. |
+| 12 | **Wohnzimmer's Shelly reads sun, not room** | 2026-09-28 11:23: **35.6 °C at 27.9 % RH**, outdoor 20.4, the other rooms 21–25. Dew point from that pair is 14.2, the same moisture as the house, so the sensor's own air was heated: direct sun on the device is the likely cause, not yet seen by anyone. It drove house deviation to −2.50 and pinned the room's slab target to the dew floor; the direct law (D-051) holds because the clamp bounds it, but 43 % of the house target's weight sits on this one reading. Owner: look at where it hangs. Only after that, consider a plausibility check (T rising with dew point flat and far above every other room). |
+| 13 | **The layer-2 estimator drops off the broker ~17×/hour** | `heatctl-optimizer ... disconnected: exceeded timeout`, 1243 in 72 h, so it predates the D-051 deploy. Keepalive unanswered means its event loop is blocked for >90 s; the weather fetch is already in a thread, so suspect CPU-bound work in `_loop` on a core with 0 % idle (optimizer ~22 %, heatctl ~37 %, top at 11:31). Layer 2 is allowed to fail, but `opt/*` arriving intermittently is what layer 1's expiry then eats. Measure the step time before changing anything. |
 
 Longer-running and deliberately not on that list: the heat meter, the DHW
 station fast loop, and layer 2 gaining command authority. They are big, none of
