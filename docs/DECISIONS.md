@@ -53,6 +53,9 @@ project is not ignorance, it is **drift between what is written and what runs**.
 6b. **Mode is a season, charge is a control.** The mode is chosen on the
     slow mode's timescale; the charge is bounded continuously by stored energy,
     and the trim backs off while the slab is over target. · D-048
+6d. **The water setpoint is computed, never walked.** Return water = where
+    the house slab target says it belongs; flash wear limits the write RATE,
+    not the step. No integrator on a plant that answers in hours. · D-051
 6c. **Layer 1 tracks slab temperature**; room air is the objective of whoever
     sets the slab target. Layer 2 speaks through a plan whose elements expire
     one by one, and control (never safety) may use its estimates only while
@@ -238,6 +241,11 @@ read *pre-normalisation* demand; and the circuits are now coupled, hence the
 slew-limited reference peak.
 
 ## D-018 · Water temperature is the primary modulation lever (1 K / 30 min)
+> **Control law SUPERSEDED by D-051 (2026-09-28)**: the setpoint is computed
+> from the house slab target, not walked. Water temperature as the primary
+> lever, the flash budget and the single owner all stand; the walk survives as
+> the fallback.
+
 Load compensation from house demand *and* valve saturation. **Why:** water
 colder than needed does not make the house colder — the valves throttle it back
 — so the error is invisible in room temperature and shows up only as COP and
@@ -1659,3 +1667,55 @@ measurement and changes no structure (DESIGN_ESTIMATION_PLANNING §6).
 **Cost:** failure isolation. A badly wrong room can pull its neighbours'
 estimates; the per-room innovation gate is what catches it. ~15–19 states in
 pure Python at 60 s, to be measured on the PFC.
+
+## D-051 · The water setpoint is computed, not walked
+Reverses D-018's control law; keeps its flash budget. Owner, 2026-09-28: *"Why
+are we still having this weird 1K every 30 minutes trim instead of a more
+direct control?"*
+
+    P0x = T_target − (ua_sa / ṁc) / 2 · (T_target − T_set)
+
+`T_target`, `T_set` are the capacity-weighted house slab target and room
+setpoint over the slab rooms (`EnergyDemand.house_slab_target`). Rounded,
+clamped to the operating band and the condensation floor (D-036), and written
+in **one** step when it has differed from the register by ≥ 0.5 + 0.25 K for
+10 min, at most once per 15 min.
+
+**Why the walk had to go.** It was an integrator on the sign of a few
+conditions — house deviation, peak valve opening — with no idea where the
+setpoint belonged. An integrator on a plant that answers in hours winds until
+the air responds, and by then the slab has taken the charge: 2026-09-25 (P05
+walked 20 → 25, house 27 °C) and 2026-09-28 (P04 held at 15, house too cold).
+D-048's charging gate bounds that windup; it does not remove it. Of D-018's two
+reasons, flash wear limits how *often* we write, not how *far* — the walk took
+five writes where the law takes one — and thermal mass argues against reacting
+to noise, not against computing the answer. Nothing derived the 30 minutes.
+
+**Why this formula, with today's sensors.** P04/P05 set the heat pump's
+RETURN water. `slab_target_c` is the balance `Q = ua_sa·(T_target − T_set)`,
+and the same form with the same 490 W/K was checked against the plant to 1 % on
+2026-07-31 as water-mean → room — so in the lumped model the slab target *is*
+the water mean the house needs. Return sits half a spread `s = Q/ṁc` from the
+mean on the side the water gives heat away. `ua_sa/ṁc = dT/(T_air − T_water)`
+is derived from its measurement at start-up (D-031/D-032), and the flow — the
+worst-known number in the model — cancels out of it.
+
+**It never reads the slab estimate.** That estimate falls back to the return
+temperature, which follows the water within minutes; a law built on it would
+close a loop through its own actuator (the 78-minute `auto_mode` mechanism of
+2026-08-19). The target depends on setpoints, forecast outdoor and room air
+only. The single feedback is the room-air recovery term inside the target —
+proportional, gain `C_air/(τ·ua_sa)` ≈ 2.2 K of target per K of air error.
+**No integrator anywhere.**
+
+**Costs, stated.** (1) A wrong `ua_ao`, `q_internal` or solar share becomes a
+steady-state air offset of roughly the target error ÷ 3, not a drift — visible,
+bounded, and what WP-R identification removes. (2) One water temperature serves
+rooms with different targets; the valves distribute it (D-017), and the house
+is balanced on energy rather than on its neediest room — the neediest-room
+rule is what forced cold water through every slab on 09-28. (3) HP return and
+manifold return differ (manifold dT = 0.807 × HP dT); ignored at this
+resolution.
+
+**The walk remains as the fallback**, charging gate included, whenever no house
+target is fresher than 5 min. `law: trim` restores it outright.

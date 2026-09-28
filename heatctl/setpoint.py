@@ -24,10 +24,31 @@ naive implementation leaves out.
 
 Two properties that are not negotiable:
 
-**Slow, integer, hysteretic.** 1 K every 30 min (owner, 2026-07-27). Every
-write to the heat pump wears its flash (docs/HEATPUMP.md), and the slab has
-hours of thermal mass, so a continuous controller here would be both damaging
-and pointless. Roughly 4-10 writes a day.
+**Computed, not walked** (D-051, 2026-09-28). The setpoint is WHERE THE
+RETURN WATER SHOULD BE, computed from the house slab target, and written in one
+step:
+
+    P0x = T_target - (ua_sa / m_dot_c) / 2 * (T_target - T_set)
+
+P04/P05 target the heat pump's RETURN water. In the lumped model the slab
+target already is the water mean temperature that holds the rooms at setpoint
+(`Q = ua_sa * (T_target - T_set)`, the balance checked to 1 % against the
+plant on 2026-07-31), and return sits half a spread from the mean on the side
+the water gives heat away: `s = Q / m_dot_c`. `ua_sa / m_dot_c` is derived from
+its measurement, `dT / (T_air - T_water)`, and is invariant to the flow, the
+worst-known number in the model.
+
+No integrator anywhere: the only feedback is the room-air recovery term inside
+the slab target, which is proportional. The 1 K / 30 min walk it replaces was
+an integrator on the sign of a few conditions, and an integrator on a plant
+that answers in hours overshoots by construction - 2026-09-25 and 09-28.
+
+Flash is still honoured, as a RATE limit rather than a step size: a move needs
+the target 0.5 + `hysteresis_c` away, sustained for `confirm_s`, and at least
+`min_write_interval_s` since the last write. One write where the walk took five.
+
+**The walk remains as the FALLBACK**, with the charging gate, for when no fresh
+house target exists (no outdoor temperature, energy model not yet run).
 
 **The condensation reaction bypasses the cadence.** A measured breach is a
 safety event, not a trim, so it jumps immediately and ignores the interval.
@@ -64,6 +85,7 @@ from dataclasses import dataclass
 log = logging.getLogger("heatctl.setpoint")
 
 HOLD, TRIM, BREACH, BLOCKED = "hold", "trim", "breach", "blocked"
+DIRECT = "direct"
 
 
 @dataclass
@@ -150,6 +172,31 @@ class SetpointController:
         self._excess_k: float | None = None
         self._excess_t: float | None = None
 
+        # --- the direct law (D-051, 2026-09-28) ---
+        # "direct" computes the setpoint from the house slab target; "trim" is
+        # the old walk, kept as the fallback either way.
+        self.law = str(s.get("law", "direct"))
+        # ua_sa / m_dot_c, dimensionless, DERIVED from its measurement (D-031,
+        # D-032): the manifold spread over the air-to-water difference that
+        # produced it, 2026-07-31. The flow cancels (490/1438 = 568/1670), which
+        # is why neither factor appears. Defaults mirror params.yaml.
+        ident = dict(s.get("spread_identification") or {})
+        dt = float(ident.get("manifold_dt_k", 2.10))
+        drive = (float(ident.get("room_mean_c", 25.37))
+                 - float(ident.get("water_mean_c", 19.20)))
+        if dt <= 0.0 or drive <= 0.0:
+            raise ValueError(
+                f"spread_identification must be positive: dT {dt}, "
+                f"air - water {drive}")
+        self.spread_ratio = dt / drive
+        self.hysteresis_c = float(s.get("hysteresis_c", 0.25))
+        self.confirm_s = float(s.get("confirm_s", 600.0))
+        self.min_write_interval_s = float(s.get("min_write_interval_s", 900.0))
+        self.target_max_age_s = float(s.get("target_max_age_s", 300.0))
+        self._house: tuple[float, float] | None = None
+        self._house_t: float | None = None
+        self._pending: tuple[float, float] | None = None   # (value, since)
+
     def observe_spread(self, spread: float | None) -> None:
         """Feed the measured leaving/return delta-T. None means "not running".
 
@@ -211,6 +258,31 @@ class SetpointController:
     def slab_excess_k(self) -> float | None:
         return self._excess_k
 
+    def observe_house_target(self, target: tuple[float, float] | None,
+                             now: float) -> None:
+        """Feed `(slab target, setpoint)` for the house, capacity-weighted.
+
+        None means the energy model could not form one; the last value then
+        ages out after `target_max_age_s` and the trim takes over.
+        """
+        if target is None:
+            return
+        self._house = target
+        self._house_t = now
+
+    def direct_value(self, now: float) -> float | None:
+        """The continuous return-water setpoint the law asks for, or None.
+
+        Mode-independent on purpose, like `slab_target_c`: a house that needs
+        heat has T_target above T_set and the return lands below the target,
+        one that needs cooling the mirror image. Nothing here knows the season.
+        """
+        if (self._house is None or self._house_t is None
+                or now - self._house_t > self.target_max_age_s):
+            return None
+        t, sp = self._house
+        return t - self.spread_ratio / 2.0 * (t - sp)
+
     def overcharged(self, mode: str) -> bool:
         """Is the slab past target in the direction this mode charges it?
 
@@ -254,6 +326,11 @@ class SetpointController:
         if self._last_change is None:
             self._last_change = now
             return SetpointDecision(None, "settling after start-up")
+
+        x = self.direct_value(now) if self.law == "direct" else None
+        if x is not None:
+            return self._direct(mode, x, deviation, current, supply_limit, now)
+        self._pending = None
         if deviation is None:
             return SetpointDecision(None, "no room data")
 
@@ -363,6 +440,73 @@ class SetpointController:
                                     BLOCKED if wants_capacity else HOLD)
         self._last_change = now
         return SetpointDecision(target, why, TRIM)
+
+    def _direct(self, mode: str, x: float, deviation: float | None,
+                current: float, supply_limit: float | None,
+                now: float) -> SetpointDecision:
+        """Write the computed setpoint, rate-limited. See the module docstring."""
+        lo, hi = self._bounds(mode, supply_limit)
+        want = float(max(lo, min(hi, round(x))))
+        head = f"direct: {x:.1f}"
+        # DEMAND UNMET: the law asks past the aggressive bound and the air
+        # agrees it wants more. Same alarm the walk raised from its capacity
+        # branch; which mechanism found it is not the operator's concern.
+        aggressive_cut = x > hi + 0.5 if mode == "heating" else x < lo - 0.5
+        wants_more = deviation is not None and (
+            deviation > self.deviation_band_c if mode == "heating"
+            else deviation < -self.deviation_band_c)
+        kind = BLOCKED if (aggressive_cut and wants_more) else HOLD
+        if kind == BLOCKED:
+            head += f" (limit {want:.0f}, house {deviation:+.2f} K)"
+
+        # HYSTERESIS on the continuous value, so a target sitting on x.5 cannot
+        # toggle the register. Skipped when `current` is outside the legal
+        # band: then the move is a correction, not a preference.
+        inside = lo <= current <= hi
+        if want == current or (inside and
+                               abs(x - current) < 0.5 + self.hysteresis_c):
+            self._pending = None
+            return SetpointDecision(None, f"{head}, holding {current:.0f}", kind)
+
+        # PERSISTENCE: the wish must hold its direction for `confirm_s`. The
+        # room air arrives in 0.5 K steps, event-triggered, and a single step
+        # moves the house target by a fraction of that - but a fraction of a
+        # kelvin is exactly what sits on a rounding edge.
+        up = want > current
+        if self._pending is None or (self._pending[0] > current) != up:
+            self._pending = (want, now)
+        else:
+            self._pending = (want, self._pending[1])
+        waited = now - self._pending[1]
+        if waited < self.confirm_s:
+            return SetpointDecision(
+                None, f"{head} -> {want:.0f}, confirming "
+                      f"({waited:.0f}/{self.confirm_s:.0f} s)", kind)
+        since = now - self._last_change
+        if since < self.min_write_interval_s:
+            return SetpointDecision(
+                None, f"{head} -> {want:.0f}, rate limit "
+                      f"({since:.0f}/{self.min_write_interval_s:.0f} s)", kind)
+        self._pending = None
+        self._last_change = now
+        return SetpointDecision(want, f"{head} -> {want:.0f}",
+                                BLOCKED if kind == BLOCKED else DIRECT)
+
+    def _bounds(self, mode: str,
+                supply_limit: float | None = None) -> tuple[int, int]:
+        """Integer operating band for this mode, bounds rounded OUTWARD."""
+        if mode == "cooling":
+            lo, hi = self.cooling_min_c, self.cooling_max_c
+            # CONDENSATION FLOOR - see _clamp; D-036 carries the argument.
+            if supply_limit is not None:
+                lo = max(lo, supply_limit)
+        else:
+            lo, hi = self.heating_min_c, self.heating_max_c
+        lo_i, hi_i = math.ceil(lo), math.floor(hi)
+        if lo_i > hi_i:
+            # In cooling warmer is the safe direction: the floor wins.
+            hi_i = lo_i
+        return lo_i, hi_i
 
     def _clamp(self, mode: str, value: float, dew_point: float | None,
                supply_limit: float | None = None,

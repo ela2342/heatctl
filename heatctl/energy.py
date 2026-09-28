@@ -351,6 +351,36 @@ class EnergyDemand:
         return RoomEnergy(name, slab, target, excess, act, excess - act,
                           True, "ok")
 
+    def house_slab_target(self, rooms: list[RoomEnergy],
+                          setpoints: dict[str, float]
+                          ) -> tuple[float, float] | None:
+        """Capacity-weighted house slab target and setpoint, or None.
+
+        What the direct water-setpoint law (D-051) aims at. ONE number for the
+        house because the heat pump makes one water temperature; the valves
+        distribute it (D-017).
+
+        Uses every slab room with a TARGET, whether or not its return reading
+        is trusted: the target needs only a setpoint, the outdoor temperature
+        and the room air, never the slab estimate. That is what keeps the law
+        off its own actuator - the slab estimate falls back to the return
+        temperature, which follows the water within minutes. Fan-coil rooms
+        carry no slab capacity and so no weight, consistent with
+        `slab_capacity_wh`.
+        """
+        num = den = sp = 0.0
+        for r in rooms:
+            if (r.target_c is None or not self.has_slab(r.name)
+                    or r.name not in setpoints):
+                continue
+            w = self.c_slab_wh_per_m2 * self.areas.get(r.name, 0.0)
+            num += w * r.target_c
+            sp += w * setpoints[r.name]
+            den += w
+        if den <= 0.0:
+            return None
+        return num / den, sp / den
+
     def house_excess_wh(self, rooms: list[RoomEnergy]) -> float | None:
         """Signed house total, or None if nothing was estimable.
 

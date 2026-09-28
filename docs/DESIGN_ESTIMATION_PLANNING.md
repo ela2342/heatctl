@@ -294,9 +294,11 @@ room air setpoint ──►  slab target per room  ──►  valves + water set
   driver; it stays for Arbeitszimmer (no slab) and as the fallback when no
   slab estimate is usable. D-017's normalisation (most-demanding circuit fully
   open) is kept, applied to the deficits.
-* **Water setpoint**: follows the house's total slab deficit and, when a plan
-  is fresh, its `house_heat_w`, inside the existing 1 K / 30 min trim and the
-  flash-write budget (D-013, D-018).
+* **Water setpoint**: computed, not walked (D-051, implemented 2026-09-28):
+  return water = house slab target less half a spread, written in one
+  rate-limited step. When a plan is fresh, its `house_heat_w` replaces the
+  holding load in the same formula. The 1 K / 30 min walk is only the
+  fallback.
 * **Constraints are unchanged and still win**: supply vs dew point, the
   compressor ceiling, frost, screed overtemperature, the flow floor, safety
   last.
@@ -366,6 +368,7 @@ exists.
 | # | what | gate |
 |---|---|---|
 | 0 | charging gate in the trim (§5.3); sustained-deviation alarm | unit tests incl. both incidents replayed, mutation-verified; deployed |
+| 0b | direct water-setpoint law (D-051); the walk becomes the fallback | done 2026-09-28; watch `water_sp/direct_target` against the air for a week |
 | 1 | fix `heat_input_w` mode-blindness; wall areas (owner); HA read on `roomtemp/#` | — |
 | 2 | replay harness over the InfluxDB archive; coupled filter v2 against it; then deployed observe-only | per-room innovations white 2 weeks; slab vs flowing returns agree |
 | 3 | identification: free decay for `UA_sa`, then parameters one at a time | each parameter improves innovations, quantified |

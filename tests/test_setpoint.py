@@ -487,3 +487,172 @@ def test_overcharge_is_mode_relative(sp):
     c = primed_gate(sp(), -3.0 * C_SLAB)
     assert c.overcharged("cooling") and not c.overcharged("heating")
     assert not c.overcharged("off")
+
+
+# ---------- the direct law (D-051) ----------
+#
+# The setpoint is computed from the house slab target and written in one
+# rate-limited step. The walk above is the fallback when no target is fresh.
+
+def direct(c, house, now):
+    """Feed a house (slab target, setpoint) at `now`, as the shadow does."""
+    c.observe_house_target(house, now)
+    return c
+
+
+def run(c, house, t0, t1, current, mode="cooling", dev=0.0, limit=12.8,
+        step=60):
+    """Drive the law minute by minute; return (time, target) of each write,
+    tracking the setpoint as the heat pump would."""
+    writes = []
+    for now in range(t0, t1, step):
+        direct(c, house, now)
+        d = call(c, mode=mode, dev=dev, current=current, limit=limit, now=now)
+        if d.target is not None:
+            writes.append((now, d.target))
+            current = d.target
+    return writes
+
+
+def test_the_law_is_the_slab_target_less_half_a_spread(sp):
+    """Return sits half a spread from the water mean, on the side the water
+    gives heat away; the slab target IS that mean. With ua_sa/m_dot_c 0.34:
+    25 - 0.17 * 3 = 24.49. Mutation-verified: a sign swap reads 25.51."""
+    c = direct(sp(), (25.0, 22.0), 0.0)
+    assert c.direct_value(0.0) == pytest.approx(24.49, abs=0.01)
+    c = direct(sp(), (18.0, 23.0), 0.0)      # house needs cooling
+    assert c.direct_value(0.0) == pytest.approx(18.85, abs=0.01)
+
+
+def test_the_spread_ratio_is_derived_from_its_measurement(sp):
+    """D-031/D-032: 2.10 K of manifold spread over 25.37 - 19.20 K of drive.
+    Re-measuring either moves the law by itself; nobody re-derives 0.34."""
+    assert sp().spread_ratio == pytest.approx(2.10 / 6.17)
+    c = sp(spread_identification={"manifold_dt_k": 3.0, "room_mean_c": 26.0,
+                                  "water_mean_c": 20.0})
+    assert c.spread_ratio == pytest.approx(0.5)
+    with pytest.raises(ValueError):
+        sp(spread_identification={"room_mean_c": 19.0, "water_mean_c": 20.0})
+
+
+def test_2026_09_28_overcooled_house_stops_cooling_in_one_write(sp):
+    """P04 sat at 15 for three days while the house was too cold. The walk,
+    even with the charging gate, needs nine writes and 4.5 h to reach neutral.
+    The law knows the house wants a warm slab and says so ONCE.
+
+    Mutation-verified: making `_direct` step by 1 K produces nine writes."""
+    c = sp()
+    writes = run(c, (24.0, 22.7), 10_000, 10_000 + 4 * 3600, current=15.0,
+                 dev=+0.73)
+    assert len(writes) == 1
+    assert writes[0][1] == 24.0
+
+
+def test_2026_09_25_overheated_house_stops_heating_in_one_write(sp):
+    """Heating, P05 at 25, house at 27 degC: the slab target is below the
+    setpoint and the law goes straight to the bottom of the band."""
+    c = sp()
+    writes = run(c, (19.5, 22.0), 10_000, 10_000 + 4 * 3600, current=25.0,
+                 mode="heating", dev=-4.32)
+    assert writes == [(writes[0][0], 20.0)]
+
+
+def test_a_steady_target_writes_nothing(sp):
+    """No integrator: a house on target produces zero writes, forever."""
+    c = sp()
+    assert run(c, (20.2, 22.0), 10_000, 10_000 + 24 * 3600,
+               current=20.0) == []
+
+
+def test_hysteresis_keeps_a_rounding_edge_off_the_register(sp):
+    """20.6 rounds to 21, but toggling on a 0.1 K wobble would wear flash for
+    nothing. Needs 0.5 + 0.25 K. Mutation-verified: hysteresis 0 writes."""
+    c = sp()
+    # x = t - 0.17 (t - sp); pick t so x ~ 20.6, then ~ 20.8
+    t_06 = (20.6 - 0.17 * 22.0) / 0.83
+    t_08 = (20.8 - 0.17 * 22.0) / 0.83
+    assert run(c, (t_06, 22.0), 10_000, 20_000, current=20.0) == []
+    assert run(c, (t_08, 22.0), 20_000, 30_000, current=20.0) != []
+
+
+def test_a_brief_excursion_is_not_written(sp):
+    """A room reading arrives in 0.5 K steps; one step must not reach flash
+    unless it persists for `confirm_s`. Mutation-verified: confirm_s 0 writes."""
+    c = sp()
+    writes = run(c, (22.0, 22.0), 10_000, 10_300, current=20.0)   # 5 min
+    writes += run(c, (20.0, 22.0), 10_300, 20_000, current=20.0)
+    assert writes == []
+
+
+def test_a_direction_flip_restarts_confirmation(sp):
+    """Nine minutes of wanting warmer is no evidence for colder. Mutation-
+    verified: without the reset, the down move writes on the minute the up
+    move would have."""
+    c = sp()
+    run(c, (23.0, 22.0), 10_000, 10_560, current=20.0)     # up, ~9 min
+    for now in range(10_560, 10_800, 60):
+        direct(c, (15.0, 15.0), now)                        # now down
+        d = call(c, current=20.0, now=now)
+        assert d.target is None and "confirming" in d.reason
+
+
+def test_writes_are_rate_limited(sp):
+    """A target that keeps moving gets at most one write per interval."""
+    c = sp()
+    writes, cur = [], 18.0
+    for i, now in enumerate(range(10_000, 10_000 + 3 * 3600, 60)):
+        direct(c, (18.0 + i * 0.05, 22.0), now)   # rising 3 K/h
+        d = call(c, current=cur, now=now)
+        if d.target is not None:
+            writes.append(now)
+            cur = d.target
+    gaps = [b - a for a, b in zip(writes, writes[1:])]
+    assert writes and all(g >= c.min_write_interval_s for g in gaps)
+
+
+def test_no_write_in_the_first_interval_after_start_up(sp):
+    """A restart loop must not become a flash-write loop."""
+    c = sp(primed=False)
+    writes = run(c, (24.0, 22.0), 0, 3600, current=15.0)
+    assert writes and writes[0][0] >= c.min_write_interval_s
+
+
+def test_a_stale_target_falls_back_to_the_walk(sp):
+    """The model dying must not freeze the setpoint on its last answer."""
+    c = direct(sp(), (24.0, 22.0), 0.0)
+    d = call(c, mode="cooling", dev=-1.0, open_pct=95.0, current=20.0,
+             now=10_000.0)
+    assert d.kind == TRIM and d.target == 19.0
+
+
+def test_law_trim_ignores_the_target(sp):
+    c = direct(sp(law="trim"), (24.0, 22.0), 10_000.0)
+    d = call(c, mode="cooling", dev=-1.0, open_pct=95.0, current=20.0)
+    assert d.kind == TRIM
+
+
+def test_the_condensation_floor_still_binds(sp):
+    """The law may ask for water the dew point forbids; the floor wins, and
+    with the house warm that is demand unmet, not a quiet hold.
+    Mutation-verified: dropping supply_limit from _bounds writes 15."""
+    c = sp()
+    writes = run(c, (14.0, 23.0), 10_000, 14_000, current=18.0,
+                 dev=-1.5, limit=16.4)
+    assert writes and writes[0][1] == 17.0
+    direct(c, (14.0, 23.0), 14_000)
+    d = call(c, dev=-1.5, current=17.0, limit=16.4, now=14_000)
+    assert d.demand_unmet
+
+
+def test_a_satisfied_house_at_the_floor_is_not_an_alarm(sp):
+    c = direct(sp(), (15.0, 23.0), 10_000)
+    d = call(c, dev=+0.1, current=17.0, limit=16.4, now=10_000)
+    assert not d.demand_unmet
+
+
+def test_a_setpoint_outside_the_band_is_corrected_despite_hysteresis(sp):
+    """The dew floor rose above the current setpoint: moving is a correction,
+    not a preference, and the 0.75 K hysteresis must not hold it there."""
+    c = sp()
+    writes = run(c, (15.0, 15.0), 10_000, 12_000, current=15.0, limit=15.4)
+    assert writes and writes[0][1] == 16.0

@@ -760,6 +760,34 @@ control:
 
   water_setpoint:
     enabled: true
+    # THE DIRECT LAW (D-051). The setpoint is computed, not walked:
+    #   P0x = T_target - spread_ratio/2 * (T_target - T_set)
+    # with T_target / T_set the capacity-weighted house slab target and room
+    # setpoint. P04/P05 are RETURN-water setpoints; the slab target is the water
+    # mean that holds the rooms, and return sits half a spread from it.
+    #
+    # spread_ratio = ua_sa / m_dot_c = dT / (T_air - T_water), DERIVED at
+    #   start-up from the measurement below (D-031/D-032: store the measurement,
+    #   never the result). The flow cancels - 490/1438 = 568/1670 = 0.34 - so
+    #   the worst-known number in the model does not enter the law at all.
+    #   Mirrored from optimizer/params.yaml `ua_sa_identification`, because
+    #   layer 1 may not read a layer 2 file; keep the two in step. Sigma ~15 %,
+    #   dominated by the 3-of-7-rooms air mean.
+    # A move needs |target - current| >= 0.5 + hysteresis_c, sustained
+    # confirm_s, and min_write_interval_s since the last write - a RATE limit,
+    # not a step size. One write where the walk took five.
+    # law: trim restores the walk; it is also the automatic fallback while no
+    # house target is fresher than target_max_age_s.
+    law: direct
+    spread_identification:          # 2026-07-31 16:53, steady operation
+      manifold_dt_k: 2.10           # sigma 0.14, measured
+      room_mean_c: 25.37            # sigma 0.8, measured (3 of 7 rooms)
+      water_mean_c: 19.20           # sigma 0.15, measured
+    hysteresis_c: 0.25
+    confirm_s: 600
+    min_write_interval_s: 900
+    target_max_age_s: 300
+    # --- the walk: the FALLBACK since D-051 ---
     interval_s: 1800        # 30 min - the COMFORT cadence, matched to the slab
     # The CAPACITY cadence, used while the house wants everything it can get.
     # The setpoint's effect on the machine is immediate and the water loop

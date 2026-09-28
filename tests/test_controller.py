@@ -1081,6 +1081,22 @@ class TestEnergyShadow:
             total / ctl.energy.slab_capacity_wh())
         assert ctl.plane.topic("water_sp/slab_excess_k") not in (None, "unknown")
 
+    async def test_the_house_target_reaches_the_direct_law(self, controller):
+        """D-051's law is only as live as this wire: with it cut, the water
+        setpoint silently falls back to the walk and nothing looks wrong.
+
+        Mutation-verified: deleting the observe_house_target call fails this."""
+        _, ctl = self._both(controller)
+        now = time.monotonic()
+        ctl.io.touch(now)
+        await ctl.step(1.0)
+        assert ctl.water_sp._house is not None, \
+            "fixture no longer produces a house slab target"
+        assert ctl.water_sp.direct_value(ctl.water_sp._house_t) is not None
+        assert ctl.plane.topic("water_sp/direct_target") not in (None, "unknown")
+        assert ctl.plane.topic("energy/house_slab_target") not in (None,
+                                                                   "unknown")
+
     async def test_a_room_with_no_floor_area_is_reported_not_guessed(
             self, controller):
         """The synthetic rooms have no area unless the test adds it.

@@ -166,13 +166,15 @@ class Controller:
         self._peak_demand: float | None = None
         self._flow_floor_pct: float | None = None
 
-        # SHADOW ONLY. Computes the slab targets and per-room energy deficits
-        # of docs/DESIGN_ENERGY_DEMAND.md and publishes them; NOTHING reads the
-        # result back into control. That is the point: a feedforward scheme is
-        # confidently wrong when its parameters are wrong, and four of seven
-        # rooms have no air sensor to notice, so the numbers get watched
-        # against the real plant before they get authority. `ua_ao` alone
-        # spans 216-267 depending on which of three routes you believe.
+        # Computes the slab targets and per-room energy deficits of
+        # docs/DESIGN_ENERGY_DEMAND.md and publishes them. It started as a
+        # shadow, watched against the plant before getting authority; it now
+        # has two consumers: the house excess feeds the mode picker (D-046) and
+        # the trim's charging gate (D-048), and the house slab TARGET is what
+        # the water setpoint is computed from (D-051). Feedforward is
+        # confidently wrong when its parameters are wrong - `ua_ao` alone spans
+        # 216-267 depending on which of three routes you believe - so the
+        # intermediates stay published.
         self.energy = EnergyDemand(cfg)
         self._energy_every = int((cfg["control"].get("energy") or {}).get(
             "publish_every_n_cycles", 60))
@@ -851,7 +853,7 @@ class Controller:
                                      room_temps: dict[str, float],
                                      house_mean: float | None,
                                      now: float) -> None:
-        """Publish slab targets and energy deficits. Acts on nothing.
+        """Publish slab targets and energy deficits, and hand them on.
 
         Deliberately slow: the quantities move on the building's time constants
         (5.62 h fast, 58 h slow), so publishing them every second would spam the
@@ -1000,6 +1002,17 @@ class Controller:
         await self.plane.publish(
             "water_sp/slab_excess_k",
             "unknown" if gate_k is None else f"{gate_k:+.2f}")
+        # And to the direct law (D-051): what the house slab should be, from
+        # targets only - never from the RL-based slab estimate, which would put
+        # the law on its own actuator.
+        house = self.energy.house_slab_target(rooms, targets)
+        self.water_sp.observe_house_target(house, now)
+        await self.plane.publish(
+            "energy/house_slab_target",
+            "unknown" if house is None else f"{house[0]:.2f}")
+        x = self.water_sp.direct_value(now)
+        await self.plane.publish(
+            "water_sp/direct_target", "unknown" if x is None else f"{x:.2f}")
         act = self.energy.house_actionable_wh(rooms)
         blocked = self.energy.house_blocked_wh(rooms)
         n_valid = sum(1 for r in rooms if r.valid)
@@ -1105,9 +1118,10 @@ class Controller:
     async def _trim_water_setpoint(self, state, now: float) -> None:
         """Move the heat pump's water setpoint to match the house's demand.
 
-        Slow and integer by design (1 K / 30 min): every write wears the
-        pump's flash, and the slab has hours of thermal mass, so a continuous
-        controller here would be damaging and pointless alike.
+        Computed from the house slab target and written in one rate-limited
+        step (D-051); the old 1 K / 30 min walk is the fallback when no fresh
+        target exists. Every write wears the pump's flash, which is why the
+        rate limit exists - see setpoint.py.
         """
         if not self.water_sp.enabled or not self.hp.allow_writes:
             return

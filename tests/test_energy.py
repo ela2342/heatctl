@@ -487,3 +487,35 @@ def test_the_clamp_does_not_depend_on_the_plant_mode(cfg):
         e = m.room(name, setpoint_c=19.0, outdoor_c=28.0, rl_c=23.0,
                    vl_c=29.0, room_c=24.0, mode=mode, slab_floor_c=17.6)
         assert e.target_c == 17.6, f"clamp skipped in {mode}"
+
+
+class TestHouseSlabTarget:
+    """What the direct water-setpoint law aims at (D-051)."""
+
+    CFG = TestEmitterType.CFG_FC
+
+    def test_it_is_capacity_weighted_over_slab_rooms_only(self):
+        """Arbeitszimmer's fan coil has no slab, so no weight. Mutation-
+        verified: dropping the has_slab check pulls the target toward it."""
+        e = EnergyDemand(self.CFG)
+        rooms = [e.room("wohnzimmer", 23.0, 10.0, 26.0, 18.0),
+                 e.room("arbeitszimmer", 20.0, 10.0, 26.0, 18.0)]
+        t, sp = e.house_slab_target(rooms, {"wohnzimmer": 23.0,
+                                            "arbeitszimmer": 20.0})
+        assert t == pytest.approx(rooms[0].target_c)
+        assert sp == 23.0
+
+    def test_it_needs_no_trusted_return(self):
+        """The target comes from setpoint, outdoor and air - never from the
+        slab ESTIMATE, which falls back to return water and so follows the
+        law's own actuator within minutes. A room whose return the gate does
+        not trust still has a target and must still count."""
+        e = EnergyDemand(self.CFG)
+        r = e.room("wohnzimmer", 23.0, 10.0, rl_c=None, vl_c=None)
+        assert not r.valid
+        assert e.house_slab_target([r], {"wohnzimmer": 23.0}) is not None
+
+    def test_no_outdoor_means_no_target(self):
+        e = EnergyDemand(self.CFG)
+        r = e.room("wohnzimmer", 23.0, None, 26.0, 18.0)
+        assert e.house_slab_target([r], {"wohnzimmer": 23.0}) is None

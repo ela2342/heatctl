@@ -5233,3 +5233,27 @@ brought the mode back as cooling (the device config default). Gate telemetry
 after the RL gate settled: `water_sp/slab_excess_k -7.50` in cooling, i.e.
 7.5 K of whole slab past target — over-charged, so the first trim after the
 1800 s settle should raise P04 from 15.
+
+## 2026-09-28 — The water setpoint is computed now (D-051)
+
+Owner: "Why are we still having this weird 1K every 30 minutes trim instead of
+a more direct control?" No good reason: flash wear bounds the write RATE, not
+the step, and nothing ever derived the 30 minutes. The walk was an integrator,
+and both incidents were its windup.
+
+Law: `P0x = T_target − (ua_sa/ṁc)/2 · (T_target − T_set)`, house values
+capacity-weighted over slab rooms. P04/P05 are return setpoints; the slab target
+is the water mean (the balance checked to 1 % on 07-31), return sits half a
+spread from it. `ua_sa/ṁc` = 2.10 / (25.37 − 19.20) = 0.340, derived at start-up
+from the 07-31 measurement — the flow cancels. Hysteresis 0.25 K beyond
+rounding, 600 s confirmation, 900 s between writes. It never reads the RL-based
+slab estimate, so it cannot close a loop through its own actuator.
+
+Live check before deploy (outdoor 16.1): house slab target 20.41, setpoint
+22.62 → 20.79 → **P04 21**. The walk had got it to 20.
+
+20 new tests (law, both incidents as single writes, hysteresis, confirmation,
+direction flip, rate limit, start-up settle, stale-target fallback, dew floor
++ demand-unmet, out-of-band correction, derived ratio, wiring); 12 mutants, all
+caught — the direction-flip test first let its mutant through (it checked
+before the missing reset could matter) and was tightened. 741 passed.
