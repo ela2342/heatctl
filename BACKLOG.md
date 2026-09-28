@@ -2935,6 +2935,13 @@ before fixing; "the obvious cause" has been wrong here before.
         spot reading. House slab target moved 16.57 -> 18.63 -> 17.04 across
         the restart. Check: correlate `outdoor_source` transitions with the
         optimizer's disconnects in the journal.
+        FURTHER EVIDENCE 2026-09-28 22:06 - it now costs a write: source
+        `forecast` -> `station`, outdoor term 16.4 -> 13.0, house slab target
+        22.38 -> 24.45 within four minutes, and at 22:17 the direct law wrote
+        P04 22 -> 24 (the sixth write that day). The earlier 20:35 flip
+        station -> forecast (14.6 -> 16.4) moved the target 22.59 -> 20.93 the
+        other way. Still a theory on the cause of the expiry (see the estimator
+        item below), but the effect on P04 is now observed, not inferred.
   - [ ] **The house slab target averages in rooms cooling cannot serve
         (theory, and a question about D-051).** OBSERVED 15:35 in cooling:
         Badezimmer slab target 31.05, Gästebad 27.45 (both below their 23.5
