@@ -5294,3 +5294,10 @@ Fix in `capacity.py`: no raise while the margin is 0.2 K below its 120 s peak;
 no raise while the compressor runs over the ceiling (start ramp, 08-12); a
 supply-reading gap re-arms the start-up settle. Lowering untouched — its lag
 is the other half (BACKLOG). 6 new tests, 3 mutants caught; 747 passed.
+
+Deployed 1ea5293 at 15:32 (mode off at 15:30, compressor 0 Hz at 15:31;
+mode back as cooling). The restart surfaced three things recorded in BACKLOG
+as theories, unvalidated: a heat-pump mode flip 2 -> 1 -> 2 in two seconds at
+start-up; `outdoor_source` going station 24.2 -> hp_register 28.0 -> forecast
+16.5 across the restart; and the D-051 house target averaging in two bathrooms
+whose recovery term asks for 27-31 degC slab in cooling.

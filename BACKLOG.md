@@ -2907,6 +2907,47 @@ what D-044 was built to avoid.
         is wrong: a permanently blind model would lose the fast start-up
         decision altogether.
 
+### THEORIES from 2026-09-28's capacity deploy — observed, NOT validated
+
+Each has an observation behind it and a cause that is only a guess. Validate
+before fixing; "the obvious cause" has been wrong here before.
+
+  - [ ] **The heat pump's mode is flipped on every restart (theory).**
+        OBSERVED 15:32:14-16, container log: `0x0004: 2 -> 1 (plant mode is
+        heating)`, `mode -> cooling`, then `0x0004: 1 -> 2` two seconds later.
+        Two flash writes and a real mode reversal of the unit, compressor at 0
+        Hz at the time. THEORY: the plant starts in the config's `mode:
+        heating`, `_sync_pump_mode` reconciles the unit to it on the first
+        cycle, and the retained `heatctl/set/mode cooling` arrives ~300 ms
+        later. If so it happens on every restart, and with the compressor
+        running it would be a mode reversal under load. NOT established: that
+        earlier restarts did it too - `hp/raw/0x0004` is from the slow config
+        poll and did not catch a 2 s flap, so the journal cannot answer; the
+        next restart's container log can.
+  - [ ] **Layer 2's broker drops switch the direct law's outdoor input by ~8 K
+        (theory).** OBSERVED: before the restart `energy/outdoor_source` was
+        `station` (24.2); right after, `hp_register` (28.0), then `forecast`
+        (16.5). Forecast is deliberately first (5.62 h slab time constant), so
+        `station` before the restart means the forecast had EXPIRED. THEORY: it
+        expires whenever the optimizer is off the broker (Now #13, ~17/h), so
+        the outdoor term in `slab_target_c` - "the single largest term to get
+        wrong" per its own comment - flips between a 6 h forecast mean and the
+        spot reading. House slab target moved 16.57 -> 18.63 -> 17.04 across
+        the restart. Check: correlate `outdoor_source` transitions with the
+        optimizer's disconnects in the journal.
+  - [ ] **The house slab target averages in rooms cooling cannot serve
+        (theory, and a question about D-051).** OBSERVED 15:35 in cooling:
+        Badezimmer slab target 31.05, Gästebad 27.45 (both below their 23.5
+        setpoints, so the recovery term asks for warmth), every other room
+        clamped at the 15.14 floor; the capacity-weighted mean 17.04 then sets
+        ONE water setpoint for all. THEORY: those two rooms lift the setpoint
+        for the five that want cooling. It may also be what is stopping the
+        law from driving everything to the dew floor, which would be the
+        right outcome for the wrong reason. D-046 already separates
+        `actionable` from `blocked` for the energy totals; the D-051 target
+        does not. Needs the owner's view on what a room the mode cannot serve
+        should contribute before any change.
+
 ## Carried over from the investigation log
 
 Fifty-five items that were still open inside the dated entries when the log was
