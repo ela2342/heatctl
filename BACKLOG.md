@@ -29,7 +29,7 @@ blocking something else, cheap, or a known defect in the safety path.
 
 | | what | why now |
 |---|---|---|
-| 1 | **The capacity loop's raise path: fix DEPLOYED 2026-09-28 15:32 (1ea5293), not sufficient** | It happened again 2026-09-28 14:31–14:41: three raises into a falling margin, supply 0.4 K under the dew point itself. Falling-margin veto + start-ramp veto in `capacity.py`, deployed 15:32. At the 16:27 start the veto held but the supply still reached 14.0 vs a 14.1 dew point on a ceiling inherited from 14:40 — see the THEORIES section. The lowering path's lag (2 Hz, then 180 s) is the other half and is untouched — see the section. |
+| 1 | **The capacity loop's raise path: fix DEPLOYED 2026-09-28 15:32 (1ea5293), not sufficient** | It happened again 2026-09-28 14:31–14:41: three raises into a falling margin, supply 0.4 K under the dew point itself. Falling-margin veto + start-ramp veto in `capacity.py`, deployed 15:32. At the 16:27 start the veto held but the supply still reached 14.0 vs a 14.1 dew point on a ceiling inherited from 14:40 — see the THEORIES section. 2026-10-04 12:29 a raise 57→67 Hz got through a slow steady fall and the margin reached +0.2 K (theory: veto threshold at the sensor resolution). The lowering path's lag (2 Hz, then 180 s) is the other half and is untouched — see the section. |
 | 2 | **The override clear is dropped at start-up** | Mostly fixed 2026-08-22 — per-valve and the transition clear both work. What remains: `_publish_no_overrides()` fires before the MQTT plane connects, so a restart inherits the previous process's retained value. Live example: `override/global` has read `stale_data` since the coupler swap. |
 | 3 | **Watch the direct water-setpoint law (D-051, DONE 2026-09-28)** | The setpoint is now computed from the house slab target and written in one step; the walk + charging gate (D-048) are the fallback. Watch `water_sp/direct_target`, `energy/house_slab_target`, `water_sp/reason` against the room air for a week. Expected failure shape: a steady air offset (target error ÷ ~3) from `ua_ao`/`q_internal`/solar — a parameter to identify, NOT a reason to add an integrator. |
 | 4 | **Identify `ua_sa` — the overnight cooling experiment** | The one parameter marked GUESSED, and every scheduling argument rests on the fast mode it determines. Reading it from existing data failed for lack of excitation; the protocol is written and needs one mild night. |
@@ -2997,6 +2997,32 @@ before fixing; "the obvious cause" has been wrong here before.
         Validate by timing `_loop`'s steps before changing anything; a
         candidate fix is `asyncio.to_thread` for the model work, or publishing
         the tail first.
+
+  - [ ] **The falling-margin veto lets a raise through a slow, steady fall
+        (theory).** OBSERVED 2026-10-04: the margin fell steadily from 12:26
+        to 12:29 at about 0.1 K per 40 s. Every evaluation until 12:28:28
+        vetoed ("0.30 K down in 120 s"). At 12:29:00 the loop raised R32
+        57 -> 67 Hz ("at the ceiling - taking more capacity"), and the unit
+        went to 66-67 Hz.
+        The margin then fell 1.5 -> **+0.2 K** by 12:34:48. Supply bottomed
+        at 16.5 against a 16.1 limit, so it was 1.4 K above the dew point and
+        never under it. The run ended the way theory 5 describes: the return
+        reached the P04 setpoint of 20.0 and the unit throttled itself from
+        66 to 39 Hz. The ceiling took no part.
+        THEORY: `raise_veto_drop_c: 0.2` is two counts of the 0.1 K supply
+        resolution. A fall of 0.3 K per 120 s therefore sits close to the
+        edge, and one quantisation step reads as "not falling".
+        Margins published at 12:27:01 (1.70) and 12:29:00 (1.50) should have
+        given exactly 0.20 and vetoed. Why they did not is NOT established.
+        Candidates:
+          - float subtraction (`1.7 - 1.5` < 0.2);
+          - the 12:27:01 sample having just aged out of the window;
+          - the dew point stepping 15.0 -> 15.1 inside the window.
+        Check `_margins` against the journal before changing the threshold;
+        a `>=` on rounded values may be enough.
+        Context: this cooling run should not have happened at all. P04 was
+        walked 25 -> 23 -> 21 -> 20 between 10:49 and 11:39 by sun on the
+        Wohnzimmer sensor (25.5-27.0 against 21.7-24.2 elsewhere).
 
 ## Carried over from the investigation log
 
