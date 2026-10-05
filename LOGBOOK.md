@@ -5358,3 +5358,18 @@ full cycle took 0.6 s on the PFC (load forecast at 08:43:35, filter
 initialised at 08:43:36), and it was still connected 3+ min later with no
 broker timeout. Layer 1 now reads `outdoor_source forecast`. Auto mode came
 back as heating, with the compressor at 49 Hz again.
+
+## 2026-10-05 — Two owner decisions, coded, not yet deployed
+
+**Retained `heatctl/set/mode` is refused (86ad967).** Owner chose option (a)
+of three: mode commands only, with retained room setpoints left as they are.
+
+**An idle compressor is stopped once, without walking the ceiling.** From
+the journal, 2026-10-04 20:02-20:26: `compressor_freq` was 0.0 throughout and
+the margin was -0.46 to -0.75 K (Badezimmer dew point). The LOWER path wrote
+R32 67 -> 64 -> 59 -> 54 -> 49 -> 44 -> 39 -> 34 -> 30, then STOP
+(setpoint 30) at 20:26. I had proposed suppressing the STOP as well. Reading
+the trace changed that: idle is not commanded off, and an idle unit restarts
+on its own setpoint into water already under the limit. So the idle case now
+goes straight to STOP with one write, and an unreadable frequency keeps the
+old path. Two tests; the mutant returns LOWER 67 -> 57. 752 passed.

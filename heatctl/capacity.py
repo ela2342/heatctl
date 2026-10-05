@@ -241,6 +241,23 @@ class CapacityController:
         # off - or an unreadable `0x00F4`, which is the live state - would have
         # silently taken it out with no other layer behind it. A precondition
         # for one actuator must not disarm another.
+        # AN IDLE COMPRESSOR HAS NO FREQUENCY TO CAP. Observed 2026-10-04
+        # 20:02-20:26: a humid bathroom put the dew limit above water the
+        # compressor was not cooling (0 Hz throughout, margin -0.46..-0.75 K),
+        # and the LOWER path walked R32 67 -> 64 -> ... -> 30 one step per
+        # 180 s, then stopped at the floor - nine flash writes to a machine
+        # that was not running, ending where it could have started. The STOP
+        # itself was not wasted: idle is not commanded off, and the unit would
+        # have restarted on its own setpoint into water already below the
+        # limit. So stop straight away, with one write, and leave R32 alone.
+        # `None` is NOT idle: an unreadable frequency keeps the old path.
+        if (err < -self.deadband_c and compressor_hz is not None
+                and compressor_hz <= 0.0):
+            self._stopped_at = now
+            return CapacityDecision(
+                None, f"margin {margin:+.2f} K below target with the "
+                      "compressor idle - stopping it, ceiling untouched", STOP)
+
         ceiling_usable = silent_ok and current_ceiling is not None
         if err < -self.deadband_c and not ceiling_usable:
             self._stopped_at = now

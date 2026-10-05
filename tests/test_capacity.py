@@ -199,6 +199,32 @@ def test_at_the_frequency_floor_and_still_too_cold_it_stops(cap):
     assert d.target_hz is None, "a stop is not a frequency"
 
 
+def test_an_idle_compressor_is_stopped_once_without_walking_the_ceiling(cap):
+    """Real defect, 2026-10-04 20:02-20:26, from the journal.
+
+    The compressor was at 0 Hz throughout and the margin was -0.46..-0.75 K
+    (a humid bathroom put the dew limit above the water). The LOWER path
+    walked the ceiling 67 -> 64 -> 59 -> ... -> 30 Hz, one write per settle,
+    then wrote STOP at the floor: nine flash writes to a compressor that was
+    not running. The STOP was worth keeping - an idle unit restarts on its
+    own setpoint, into water already below the limit - the walk was not.
+
+    Mutation-verified: without the idle branch this returns LOWER 67 -> 57.
+    """
+    c = cap(min_hz=30.0, max_hz=90.0)
+    d = call(c, supply=15.54, limit=16.0, ceiling=67.0, hz=0.0, now=0.0)
+    assert d.kind == STOP and d.stops
+    assert d.target_hz is None, "the ceiling must not be written"
+
+
+def test_an_unreadable_frequency_is_not_treated_as_idle(cap):
+    """Unknown is not idle. Without a frequency reading the protective walk
+    stays in charge, because the compressor may well be running."""
+    c = cap()
+    d = call(c, supply=16.2, limit=16.0, ceiling=60.0, hz=None, now=0.0)
+    assert d.kind == LOWER and d.target_hz == 55.0
+
+
 def test_a_stopped_compressor_does_not_restart_inside_the_anti_short_cycle(cap):
     """The machine already cycles ~10 min on / ~9 min off unaided. Restarting
     sooner than that fights its own rhythm and wears the compressor."""
