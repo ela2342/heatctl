@@ -41,7 +41,7 @@ blocking something else, cheap, or a known defect in the safety path.
 | 10 | **`plant-status.sh inputs` is silently blind to half its feeds** | An ACL gap makes four live rooms look dead. Cheap to fix, and it is the command CLAUDE.md sends a fresh session to. |
 | 11 | **Four rooms still to migrate onto the plant broker** | Badezimmer and Gästebad done; **the plant's Controme dependency is gone** — Gästebad was the last room heatctl read through a Raumcontroller. The Mini Server itself still runs for HA/HomeKit. What remains is three HA-bridged Shellys and Arbeitszimmer on rtl_433, so this now buys independence from the HA bridge, plus humidity from three more rooms for the dew point. |
 | 12 | **Wohnzimmer's Shelly reads sun, not room** | 2026-09-28 11:23: **35.6 °C at 27.9 % RH**, outdoor 20.4, the other rooms 21–25. Dew point from that pair is 14.2, the same moisture as the house, so the sensor's own air was heated: direct sun on the device is the likely cause, not yet seen by anyone. It drove house deviation to −2.50 and pinned the room's slab target to the dew floor; the direct law (D-051) holds because the clamp bounds it, but 43 % of the house target's weight sits on this one reading. Owner: look at where it hangs. Only after that, consider a plausibility check (T rising with dew point flat and far above every other room). |
-| 13 | **The layer-2 estimator drops off the broker ~17×/hour** | `heatctl-optimizer ... disconnected: exceeded timeout`, 1243 in 72 h, so it predates the D-051 deploy. Keepalive unanswered means its event loop is blocked for >90 s; the weather fetch is already in a thread, so suspect CPU-bound work in `_loop` on a core with 0 % idle (optimizer ~22 %, heatctl ~37 %, top at 11:31). Layer 2 is allowed to fail, but `opt/*` arriving intermittently is what layer 1's expiry then eats. Measure the step time before changing anything. |
+| 13 | **[x] FIXED 2026-10-05 (96ae252): the layer-2 estimator drops off the broker ~17×/hour** | Cause: `ceiling_w` ran a 4000-sample Monte Carlo per forecast hour; the cycle took 0.6 s on the PFC after the fix → LOGBOOK 2026-10-05. Original note: `heatctl-optimizer ... disconnected: exceeded timeout`, 1243 in 72 h, so it predates the D-051 deploy. Keepalive unanswered means its event loop is blocked for >90 s; the weather fetch is already in a thread, so suspect CPU-bound work in `_loop` on a core with 0 % idle (optimizer ~22 %, heatctl ~37 %, top at 11:31). Layer 2 is allowed to fail, but `opt/*` arriving intermittently is what layer 1's expiry then eats. Measure the step time before changing anything. |
 
 Longer-running and deliberately not on that list: the heat meter, the DHW
 station fast loop, and layer 2 gaining command authority. They are big, none of
@@ -2912,7 +2912,10 @@ what D-044 was built to avoid.
 Each has an observation behind it and a cause that is only a guess. Validate
 before fixing; "the obvious cause" has been wrong here before.
 
-  - [ ] **The heat pump's mode is flipped on every restart (theory).**
+  - [~] **The second flip was the retained `heatctl/set/mode`** (validated
+        2026-10-05). With it cleared, the 08:18 restart wrote 0x0004 once
+        (2 -> 1, correct). Open: any future retained mode command brings it
+        back, and it would override auto_mode on every reconnect. **The heat pump's mode is flipped on every restart (theory).**
         OBSERVED 15:32:14-16, container log: `0x0004: 2 -> 1 (plant mode is
         heating)`, `mode -> cooling`, then `0x0004: 1 -> 2` two seconds later.
         Two flash writes and a real mode reversal of the unit, compressor at 0
@@ -2924,7 +2927,8 @@ before fixing; "the obvious cause" has been wrong here before.
         earlier restarts did it too - `hp/raw/0x0004` is from the slow config
         poll and did not catch a 2 s flap, so the journal cannot answer; the
         next restart's container log can.
-  - [ ] **Layer 2's broker drops switch the direct law's outdoor input by ~8 K
+  - [x] **CAUSE FIXED 2026-10-05 with #13**; layer 1 read `outdoor_source
+        forecast` after the deploy. Re-open if it flips again. **Layer 2's broker drops switch the direct law's outdoor input by ~8 K
         (theory).** OBSERVED: before the restart `energy/outdoor_source` was
         `station` (24.2); right after, `hp_register` (28.0), then `forecast`
         (16.5). Forecast is deliberately first (5.62 h slab time constant), so
@@ -2981,7 +2985,9 @@ before fixing; "the obvious cause" has been wrong here before.
         start ramp's spread carries below the limit. Check the floor's
         arithmetic in `_bounds` against these two traces before believing it.
 
-  - [ ] **The estimator's disconnects cost everything after `load_forecast`
+  - [x] **VALIDATED AND FIXED 2026-10-05 (96ae252)**: the blocking step was
+        `derived.q_max` sampled per forecast hour, not the model work as a
+        whole → LOGBOOK 2026-10-05. **The estimator's disconnects cost everything after `load_forecast`
         (theory, links #13 and theory 2 above).** OBSERVED 2026-09-28
         ~16:50: the broker drops `heatctl-optimizer` for "exceeded timeout"
         ~151 s after each connect (k60); the estimator's traceback is always
