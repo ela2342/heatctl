@@ -60,6 +60,36 @@ def test_set_topics_are_routed_to_the_command_callback(plane):
     assert ("setpoint", "gaestebad", "23.5") in p.commands
 
 
+def test_a_retained_mode_command_is_refused(plane):
+    """Real defect, found 2026-09-28, cause confirmed 2026-10-05.
+
+    A retained `heatctl/set/mode cooling` sat on the broker. The broker
+    replays retained messages on every connect, so every restart wrote the
+    heat pump's mode twice (config `heating`, then the replay 300 ms later),
+    and with auto_mode on it would force cooling on every reconnect until the
+    dwell let auto_mode flip back. Mode commands must be live, not replayed.
+
+    Mutation-verified: dropping the `retain` check routes the replay through.
+    """
+    p = plane()
+    p._dispatch("heatctl/set/mode", "cooling", retain=True)
+    assert not p.commands
+    # A live command still works - the refusal is about replay, not mode.
+    p._dispatch("heatctl/set/mode", "cooling", retain=False)
+    assert ("mode", "", "cooling") in p.commands
+
+
+def test_a_retained_setpoint_is_still_applied(plane):
+    """Only `set/mode` was decided (owner, 2026-10-05, option a of three).
+
+    Retained room setpoints may be what carries an operator's setpoint across
+    a restart today; refusing them too is a separate decision.
+    """
+    p = plane()
+    p._dispatch("heatctl/set/setpoint/gaestebad", "23.5", retain=True)
+    assert ("setpoint", "gaestebad", "23.5") in p.commands
+
+
 # ---------- dew point ----------
 
 def test_the_dew_point_topic_is_captured(plane):

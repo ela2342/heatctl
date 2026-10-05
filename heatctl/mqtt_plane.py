@@ -353,13 +353,15 @@ class ControlPlane:
                         await client.subscribe(self.outdoor_topic)
                     log.info("control plane connected: %s", self.host)
                     async for msg in client.messages:
-                        self._dispatch(str(msg.topic), msg.payload.decode())
+                        self._dispatch(str(msg.topic), msg.payload.decode(),
+                                       retain=bool(msg.retain))
             except Exception as e:
                 self._client = None
                 log.warning("control plane disconnected (%s), retry in 10 s", e)
                 await asyncio.sleep(10)
 
-    def _dispatch(self, topic: str, payload: str) -> None:
+    def _dispatch(self, topic: str, payload: str,
+                  retain: bool = False) -> None:
         if self.outdoor_topic and topic == self.outdoor_topic:
             try:
                 v = float(payload)
@@ -426,6 +428,19 @@ class ControlPlane:
             self._sp_delta_ts = time.monotonic()
             return
         if topic == f"{self.base}/set/mode":
+            # A RETAINED mode command is refused, not applied. The broker
+            # replays it on every connect, so it was applied as a fresh
+            # operator command after every restart and every reconnect - two
+            # heat-pump mode writes per restart (config mode, then the replay
+            # 300 ms later), and with auto_mode on, a forced mode on every
+            # reconnect that auto_mode then flips back after its dwell: churn
+            # from a cause unrelated to the house. A mode command means
+            # "someone did this just now"; a restart comes back in the config
+            # mode or auto_mode's choice (owner, 2026-10-05).
+            if retain:
+                log.warning("ignoring RETAINED %s = %r - clear it with "
+                            "mosquitto_pub -r -n -t %s", topic, payload, topic)
+                return
             self.on_command("mode", "", payload)
         elif topic.startswith(f"{self.base}/set/valve/"):
             self.on_command("valve", topic.rsplit("/", 1)[1], payload)
