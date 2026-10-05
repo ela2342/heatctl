@@ -182,6 +182,22 @@ def p04_opt(p: dict, limit_c: float, room_c: float) -> Uncertain:
     return Uncertain(u.value, u.sigma, "degC")
 
 
+def q_max_nominal(p: dict, limit_c: float, room_c: float) -> float:
+    """`q_max(...).value` without the 4000 samples that produce its sigma.
+
+    `propagate` returns the NOMINAL evaluation as `value`; the samples only
+    buy the error bar. A caller that discards the sigma was paying ~40 ms per
+    call on a desktop for nothing, and `Estimator.ceiling_w` calls it once per
+    forecast hour. On the PFC200's one shared ARMv7 core that came to more than
+    the 90 s MQTT keepalive grace, every cycle, from the 2026-08-20 move until
+    2026-10-05: the broker dropped the optimizer mid-publish, and the hourly
+    forecast, per-room solar, `outdoor_avg_c` and `setpoint_delta` never
+    reached the broker. Same formula as `q_max`, so the two cannot drift.
+    """
+    return _q_max_coeff({k: float(v) for k, v in _inputs(p).items()}) * (
+        room_c - limit_c)
+
+
 def q_max(p: dict, limit_c: float, room_c: float) -> Uncertain:
     def f(v: dict) -> float:
         return _q_max_coeff(v) * (room_c - limit_c)

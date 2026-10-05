@@ -363,6 +363,36 @@ class TestCondensationCeiling:
         pt = _with_dew(est.weather.points[0], -10.0)   # absurdly dry
         assert est.ceiling_w(pt, 24.0, gap_gkg=1.4, fallback_w=5700.0) <= 5700.0
 
+    def test_the_ceiling_does_not_monte_carlo_every_forecast_hour(self,
+                                                                  monkeypatch):
+        """Real defect, 2026-08-20 .. 2026-10-05: the optimizer sat offline.
+
+        `ceiling_w` called `derived.q_max`, which draws 4000 samples for a
+        sigma nobody read, once per forecast hour. On the PFC200's one shared
+        ARMv7 core that blocked the event loop past the 90 s keepalive grace,
+        so the broker dropped the client right after `load_forecast`, every
+        cycle, for six weeks - and the hourly forecast, per-room solar,
+        `outdoor_avg_c` and `setpoint_delta` never went out. Nothing was
+        wrong with any number; there were just no numbers.
+
+        The ceiling must equal the propagated value (it is the same formula)
+        but must not sample. Mutation-verified: restoring `q_max(...).value`
+        in `ceiling_w` trips the propagate guard.
+        """
+        from optimizer import derived
+        est = _estimator(monkeypatch, [NEUTRAL_C] * 6)
+        est.params = _real_params()
+        pt = _with_dew(est.weather.points[0], 14.0)
+        limit = est._dew_from_w(est._w_from_dew(14.0) + 1.4) + est.dew_margin_c
+        expected = derived.q_max(est.params, limit, 24.0).value
+
+        def no_sampling(*a, **k):
+            raise AssertionError("ceiling_w ran the Monte Carlo propagation")
+        monkeypatch.setattr(derived, "propagate", no_sampling)
+        got = est.ceiling_w(pt, 24.0, gap_gkg=1.4, fallback_w=99_000.0)
+        assert got == pytest.approx(expected, rel=1e-12)
+        assert got > 0, "test is vacuous - the ceiling clamped to zero"
+
     def test_dew_point_round_trip(self, monkeypatch):
         """W(dew) and dew(W) must invert, or the gap arithmetic is nonsense."""
         est = _estimator(monkeypatch, [NEUTRAL_C] * 2)

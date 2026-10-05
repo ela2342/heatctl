@@ -529,8 +529,10 @@ class Estimator:
         limit = self._dew_from_w(w_in) + self.dew_margin_c
         if target_air - limit <= 0:
             return 0.0                # supply cannot be below the room: no cooling
-        q = derived.q_max(self.params, limit, target_air)
-        return max(0.0, min(fallback_w, q.value))
+        # Nominal, not `q_max(...).value`: same number, no Monte Carlo. See
+        # `derived.q_max_nominal` for what the sampling cost on the PFC.
+        q = derived.q_max_nominal(self.params, limit, target_air)
+        return max(0.0, min(fallback_w, q))
 
     def hourly_forecast(self, target_air: float, ceiling_w: float,
                         hours: int = 48) -> list[dict]:

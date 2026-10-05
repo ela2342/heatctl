@@ -955,7 +955,14 @@ control:
     # house wants cooling - and the resume path then lowering the setpoint
     # BELOW the demand-derived value to defeat the unit's 2 K restart dead
     # zone. See BACKLOG "The plant cooled a house that was 1 K too cold".
-    auto_mode: false
+    #
+    # RE-ENABLED 2026-10-05 (owner), against D-048's "stays off". Heating
+    # season is arriving and the owner wants the plant to pick the mode itself,
+    # with the mode history watched for churn. The D-048 condition is NOT met:
+    # `slab_estimate_c` still falls back to the return temperature because
+    # `ntu` is never set, which is the mechanism of the August 78-min
+    # self-oscillation. Expect to turn this off again if the mode flips.
+    auto_mode: true
     # Flow floor as MEAN opening across all water-carrying circuits, counting
     # unactuated ones as 100 % (they are open pipe). 40 % is the owner's
     # measured figure - below it the system runs into trouble and eventually

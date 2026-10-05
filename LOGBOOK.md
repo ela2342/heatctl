@@ -5310,3 +5310,44 @@ compressor throttling itself at its return setpoint (74 -> 39 Hz at 16:34),
 coinciding with the loop's second lower 74 -> 67. Two further theories in
 BACKLOG: the ceiling outliving the off period, and the P04 floor assuming the
 low-frequency spread.
+
+## 2026-10-05 — auto_mode on; the optimizer has been offline since the PFC move
+
+**auto_mode re-enabled, owner, 08:18.** Against D-048: the mechanism behind
+the August self-oscillation (`slab_estimate_c` = return temperature, `ntu`
+never set) is still in place. Done with the compressor at 0 Hz; the retained
+`heatctl/set/mode cooling` was cleared first (`-r -n`), because it replays
+on every control-plane connect and would override auto_mode each time. The
+start-up one-shot (D-044) went straight to heating: house excess about
+-59 kWh, outdoor 6.9 degC from the station. Heat pump 0x0004 2 -> 1 at
+08:18:51. By 08:40 the compressor was at 49 Hz with setpoint_heating 29.
+
+**The optimizer has published almost nothing since 2026-08-20.** The owner
+asked why its output was stale. My monitoring had covered layer 1 only.
+The broker log shows `heatctl-optimizer ... disconnected: exceeded timeout`
+every ~213 s for as far back as the log goes. In the journal,
+`opt/forecast_hourly` appears 0-2 times a day on 08-22, 08-28, 09-15,
+09-25, 10-02 and 10-03, while `load_forecast` appears ~400 times a day:
+once per reconnect. Captured live: it connected at 08:28:05 and published
+`load_forecast` at 08:29:03. Then it was silent. The broker dropped it 90 s
+later (keepalive 60 s x 1.5), and the next publish raised "not connected"
+at 08:31:29.
+
+Cause: `ceiling_w` called `derived.q_max(...)` once per forecast hour. That
+is a 4000-sample Monte Carlo, and only `.value` was used, which is the
+nominal evaluation. Desktop: 40 ms per call, ~2 s per cycle. On the
+PFC200's one ARMv7 core, at load 5.4 with 0 % idle, that blocks the event
+loop for longer than the keepalive grace. It only bites when a humidity gap
+exists, i.e. when the dew-point topic is fresh. Before the move, on HA's
+hardware, it fit. The optimizer is its own process, so layer 1's loop was
+not affected.
+
+What layer 1 lost: `outdoor_avg_c` (it fell back to the station, which is
+why `outdoor_source` reads `station`), per-room `solar_w` (its 3600 s
+staleness drops it), and `setpoint_delta` (stale, so 0). That is the D-034
+solar feed-forward and the forecast-averaged slab target, both gone for six
+weeks without any alarm.
+
+Fix: `derived.q_max_nominal`, the same formula without sampling. The cycle
+with a gap is now 2 ms on the desktop. One regression test, which fails when
+`q_max(...).value` is restored; 748 passed. Not yet deployed.
