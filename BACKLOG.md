@@ -22,6 +22,20 @@ are kept, not deleted: a rejected idea that is not recorded gets re-proposed,
 and a completed one explains why the code looks the way it does. When a closed
 item's story is long, it lives in `LOGBOOK.md` and the line here points at it.
 
+## Before cooling resumes (owner, 2026-10-05)
+
+Heating season. These can only act in cooling, so they wait for spring - but
+they MUST be done before the first cooling day, because each is a known way
+the supply reaches the dew point or the plant cools for the wrong reason.
+
+| | what | state |
+|---|---|---|
+| C1 | **Raise veto: float subtraction at the window edge** | Validated; fix and test are small. See Now #1 sub-items. |
+| C2 | **The ceiling outlives the off period (theory 4)** | Theory. Needs a design choice (start ceiling on stop vs. track the running frequency) and an attended test in cooling. Note 8de6ed1 now leaves R32 alone while the compressor idles, so this matters more. |
+| C3 | **One humid room stops cooling house-wide** | Owner design question: exclude, cap, or ventilate the Badezimmer. 2026-10-04: dew 21.4 there stopped cooling everywhere. |
+| C4 | **Rooms the mode cannot serve still weigh in the house target (D-051)** | Owner design question; bathrooms asked 27-31 degC slab in cooling. |
+| C5 | **Deploy check** | 86ad967 (retained mode) and 8de6ed1 (idle stop) are coded; confirm both are live. |
+
 ## Now — what I would pick up next
 
 Not a priority ranking of everything below; the things that are either
@@ -2973,7 +2987,13 @@ before fixing; "the obvious cause" has been wrong here before.
         it is not binding (one write per cycle); or set a start ceiling on
         stop. The raise vetoes are necessary but, on this evidence, not
         sufficient.
-  - [ ] **The water setpoint's condensation floor may assume today's spread,
+  - [x] **REFUTED 2026-10-05 (desk).** The floor contains no spread term at
+        all - `_clamp` floors P04 at `supply_limit` and D-036 forbids a
+        spread term ("no spread term, ever"; `spread_est` is published, not
+        used). Supply landing about one spread under a return setpoint is
+        D-036's documented, accepted limitation; enforcing the supply is the
+        capacity loop's job, so these excursions belong to the raise veto
+        and theory 4, not to the floor. **The water setpoint's condensation floor may assume today's spread,
         not the spread at full ramp (theory).** OBSERVED: both excursions
         (14:41 and 16:34) ended when the COMPRESSOR throttled itself on its
         setpoint (return reached 18.0 -> 83/74 Hz fell to 39), not when the
@@ -3004,7 +3024,15 @@ before fixing; "the obvious cause" has been wrong here before.
         candidate fix is `asyncio.to_thread` for the model work, or publishing
         the tail first.
 
-  - [ ] **The falling-margin veto lets a raise through a slow, steady fall
+  - [ ] **VALIDATED 2026-10-05 (desk, journal) - float subtraction at a
+        window edge; fix before cooling resumes** → LOGBOOK 2026-10-05.
+        At 12:29:00 the last 18.1 sample had just aged out of the 120 s
+        window, leaving max 18.0 against 17.8 now: nominally 0.20, in floats
+        `18.0-L - (17.8-L)` = 0.1999999999999993 for any L, so `>= 0.2`
+        failed. Fix: compare on values rounded to the 0.1 K sensor resolution
+        (or a small epsilon), with a test from this trace. Separately worth
+        asking whether 0.2 K / 120 s is too tight a window for a 0.1 K
+        sensor: the same fall read 0.30-0.50 K a minute earlier. **The falling-margin veto lets a raise through a slow, steady fall
         (theory).** OBSERVED 2026-10-04: the margin fell steadily from 12:26
         to 12:29 at about 0.1 K per 40 s. Every evaluation until 12:28:28
         vetoed ("0.30 K down in 120 s"). At 12:29:00 the loop raised R32

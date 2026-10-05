@@ -5373,3 +5373,31 @@ the trace changed that: idle is not commanded off, and an idle unit restarts
 on its own setpoint into water already under the limit. So the idle case now
 goes straight to STOP with one write, and an unreadable frequency keeps the
 old path. Two tests; the mutant returns LOWER 67 -> 57. 752 passed.
+
+## 2026-10-05 — Desk checks of two cooling theories, before the journal rolls
+
+Owner decision 4 (a): check now against the journal, fix in spring.
+
+**Raise veto, 2026-10-04 12:29: VALIDATED.** The trace, from the journal
+(`vl_total` changes, dew point constant):
+
+    12:27:01 vl 18.0   reason: +1.70 K, 0.50 K down in 120 s - not raising
+    12:27:34 vl 17.9
+    12:28:18 vl 17.8   reason: +1.50 K, 0.40 K down
+    12:28:28           reason: +1.50 K, 0.30 K down
+    12:29:00           reason: +1.50 K at the ceiling - taking more capacity
+    12:29:04 R32 57 -> 67; compressor 56 -> 62 -> 66 Hz
+
+At 12:29:00 the last 18.1 sample (until 12:27:00) left the 120 s window.
+The maximum in the window became 18.0, so the drop was nominally 0.20. In
+floats, `(18.0 - L) - (17.8 - L)` = 0.1999999999999993 for any L, so
+`drop >= raise_veto_drop_c` failed by 7e-16. Both candidates were needed:
+the window edge set the drop to exactly 0.2, and the float made 0.2 fail.
+The dew-step candidate is ruled out (dew point constant).
+
+**P04 floor assumes the low-speed spread (theory 5): REFUTED.** `_clamp`
+floors at `supply_limit` with no spread term. D-036 forbids one, after
+D-030's spread term latched and drove the setpoint the wrong way. The supply
+landing a spread under the return setpoint is D-036's stated limitation. The
+09-28 excursions are therefore the capacity loop's to answer (raise veto,
+theory 4).
