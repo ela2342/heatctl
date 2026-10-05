@@ -5351,3 +5351,10 @@ weeks without any alarm.
 Fix: `derived.q_max_nominal`, the same formula without sampling. The cycle
 with a gap is now 2 ms on the desktop. One regression test, which fails when
 `q_max(...).value` is restored; 748 passed. Not yet deployed.
+
+Deployed 96ae252 at 08:42 (mode off at 08:40:11, compressor 0 Hz at
+08:41:32). The new code is confirmed in the container. The optimizer's first
+full cycle took 0.6 s on the PFC (load forecast at 08:43:35, filter
+initialised at 08:43:36), and it was still connected 3+ min later with no
+broker timeout. Layer 1 now reads `outdoor_source forecast`. Auto mode came
+back as heating, with the compressor at 49 Hz again.
