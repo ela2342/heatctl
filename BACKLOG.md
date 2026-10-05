@@ -61,6 +61,23 @@ Longer-running and deliberately not on that list: the heat meter, the DHW
 station fast loop, and layer 2 gaining command authority. They are big, none of
 them is blocked, and none of them is urgent.
 
+
+### Recorded 2026-10-05
+
+  - [ ] **Badezimmer goes up to 2 h between samples (theory).** OBSERVED
+        overnight 10-04/05: gaps of up to 7257 s. That is inside its
+        `max_age_s` of 10800, so it never counted as stale. This is the
+        room that set the house dew point that night, and in heating its
+        PID runs blind for as long. THEORY: the sleeping sensor reports only
+        on change, or misses wake-ups. Check its report interval in the
+        normaliser/journal before touching `max_age_s`.
+  - [ ] **Layer 2 is cooling-only.** Since it began publishing again
+        (96ae252), `target_air_c` is 24 and `load_forecast`, `precharge_k`
+        and `setpoint_delta` count cooling alone. In heating the delta stays
+        0 (neutral, and clamped anyway), but the dashboard figures look
+        meaningful and are not. Heating awareness belongs to the control
+        overhaul (Now #5), not a patch.
+
 ## Milestone 1 - harden layer 1
 
 - [ ] DEFERRED, deliberately: put the dew-point margin on a proper footing.

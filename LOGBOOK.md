@@ -5401,3 +5401,13 @@ D-030's spread term latched and drove the setpoint the wrong way. The supply
 landing a spread under the return setpoint is D-036's stated limitation. The
 09-28 excursions are therefore the capacity loop's to answer (raise veto,
 theory 4).
+
+## 2026-10-05 — Overnight 10-04/05: frost protection with the compressor off
+
+`primary_antifreeze` was set 04:04-06:47 with the compressor at 0 Hz and no
+fault. Outdoor was about 7 degC by 08:18. The likeliest explanation is the
+unit's own frost guard on a cold night. That is not established, and it is
+recorded as an observation, not a defect. The only earlier sighting is the
+August compressor-cycling case (coil collapse on start), which had the
+compressor running. Revisit if it recurs alongside anything that affects
+heating.
