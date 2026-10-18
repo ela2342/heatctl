@@ -5440,6 +5440,6 @@ was happening.
 27.0 with a peak of 29.7, and Schlafzimmer averaged 26.1 with a peak of
 26.9. The other rooms were at 22.4-24.6. The Wohnzimmer sensor was moved
 on 10-05, so this is the first sunny midday since the move that BACKLOG
-asked to watch. Two readings fit: real solar gain in the two south rooms,
+asked to watch. Two readings fit: real solar gain in those two rooms,
 or a sensor still in the sun. In either case these two rooms carry the
 morning slab swing that triggers cooling. Not yet validated.
