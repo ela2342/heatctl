@@ -5429,9 +5429,14 @@ The 10-16 trace, with outdoor at 10-11.8 degC all day:
   49-70 Hz.
 
 The plant heats and cools the same house on the same day. That wastes
-energy and costs flash writes. The 4 K deadband and the 1 h dwell do not
-prevent it, because the slab estimate falls back to the return temperature
-(`ntu` is unset), and that swings by more than 8 K over a day.
+energy and costs flash writes. The 4 K deadband and the 1 h
+dwell do not prevent it, and D-048 says why: `auto_mode` is feedback on
+today's slab excess, across a dead time of hours, so the lag does the
+hunting and a wider deadband cannot help. No forecast enters the choice of
+mode. Layer 2 publishes only, its single actuation (`setpoint_delta`)
+counts cooling alone, and the heat/cool/coast planner D-048 calls for is not
+built. (Theory, not checked: the unset `ntu` makes the slab estimate follow
+the return temperature, which makes the swing larger.)
 
 The monitoring cron had expired, so none of this was reported while it
 was happening.
