@@ -5448,3 +5448,42 @@ on 10-05, so this is the first sunny midday since the move that BACKLOG
 asked to watch. Two readings fit: real solar gain in those two rooms,
 or a sensor still in the sun. In either case these two rooms carry the
 morning slab swing that triggers cooling. Not yet validated.
+
+## 2026-10-18 — The layer-2 model does not yet predict: worse than persistence
+
+The question was whether the prediction is good enough to build the planner
+(DESIGN_ESTIMATION_PLANNING phase 4) on. Method: the estimator's own
+`opt/state` from the journal, 10-14 to 10-17, about one sample a minute. From
+every hour, start at the filter's published air and slab estimates and run
+`model.discretise` open-loop at 60 s, using the MEASURED outdoor temperature
+and the model's own solar input. That is a perfect weather forecast, so this
+is the model's best case. The prediction is scored against `air_measured`
+and compared with persistence, i.e. assuming the air stays where it was.
+
+| horizon | model RMSE | bias | persistence RMSE |
+|---|---|---|---|
+| 3 h | 0.95 K | -0.33 | 0.54 K |
+| 6 h | 1.58 K | -0.59 | 0.89 K |
+| 12 h | 2.07 K | -1.04 | 1.12 K |
+| 24 h | 2.20 K | -2.02 | 0.78 K |
+
+- **Persistence beats the model at every horizon.** A planner on this model
+  would choose heat, cool or coast from a prediction worse than "nothing
+  changes".
+- **`heat_input_w` is mode-blind, live.** On 10-16 between 11:00 and 15:00
+  the plant cooled at 64-84 Hz while `q_heat_w` read +1.1 to +3.0 kW of
+  HEAT. Flipping its sign in cooling does NOT improve the score (24 h: 2.55 K,
+  bias -2.44), so it is a real defect but not the dominant one.
+- **The cold bias points at `ua_ao`.** With 216 W/K, the figure that three
+  routes in params.yaml converge on, the bias falls to -0.08/-0.15/-0.35/
+  -1.00 K and the RMSE to 0.84/1.41/1.79/1.34 K. That is still worse than
+  persistence. One parameter is not the whole story. The hypothesis is that
+  the slab state soaks up model error, and that is not checked.
+- **The innovations are not white.** `innov_lag1` was 0.96-0.97 throughout.
+  The filter follows the air because the air is measured; the published slab
+  estimate reads 26-31 degC under 22.7-25 degC air with no heat input
+  overnight. That is the opposite of phase 2's gate.
+
+This is consistent with the design's ordering, which puts the planner after
+phases 1-3. The scoring script is a seed for the phase-2 replay harness; it
+was kept outside the repo.
