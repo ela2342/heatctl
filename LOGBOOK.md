@@ -5411,3 +5411,35 @@ recorded as an observation, not a defect. The only earlier sighting is the
 August compressor-cycling case (coil collapse on start), which had the
 compressor running. Revisit if it recurs alongside anything that affects
 heating.
+
+## 2026-10-18 — auto_mode has flipped heating/cooling daily since 10-06
+
+Twenty heat-pump mode writes (`0x0004`) in 12 days. The flips to cooling
+came around 10:00-11:00 on 10-06, 07, 09, 10, 11, 12, 13, 14, 15 and 16.
+The flips back to heating came between 20:00 and 01:17 on 10-07, 08, 10,
+11 (twice), 12, 13, 14, 15 and 17. This is the D-048 mechanism, which the
+owner overrode on 10-05 by switching auto_mode on.
+
+The 10-16 trace, with outdoor at 10-11.8 degC all day:
+- heating until 08:30, the compressor tapering from 49 to 29 Hz;
+- `slab_excess_k` rising from -0.26 (08:00) to +4.12 (10:30) with the
+  compressor off;
+- cooling from 11:00 at 64-84 Hz until about 17:30;
+- `slab_excess_k` falling to -4.18 by 00:30 on 10-17, then heating at
+  49-70 Hz.
+
+The plant heats and cools the same house on the same day. That wastes
+energy and costs flash writes. The 4 K deadband and the 1 h dwell do not
+prevent it, because the slab estimate falls back to the return temperature
+(`ntu` is unset), and that swings by more than 8 K over a day.
+
+The monitoring cron had expired, so none of this was reported while it
+was happening.
+
+**Midday room means on 10-16, 10:00-15:00 (theory).** Wohnzimmer averaged
+27.0 with a peak of 29.7, and Schlafzimmer averaged 26.1 with a peak of
+26.9. The other rooms were at 22.4-24.6. The Wohnzimmer sensor was moved
+on 10-05, so this is the first sunny midday since the move that BACKLOG
+asked to watch. Two readings fit: real solar gain in the two south rooms,
+or a sensor still in the sun. In either case these two rooms carry the
+morning slab swing that triggers cooling. Not yet validated.
