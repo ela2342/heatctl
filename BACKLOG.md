@@ -34,7 +34,7 @@ the supply reaches the dew point or the plant cools for the wrong reason.
 | C2 | **The ceiling outlives the off period (theory 4)** | Theory. Needs a design choice (start ceiling on stop vs. track the running frequency) and an attended test in cooling. Note 8de6ed1 now leaves R32 alone while the compressor idles, so this matters more. |
 | C3 | **One humid room stops cooling house-wide** | Owner design question: exclude, cap, or ventilate the Badezimmer. 2026-10-04: dew 21.4 there stopped cooling everywhere. |
 | C4 | **Rooms the mode cannot serve still weigh in the house target (D-051)** | Owner design question; bathrooms asked 27-31 degC slab in cooling. |
-| C5 | **Deploy check** | 86ad967 (retained mode) and 8de6ed1 (idle stop) are coded; confirm both are live. |
+| C5 | **[x] Deploy check** | Both live since 2026-10-19 21:16 (3910036), confirmed in the container. |
 
 ## Now — what I would pick up next
 

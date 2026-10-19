@@ -5532,3 +5532,20 @@ compressor was at 0 Hz throughout.
 start, and the restart (which also deploys 86ad967, 8de6ed1 and def4170) is
 pending, waiting on deploy permission. Until then, a flip back to cooling
 remains possible.
+
+## 2026-10-19 21:16 — Deployed main (3910036): auto_mode off is live
+
+Restarted with the owner's approval. The container now carries 86ad967
+(retained `set/mode` refused), 8de6ed1 (idle compressor stopped without
+walking R32) and def4170 (signed heat input, skipped time carried, replay
+harness), all checked by grep inside the container. It came up in
+`heating` from the seed mode with auto_mode off, the optimizer connected,
+and the filter re-initialised at 23.36 degC air. `before cooling resumes`
+item C5 is answered.
+
+**Observation (theory, not checked): `off` ran the compressor UP before
+stopping it.** The unretained `set/mode off` went out at about 21:09 with
+the compressor at 49 Hz. Polled every 30 s it read 49, 49, 59, 69, 70, 69 x5,
+70, 55, then 0: about 6 minutes, peaking at 70 Hz. The unit's own shutdown
+sequence (oil return, or a minimum run after a start) is the obvious
+candidate. The journal around 21:09-21:16 would show what heatctl wrote.
