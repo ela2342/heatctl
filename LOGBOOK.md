@@ -5519,3 +5519,16 @@ not improve the score.
 caller's dt was lost. After an outage the filter predicted 60 s across a
 gap of hours. The skipped time is now carried into the next step. Live, this
 bites whenever the forecast fetch fails for longer than `input_max_age_s`.
+
+## 2026-10-19 — auto_mode off (live config), mode heating; restart pending
+
+Owner decision, following the daily flips of 10-06 to 10-18. Line 533 of
+the live config now reads `auto_mode: false` (backup:
+`config.yaml.bak-20261019-automode-off`), with seed mode `heating`. The
+plant was put to `off`, then to `heating`, by unretained `set/mode`. The
+compressor was at 0 Hz throughout.
+
+**The running process still has auto_mode ON.** The config is read at
+start, and the restart (which also deploys 86ad967, 8de6ed1 and def4170) is
+pending, waiting on deploy permission. Until then, a flip back to cooling
+remains possible.
