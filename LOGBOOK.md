@@ -5580,3 +5580,19 @@ the delta, so no feedback. 22.43 degC with today's setpoints, published as
 `opt/target_air`. Three tests, mutation-verified. Deploy pending approval;
 the live config's `target_air_c: 24.0` becomes a dead key and is to be
 removed in the same deploy.
+
+## 2026-10-19 21:44 — Deployed 9a233dd: layer 2 targets the room setpoints
+
+Owner switched the session to manual to get it through. `set/mode off` at
+21:41:47, compressor 55 -> 0 Hz by 21:43. Live config: `target_air_c: 24.0`
+and its comment removed (backup `config.yaml.bak-20261019-target-air`).
+Container rebuilt, `def target_air` confirmed inside it. Came up in
+`heating` from the seed mode, auto_mode off; the compressor restarted on its
+own (14, then 21 Hz). First optimizer cycle: "setpoint delta +0.09 K (target
+22.4)", against +0.15 at 24 two hours earlier.
+
+**Theory, not checked:** the delta is still positive with the load forecast
+reporting 0 h over the 5700 W ceiling for both days (peak 3.4 kW). Either
+`setpoint_delta` sees a lower per-hour ceiling than the day summary prints
+(`ceiling_w()` is humidity-aware), or it does not need the ceiling to be
+crossed. Worth reading before a cold week.
