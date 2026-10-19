@@ -71,12 +71,18 @@ them is blocked, and none of them is urgent.
         PID runs blind for as long. THEORY: the sleeping sensor reports only
         on change, or misses wake-ups. Check its report interval in the
         normaliser/journal before touching `max_age_s`.
-  - [ ] **Layer 2 is cooling-only.** Since it began publishing again
-        (96ae252), `target_air_c` is 24 and `load_forecast`, `precharge_k`
-        and `setpoint_delta` count cooling alone. In heating the delta stays
-        0 (neutral, and clamped anyway), but the dashboard figures look
-        meaningful and are not. Heating awareness belongs to the control
-        overhaul (Now #5), not a patch.
+  - [ ] **Layer 2's target is a cooling target, and the delta acts in
+        heating too.** The old wording ("cooling-only, the delta stays 0 in
+        heating") was wrong: checked 2026-10-19 (LOGBOOK). `setpoint_delta`
+        is signed and layer 1 applies it in every mode. What is wrong is
+        that one `target_air_c` (24 live) serves both modes, 1.5-2 K above
+        the room setpoints, so heating need is overstated (~430 W at
+        `ua_ao` 267) and a cold spell would ask for kelvins of pre-heat,
+        bounded only by `clamp_setpoint`. The dashboard's `load_forecast`
+        figures (cooling_kwh, store, precharge) count the cooling direction
+        only. Fix: a mode-aware target derived from the room setpoints
+        (capacity-weighted), or hold the delta at 0 outside cooling until
+        the overhaul (Now #5). Owner decision.
 
 ## Milestone 1 - harden layer 1
 

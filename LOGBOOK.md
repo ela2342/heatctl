@@ -5549,3 +5549,23 @@ the compressor at 49 Hz. Polled every 30 s it read 49, 49, 59, 69, 70, 69 x5,
 70, 55, then 0: about 6 minutes, peaking at 70 Hz. The unit's own shutdown
 sequence (oil return, or a minimum run after a start) is the obvious
 candidate. The journal around 21:09-21:16 would show what heatctl wrote.
+
+## 2026-10-19 — "Layer 2 is cooling-only" checked: half wrong
+
+The BACKLOG said the delta stays 0 in heating. It does not:
+`setpoint_delta()` is signed (`+heat_excess/cap` beyond the 5700 W delivery
+ceiling), and `main.py` adds it to every room setpoint in every mode. From
+the journal, `setpoint_delta/active` in heating peaked at +0.05 K on 10-14
+(nonzero 26 % of the time) and was ~0 on 10-15..17; the optimizer's first
+figure after tonight's restart was +0.15 K.
+
+The defect is the target, not the sign. `target_air_c: 24` is one figure
+for both modes and sits 1.5-2 K above the live room setpoints (22-23.5), so
+in heating the model sees ~267 W/K x ~1.6 K, about 430 W, of need that no
+room asks for. While loads stay under the ceiling this is invisible; at
+-5 degC outdoor the net load at 24 degC is roughly 7.7 kW less gains, so
+the delta could reach several kelvin of pre-heat, limited only by
+`clamp_setpoint`. `ua_ao` (267 vs ~216 from the earlier fit) overstates it
+further. `load_forecast`'s figures (cooling_kwh, hours_over, store,
+precharge) count only the `x - ceiling > 0` direction and describe nothing
+in heating. BACKLOG item rewritten; fix is an owner decision.
