@@ -5569,3 +5569,14 @@ the delta could reach several kelvin of pre-heat, limited only by
 further. `load_forecast`'s figures (cooling_kwh, hours_over, store,
 precharge) count only the `x - ceiling > 0` direction and describe nothing
 in heating. BACKLOG item rewritten; fix is an owner decision.
+
+## 2026-10-19 — Layer 2 now targets the room setpoints (owner: "24C is way too hot")
+
+`target_air_c` is gone from code and config. `Estimator.target_air()` is the
+mean of the room setpoints over the rooms `house_air` averages (fresh
+sensors, else all with a sensor), seeded from `rooms[].setpoint_c` and
+followed from layer 1's retained `setpoint/<room>` - the setpoint without
+the delta, so no feedback. 22.43 degC with today's setpoints, published as
+`opt/target_air`. Three tests, mutation-verified. Deploy pending approval;
+the live config's `target_air_c: 24.0` becomes a dead key and is to be
+removed in the same deploy.

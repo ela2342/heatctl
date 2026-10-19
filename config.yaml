@@ -1196,10 +1196,10 @@ logging:
 # a separate process and allowed to fail; nothing here can affect layer 1.
 optimizer:
   interval_s: 60
-  # House air target the load forecast is computed against. The answer scales
-  # with it - a 1 K higher target removes roughly H x 1 K = 0.27 kW from every
-  # hour of the day.
-  target_air_c: 24.0
+  # No air target here: the forecasts are computed against the room setpoints
+  # (`rooms[].setpoint_c`, then layer 1's live `setpoint/<room>`), averaged as
+  # the house air is. `target_air_c: 24` was removed 2026-10-19 - a summer
+  # ceiling, ~2 K above every room, overstating heating need by ~430 W.
   # What the plant can actually deliver, and this is the SOURCE limit, not the
   # emitter limit. Slab 3.4-4.8 kW plus fan coil 4.2 kW is 7.6-9.0 kW of
   # emitter against a heat pump good for ~5.7 kW at 11 degC supply, so the

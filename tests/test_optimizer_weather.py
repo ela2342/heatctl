@@ -199,6 +199,48 @@ def test_an_unknown_direction_is_no_input_not_a_guess():
     assert est.heat_input_w() == 0.0                    # stale
 
 
+_SP_ROOMS = {"control": {"default_setpoint_c": 22.0},
+             "rooms": [{"name": "bad", "room_temp_topic": "r/bad",
+                        "setpoint_c": 23.5},
+                       {"name": "wohn", "room_temp_topic": "r/wohn"},
+                       {"name": "flur", "setpoint_c": 30.0}]}
+
+
+def test_the_forecast_target_is_the_room_setpoints():
+    """Until 2026-10-19 every forecast aimed at a separate `target_air_c:
+    24`, a summer ceiling 1.5-2 K above every room's setpoint. In heating
+    that was ~430 W of need nobody asked for, and it reached the plant
+    through the signed delta. The target is now the owner's setpoints,
+    averaged over the rooms whose air the model sees: a room with no
+    sensor (flur, 30) is not in `house_air` and must not be in its target."""
+    est = _estimator(_SP_ROOMS)
+    assert est.target_air() == pytest.approx((23.5 + 22.0) / 2)
+
+
+def test_a_setpoint_changed_at_runtime_moves_the_target():
+    """An operator's change reaches layer 1 by `set/`, and layer 2 hears it
+    on layer 1's retained `setpoint/<room>` - which is the setpoint WITHOUT
+    the pre-conditioning delta, so the delta cannot feed on itself."""
+    est = _estimator(_SP_ROOMS)
+    est._on_message("heatctl/setpoint/wohn", "20.5")
+    assert est.target_air() == pytest.approx((23.5 + 20.5) / 2)
+    est._on_message("heatctl/setpoint/wohn", "garbage")
+    assert est.target_air() == pytest.approx((23.5 + 20.5) / 2)
+
+
+def test_the_target_covers_the_same_rooms_as_the_air():
+    """The model's air state is the mean of the FRESH room readings. If the
+    warm bathroom's sensor goes quiet, the air mean drops to the other
+    rooms; a target still including the bathroom's 23.5 would read the
+    difference as a load. With no room fresh, all rooms count."""
+    from optimizer.estimator import Reading
+    est = _estimator(_SP_ROOMS)
+    est.readings["r/wohn"] = Reading(21.0)
+    assert est.target_air() == pytest.approx(22.0)
+    est.readings["r/bad"] = Reading(23.0)
+    assert est.target_air() == pytest.approx(22.75)
+
+
 def test_stale_readings_are_not_used():
     """Same principle as layer 1's stale-data failsafe: a value that stopped
     arriving is not a value."""

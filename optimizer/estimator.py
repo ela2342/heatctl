@@ -119,6 +119,23 @@ class Estimator:
         self.room_topics = [r["room_temp_topic"] for r in cfg.get("rooms", [])
                             if r.get("room_temp_topic")]
         self.readings: dict[str, Reading] = {}
+        # THE OWNER'S ROOM SETPOINTS, the air target every forecast is
+        # computed against (`target_air`). Seeded from config exactly as
+        # layer 1 seeds them, then followed from layer 1's own retained
+        # `setpoint/<room>`, which carries operator changes and NOT the
+        # pre-conditioning delta - reading back the delta would let it feed
+        # on itself. Until 2026-10-19 this was a separate `target_air_c: 24`,
+        # a summer comfort ceiling that in heating asked for ~430 W nobody
+        # wanted (LOGBOOK).
+        default_sp = float(cfg.get("control", {}).get("default_setpoint_c", 22.0))
+        self.room_setpoints: dict[str, float] = {}
+        self._sp_topics: dict[str, str] = {}
+        for r in cfg.get("rooms", []):
+            if r.get("room_temp_topic"):
+                self.room_setpoints[r["room_temp_topic"]] = float(
+                    r.get("setpoint_c", default_sp))
+                self._sp_topics[f"{self.base}/setpoint/{r['name']}"] = \
+                    r["room_temp_topic"]
         # Indoor dew point, published by layer 1 / HA on the same topic the
         # condensation guard reads. Subscribed here so the humidity gap can be
         # MEASURED rather than assumed - see `humidity_gap`.
@@ -179,6 +196,21 @@ class Estimator:
         vals = [r.value for t, r in self.readings.items()
                 if t in self.room_topics and r.fresh(self.max_age_s, self.clock())]
         return sum(vals) / len(vals) if vals else None
+
+    def target_air(self) -> float | None:
+        """The air temperature the house is set to: the mean of the room
+        setpoints over the same rooms, and with the same weights, as
+        `house_air`. The model's air state IS that mean of readings, so its
+        target must be that mean of setpoints - a room whose sensor has gone
+        quiet leaves both, or the gap between them is a phantom load.
+        All rooms when none is fresh: a forecast still needs a target.
+        None only for a config with no room sensors at all."""
+        now = self.clock()
+        topics = [t for t in self.room_topics
+                  if (r := self.readings.get(t)) and r.fresh(self.max_age_s, now)]
+        topics = topics or self.room_topics
+        sps = [self.room_setpoints[t] for t in topics if t in self.room_setpoints]
+        return sum(sps) / len(sps) if sps else None
 
     def heat_input_w(self) -> float:
         """Thermal watts into the slab, SIGNED: cooling extracts. See
@@ -841,6 +873,7 @@ class Estimator:
         interval = float(self.cfg.get("optimizer", {}).get("interval_s", 60))
         topics = list(self.room_topics) + [f"{self.base}/hp/power_estimate",
                                            f"{self.base}/hp/mode_name"]
+        topics += list(self._sp_topics)
         if self._dew_topic:
             topics.append(self._dew_topic)
         ot = self._outdoor_topic()
@@ -878,6 +911,12 @@ class Estimator:
         if topic == f"{self.base}/hp/mode_name":
             self._mode = (payload.strip(), self.clock())
             return
+        if topic in self._sp_topics:
+            try:
+                self.room_setpoints[self._sp_topics[topic]] = float(payload)
+            except ValueError:
+                pass
+            return
         try:
             self.readings[topic] = Reading(float(payload), self.clock())
         except ValueError:
@@ -902,7 +941,11 @@ class Estimator:
                 # need" depend on machinery it has no relationship with, which
                 # is the same conflation that kept this offline for a day.
                 opt = self.cfg.get("optimizer", {})
-                target = opt.get("target_air_c", 21.0)
+                target = self.target_air()
+                if target is None:
+                    await self._publish("status", "no_room_target")
+                    continue
+                await self._publish("target_air", f"{target:.2f}")
                 days = self.load_forecast(target,
                                           opt.get("delivery_ceiling_w", 5700.0))
                 if days:
