@@ -27,6 +27,7 @@ import json
 import math
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import aiomqtt
@@ -48,8 +49,8 @@ class Reading:
     value: float
     ts: float = field(default_factory=time.monotonic)
 
-    def fresh(self, max_age_s: float) -> bool:
-        return time.monotonic() - self.ts <= max_age_s
+    def fresh(self, max_age_s: float, now: float | None = None) -> bool:
+        return (time.monotonic() if now is None else now) - self.ts <= max_age_s
 
 
 class Estimator:
@@ -162,21 +163,52 @@ class Estimator:
         self._client: aiomqtt.Client | None = None
         self._last_load_summary: str | None = None
         self._last_delta: float | None = None
+        # The unit's mode name and when it arrived. Kept apart from
+        # `readings` because it is a string, and `Reading` is a number.
+        self._mode: tuple[str, float] | None = None
+        # Every freshness question asks this clock. Live it is the monotonic
+        # clock; the replay harness (optimizer/replay.py) substitutes journal
+        # time, so a replayed day sees the same staleness the live one did.
+        self.clock: Callable[[], float] = time.monotonic
+        self._unstepped_s = 0.0
 
     # ---------- inputs ----------
 
     def house_air(self) -> float | None:
         """Mean of the fresh room readings, or None if none are fresh."""
         vals = [r.value for t, r in self.readings.items()
-                if t in self.room_topics and r.fresh(self.max_age_s)]
+                if t in self.room_topics and r.fresh(self.max_age_s, self.clock())]
         return sum(vals) / len(vals) if vals else None
 
     def heat_input_w(self) -> float:
-        """Thermal watts into the slab. See params.yaml `heat_input`."""
+        """Thermal watts into the slab, SIGNED: cooling extracts. See
+        params.yaml `heat_input`.
+
+        The sign comes from the unit's own mode register (`hp/mode_name`, read
+        back from 0x0004), not from what heatctl asked for - the refrigerant
+        direction is the unit's fact. This was mode-blind until 2026-10-18:
+        on 10-16 the plant cooled at 64-84 Hz for six hours while the filter
+        integrated +1.1 to +3.0 kW of HEAT into the slab (LOGBOOK).
+
+        Only plain `heating` and `cooling` give a sign. In a DHW mode the
+        compressor may be serving the tank, and how much goes to the floor
+        is not observable, so those - and a missing or stale mode - give
+        no input rather than a guessed one: a wrong heat input biases the
+        slab in a way the innovation cannot separate from a real shortfall.
+        The same flat factor serves both directions; it is a prior with a
+        sigma of 1.0 either way, and the heat meter retires it.
+        """
         p = self.readings.get(f"{self.base}/hp/power_estimate")
-        if p is None or not p.fresh(self.max_age_s) or p.value < self.standby_w:
+        if p is None or not p.fresh(self.max_age_s, self.clock()) or p.value < self.standby_w:
             return 0.0
-        return p.value * self.cop
+        sign = {"heating": 1.0, "cooling": -1.0}.get(self._fresh_mode(), 0.0)
+        return sign * p.value * self.cop
+
+    def _fresh_mode(self) -> str | None:
+        if self._mode is None:
+            return None
+        name, ts = self._mode
+        return name if self.clock() - ts <= self.max_age_s else None
 
     def solar_w(self, point=None) -> float:
         """Solar power through the glazing, per facade, at the forecast hour."""
@@ -287,7 +319,7 @@ class Estimator:
         measurement. When the station is alive its reading wins outright.
         """
         r = self.readings.get(self._outdoor_topic())
-        if r is not None and r.fresh(self.max_age_s):
+        if r is not None and r.fresh(self.max_age_s, self.clock()):
             return r.value
         cur = self.weather.current() if self.weather else None
         return cur.temperature if cur else None
@@ -328,6 +360,11 @@ class Estimator:
                 [0.0, (f["q_slab_k_per_h"] ** 2) * h]]
 
     def step(self, dt_s: float) -> dict | None:
+        # A skipped step still let time pass. Until 2026-10-19 the caller's dt
+        # was dropped on every skip, so after an outdoor outage the filter
+        # predicted 60 s across a gap of hours, then trusted a state that far
+        # behind. Found by the replay harness, whose gap test this broke.
+        self._unstepped_s += dt_s
         air = self.house_air()
         outdoor = self.outdoor_c()
         if outdoor is None:
@@ -336,7 +373,9 @@ class Estimator:
             if air is None:
                 return None
             self.ensure_filter(air)
+            self._unstepped_s = dt_s   # nothing to predict across before it
         assert self.filter is not None
+        dt_s, self._unstepped_s = self._unstepped_s, 0.0
 
         u = [0.0] * N_INPUTS
         u[U_OUTDOOR] = outdoor
@@ -488,7 +527,7 @@ class Estimator:
         would have been confidently wrong on exactly the days that matter.
         """
         dew_in = self.readings.get(self._dew_topic) if self._dew_topic else None
-        if dew_in is None or not dew_in.fresh(self.max_age_s):
+        if dew_in is None or not dew_in.fresh(self.max_age_s, self.clock()):
             return None
         if not self.weather or not self.weather.points:
             return None
@@ -800,7 +839,8 @@ class Estimator:
 
     async def run(self) -> None:
         interval = float(self.cfg.get("optimizer", {}).get("interval_s", 60))
-        topics = list(self.room_topics) + [f"{self.base}/hp/power_estimate"]
+        topics = list(self.room_topics) + [f"{self.base}/hp/power_estimate",
+                                           f"{self.base}/hp/mode_name"]
         if self._dew_topic:
             topics.append(self._dew_topic)
         ot = self._outdoor_topic()
@@ -835,8 +875,11 @@ class Estimator:
             await asyncio.sleep(5)
 
     def _on_message(self, topic: str, payload: str) -> None:
+        if topic == f"{self.base}/hp/mode_name":
+            self._mode = (payload.strip(), self.clock())
+            return
         try:
-            self.readings[topic] = Reading(float(payload))
+            self.readings[topic] = Reading(float(payload), self.clock())
         except ValueError:
             pass   # non-numeric payloads on subscribed topics are not ours
 

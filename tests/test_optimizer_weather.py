@@ -159,10 +159,44 @@ def test_standby_power_is_not_integrated_into_the_slab_as_heat():
     nothing, which is the direction that hides a real heating shortfall."""
     from optimizer.estimator import Reading
     est = _estimator()
+    est._on_message("heatctl/hp/mode_name", "heating")
     est.readings["heatctl/hp/power_estimate"] = Reading(200.0)
     assert est.heat_input_w() == 0.0
     est.readings["heatctl/hp/power_estimate"] = Reading(1000.0)
     assert est.heat_input_w() == pytest.approx(3350.0)
+
+
+def test_cooling_takes_heat_out_of_the_slab():
+    """2026-10-16, 11:00-15:00: the plant cooled at 64-84 Hz while the
+    filter integrated +1.1 to +3.0 kW of HEAT into the slab, because
+    `heat_input_w` had no idea which way the refrigerant ran. The slab
+    estimate then read warmer the harder the plant cooled - the direction
+    that makes a planner ask for still more cooling. The sign must be the
+    unit's own mode, read back."""
+    from optimizer.estimator import Reading
+    est = _estimator()
+    est.readings["heatctl/hp/power_estimate"] = Reading(1000.0)
+    est._on_message("heatctl/hp/mode_name", "cooling")
+    assert est.heat_input_w() == pytest.approx(-3350.0)
+    est._on_message("heatctl/hp/mode_name", "heating")
+    assert est.heat_input_w() == pytest.approx(3350.0)
+
+
+def test_an_unknown_direction_is_no_input_not_a_guess():
+    """With the mode missing, stale, or a DHW mode whose split between tank
+    and floor is unobservable, the compressor's watts are not attributed to
+    the slab in either direction. Guessing heating is exactly the old
+    defect; guessing cooling is the same defect mirrored."""
+    import time as _time
+    from optimizer.estimator import Reading
+    est = _estimator()
+    est.readings["heatctl/hp/power_estimate"] = Reading(1000.0)
+    assert est.heat_input_w() == 0.0                    # never heard
+    for name in ("dhw", "dhw+heating", "dhw+cooling", "7"):
+        est._on_message("heatctl/hp/mode_name", name)
+        assert est.heat_input_w() == 0.0, name
+    est._mode = ("heating", _time.monotonic() - est.max_age_s - 1.0)
+    assert est.heat_input_w() == 0.0                    # stale
 
 
 def test_stale_readings_are_not_used():

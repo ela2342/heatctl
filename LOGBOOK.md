@@ -5487,3 +5487,35 @@ and compared with persistence, i.e. assuming the air stays where it was.
 This is consistent with the design's ordering, which puts the planner after
 phases 1-3. The scoring script is a seed for the phase-2 replay harness; it
 was kept outside the repo.
+
+## 2026-10-19 — Phase 1 heat-input sign, phase 2 replay harness
+
+**`heat_input_w` is signed by the unit's own mode** (`hp/mode_name`, read
+back from 0x0004). Cooling now subtracts. A DHW mode, or a missing or stale
+mode, gives no input rather than a guessed one. Coded and tested, NOT
+deployed.
+
+**The replay harness**, `optimizer/replay.py`. It runs the estimator's own
+`step()` over journal files on journal time, then scores open-loop
+predictions at 3/6/12/24 h against persistence. Outdoor and solar come from
+the deployed estimator's `opt/state`, because no outdoor station is
+configured, so the score assumes a perfect forecast.
+
+The baseline over 10-14 to 10-17, live config, signed heat input:
+
+| horizon | n | model RMSE | bias | persistence | skill |
+|---|---|---|---|---|---|
+| 3 h | 68 | 0.90 K | -0.34 | 0.53 K | -0.72 |
+| 6 h | 65 | 1.51 K | -0.63 | 0.82 K | -0.84 |
+| 12 h | 59 | 2.03 K | -1.13 | 1.04 K | -0.94 |
+| 24 h | 47 | 2.62 K | -2.51 | 0.78 K | -2.34 |
+
+Innovation lag-1 is 0.972. This reproduces the hand analysis of 10-18
+through the real code path. As noted there, the sign fix is right but does
+not improve the score.
+
+**Found by the harness: a skipped step dropped its time.** When
+`Estimator.step()` returned early for want of an outdoor figure, the
+caller's dt was lost. After an outage the filter predicted 60 s across a
+gap of hours. The skipped time is now carried into the next step. Live, this
+bites whenever the forecast fetch fails for longer than `input_max_age_s`.
