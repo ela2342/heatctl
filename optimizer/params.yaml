@@ -133,6 +133,17 @@ building:
   # guess with no measurement behind it and is a prime candidate for the
   # identification ladder - it is also the parameter most likely to be
   # responsible for a daytime innovation bias.
+  slab_area_m2:
+    value: 136.40
+    unit: m2
+    sigma: 2.0
+    kind: specified
+    note: >
+      The ground-floor slab area `c_slab_wh` is computed over. Lets the
+      per-room model (optimizer/house.py) give each slab room its own share
+      of capacity and ground loss; 39 m2 of it lies under no configured room
+      (hall, stairs) and is not modelled per room.
+
   f_sol:
     value: 0.30
     unit: "-"
@@ -305,6 +316,83 @@ hydronics:
 
 # Filter tuning. These are NOT physical parameters - they encode how much we
 # distrust the model against how much we distrust the sensors.
+# ---------------------------------------------------------------------------
+# Room-to-room coupling, for the per-room model (optimizer/house.py).
+# Taken off the Bauantrag ground- and upper-floor plans BY HAND, 2026-10-20,
+# at 1:100: each shared partition measured as a run between the room corners,
+# doors included (their state is unobserved, and a closed 9 cm door leaf is
+# not far from the wall). Readings are good to about +-10 %; the automated
+# extraction of 2026-07 paired door leaves and dimension ticks and is not
+# what these come from. Room names are config.yaml's.
+# ---------------------------------------------------------------------------
+zones:
+  # Air spaces the model needs that layer 1 does not control: no circuit, no
+  # sensor. The hall is the hub every bedroom opens onto, and it is open to
+  # Wohnzimmer, so leaving it out would cut the house's main air path.
+  diele:
+    floor_area_m2:
+      value: 19.50
+      unit: m2
+      sigma: 0.5
+      kind: specified
+      note: Diele 9.33 + HWR 8.98 + Abstell 1.19, plan areas. Air only.
+
+couplings:
+  partition_u_w_per_m2k:
+    value: 1.05
+    unit: W/(m2 K)
+    sigma: 0.15
+    kind: specified
+    note: 9 cm solid wood, 0.09/0.13 + 2 x Rsi 0.13 (DESIGN.md 6.1).
+  wall_height_m:
+    value: 2.40
+    unit: m
+    sigma: 0.1
+    kind: specified
+    note: Clear room height on the ground floor (plan).
+  ceiling_u_w_per_m2k:
+    value: 1.0
+    unit: W/(m2 K)
+    sigma: 0.5
+    kind: prior
+    note: >
+      The upper-floor slab between Arbeitszimmer and the two rooms below it.
+      NO construction data; a guess for a timber floor with both surface
+      resistances, and the sigma says so.
+  walls:           # shared run, m
+    kind_natalie-kind_naomi: {value: 5.90, unit: m, sigma: 0.6, kind: measured, note: incl. connecting door}
+    kind_natalie-diele:      {value: 2.83, unit: m, sigma: 0.3, kind: measured}
+    kind_naomi-diele:        {value: 2.61, unit: m, sigma: 0.3, kind: measured}
+    kind_naomi-wohnzimmer:   {value: 5.90, unit: m, sigma: 0.6, kind: measured, note: stair and kitchen side}
+    gaestebad-diele:         {value: 7.00, unit: m, sigma: 0.7, kind: measured, note: "to HWR 2.82, Abstell 1.37, hall 2.82"}
+    badezimmer-diele:        {value: 3.21, unit: m, sigma: 0.3, kind: measured}
+    badezimmer-wohnzimmer:   {value: 3.14, unit: m, sigma: 0.3, kind: measured}
+    badezimmer-schlafzimmer: {value: 3.21, unit: m, sigma: 0.3, kind: measured}
+    schlafzimmer-wohnzimmer: {value: 3.74, unit: m, sigma: 0.4, kind: measured}
+  ceilings:        # shared floor/ceiling, m2
+    arbeitszimmer-kind_natalie: {value: 16.33, unit: m2, sigma: 1.5, kind: measured, note: "the upper floor's 2.83 + 2.87 m bays sit over the two rooms"}
+    arbeitszimmer-kind_naomi:   {value: 15.61, unit: m2, sigma: 1.5, kind: measured}
+  open:            # advective exchange through an opening, linearised, W/K
+    diele-wohnzimmer:
+      value: 200.0
+      unit: W/K
+      sigma: 100.0
+      kind: prior
+      note: >
+        A ~1.3 m x 2.4 m opening with no door. Buoyant two-way exchange,
+        V = 1/3 Cd W H^1.5 sqrt(g dT/T), gives ~210 W/K at 1 K and ~150 at
+        0.5 K: it grows with sqrt(dT), so one figure is a linearisation.
+    arbeitszimmer-wohnzimmer:
+      value: 110.0
+      unit: W/K
+      sigma: 80.0
+      kind: prior
+      note: >
+        Through the gallery and the void over the living room, and a door the
+        owner usually leaves open (DESIGN.md 6.1: ~112 W/K at 1 K, ~3.6 W/K
+        closed). The door's state is an unobserved switched input; this is
+        the open case.
+
 filter:
   # Process noise, per state, as a standard deviation in K per hour. The slab
   # gets much more than the air because its driving input Q_heat is derived
@@ -313,6 +401,11 @@ filter:
   # when the MULTICAL 403 is fitted.
   q_air_k_per_h: 0.15
   q_slab_k_per_h: 0.40
+  # The per-room model's outdoor bias (optimizer/house.py `b_out`): its
+  # initial uncertainty and its random-walk rate. 0.3 K/sqrt(h) lets it move
+  # ~1.5 K in a day, slow beside the weather, fast beside a season.
+  p0_b_out_k: 3.0
+  q_b_out_k_per_h: 0.3
 
   # Measurement noise on room air temperature. The Controme wall units report
   # to 0.1 K, but they are wall-mounted at one point in a room and read the

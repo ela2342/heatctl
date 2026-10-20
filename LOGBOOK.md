@@ -5596,3 +5596,44 @@ reporting 0 h over the 5700 W ceiling for both days (peak 3.4 kW). Either
 `setpoint_delta` sees a lower per-hour ceiling than the day summary prints
 (`ceiling_w()` is humidity-aware), or it does not need the ceiling to be
 crossed. Worth reading before a cold week.
+
+## 2026-10-20 — Per-room filter v2: built, scored, still loses to persistence
+
+`optimizer/house.py` (model + filter) and `optimizer/replay_rooms.py`
+(harness), per DESIGN_ESTIMATION_PLANNING 2 / D-050. Seven rooms plus the
+hall as an unsensored air node; Arbeitszimmer air-only (fan coil). Heat per
+circuit from `m_dot c_p (VL - RL)` with D-041's flow map, no COP. Couplings
+taken off the Bauantrag plans by hand (owner pointed at them): params.yaml
+`couplings`, 37.5 m of partition between modelled rooms at U 1.05, the upper
+floor over Kind 1 + Kind 2 (U a prior, no construction data), and two open
+paths linearised (hall-Wohnzimmer ~200 W/K, the void to Arbeitszimmer ~110).
+
+Replay 10-14..17, live config, house mean skill (3 / 6 / 12 / 24 h):
+
+| variant | 3 h | 6 h | 12 h | 24 h |
+|---|---|---|---|---|
+| v1, whole house (baseline) | −0.72 | −0.84 | −0.94 | −2.34 |
+| v2, rooms uncoupled | −0.62 | −0.62 | −0.62 | −2.56 |
+| v2, plan couplings | −0.59 | −0.58 | −0.50 | −2.22 |
+| v2, couplings + `b_out` | −0.57 | −0.69 | −0.76 | −1.59 |
+
+(v1's house mean averaged only readings under 300 s old, which excludes
+the event-driven Shellys most of the time; v2 lets a reading stand 7800 s.
+Not the same average, so compare shapes, not decimals.)
+
+What the replay found, all THEORIES until identified:
+- **An energy gap of ~1 kW.** Over the four days: envelope ~3.5 kW + ground
+  0.4 against water 0.6, sun 1.0, internal 0.35, yet the house held 23.3.
+  `b_out` converges to +3.7 K mean (= ~980 W). Candidates: `ua_ao` (267 vs
+  ~216 measured), internal gains (office, the 1000 L tank in the HWR), the
+  forecast outdoor. The heat pump's own side agrees with the circuits: pump
+  flow x (LW - RW) = 0.79 kW net, so the water term is not the gap.
+- **The valve map accounts for 14.5 l/min of the pump's 24.** D-041's
+  calibration is provisional; scaling it would add ~0.4 kW, not 1.
+- **Arbeitszimmer is over-driven by sun.** The facade model gives it 1180 W
+  peak, all into the air of a fan-coil room, and the model swings it 1-2 K a
+  day; the room measured 22.1-22.7. Shading, overhang or the facade model.
+  Owner: the fan is off most of the time, so the coil's contribution is
+  small and its m*cp*dT rests on a few tenths of a kelvin.
+- Innovations stay correlated (lag-1 0.82-0.92): a diurnal mode is missing,
+  most likely per-room solar.
