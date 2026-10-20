@@ -5637,3 +5637,17 @@ What the replay found, all THEORIES until identified:
   small and its m*cp*dT rests on a few tenths of a kelvin.
 - Innovations stay correlated (lag-1 0.82-0.92): a diurnal mode is missing,
   most likely per-room solar.
+
+## 2026-10-20 — ua_ao 216 adopted in both layers (D-052); replay before/after
+
+Owner decision. Replay 10-14..17, live config, skill at 3 / 6 / 12 / 24 h:
+
+| | 267.2 | 216 |
+|---|---|---|
+| 2-state (`replay.py`) | −0.72 / −0.84 / −0.94 / −2.34 | −0.56 / −0.66 / −0.71 / −1.58 |
+| per-room, house mean | −0.57 / −0.69 / −0.76 / −1.59 | −0.41 / −0.48 / −0.48 / −1.36 |
+
+The per-room model's unexplained heat (`b_out`) falls from ~980 W to ~350 W.
+Still negative everywhere: 216 is a correction, not the missing piece.
+Layer 1's default moves 240 -> 216 (slab targets ~0.7 K lower at 8 degC
+outside); layer 2 267.2 -> 216. Neither is live until a deploy.

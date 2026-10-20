@@ -178,13 +178,12 @@ class EnergyDemand:
         # layer 2 publishes its refined values and they take precedence while
         # fresh.
         #
-        # ua_ao 267.2 is the BUILDING PERMIT CALCULATION, a prior and not a
-        # measurement. params.yaml records three independent routes converging
-        # near 216 instead (D-028's winter fit 216 +- 18, and an n of ~0.40
-        # giving 216.5). The default here is the conservative-for-comfort end
-        # of that range; the spread is real and belongs in the identification
-        # ladder, not hidden behind a single number.
-        self.ua_ao = float(b.get("ua_ao_w_per_k", 240.0))
+        # ua_ao: THE MEASURED 216, not the building permit's 267.2 (D-052).
+        # D-028's winter fit (216 +- 18), the moisture-derived n (216.5) and
+        # the replay harness all agree; 267 is a design calculation. Until
+        # 2026-10-20 this was 240, "the conservative-for-comfort end" - a
+        # hedge between a measurement and a number nobody measured.
+        self.ua_ao = float(b.get("ua_ao_w_per_k", 216.0))
         self.ua_sa = float(b.get("ua_sa_w_per_k", 490.0))
         self.c_slab_wh_per_m2 = float(b.get("c_slab_wh_per_m2_k", 63.7))
         self.q_int_w = float(b.get("q_internal_w", 350.0))

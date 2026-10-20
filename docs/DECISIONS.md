@@ -1719,3 +1719,29 @@ resolution.
 
 **The walk remains as the fallback**, charging gate included, whenever no house
 target is fresher than 5 min. `law: trim` restores it outright.
+
+## D-052 · The measured `ua_ao` (216) replaces the calculated one (267)
+Owner, 2026-10-20: *"We've constantly been identifying the measured 216 to be
+superior to the calculated 267. Maybe it is time to prioritize the better
+number."*
+
+**What 267.2 is:** the building permit calculation, fabric 148.83 plus
+ventilation at an assumed n = 0.7/h. Never measured (corrected to `prior`
+2026-08-01). **What 216 is:** D-028's winter fit, 216 ± 18. Agreeing with it,
+independently: the moisture-derived n ≈ 0.40 (216.5 W/K), and on 2026-10-20
+the replay harness, which scores 216 better than 267 at every horizon for
+both the 2-state and the per-room model (LOGBOOK).
+
+**The reason it waited** was that the moisture route rests on a prior for
+household moisture production. That is still true and no longer decisive:
+D-028 alone is a measurement, and the replay is a second, unrelated one.
+Holding a design figure against two measurements was not caution but
+preferring the number nobody measured.
+
+**Applied in both layers.** `optimizer/params.yaml` (`identified`, σ 18) and
+layer 1's default in `heatctl/energy.py`, which had been 240 — a hedge
+"at the conservative-for-comfort end", i.e. halfway to the unmeasured
+number. Effect on layer 1: slab targets fall by Δua·(sp − T_out)/UA_sa,
+≈ 0.7 K at 8 °C outside. Phase 3 refines 216; it does not go back to 267
+without a measurement (a blower door is the one that would split ventilation
+from the thermal-bridge default).

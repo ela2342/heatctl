@@ -19,24 +19,22 @@ building:
   # between fabric and ventilation remains unverified. That split does not
   # matter for a 2-state model; it will matter for per-room work.
   ua_ao:
-    value: 267.2
+    value: 216.0
     unit: W/K
-    sigma: 20.0
-    kind: prior
+    sigma: 18.0
+    kind: identified
     note: >
-      Fabric+bridges 148.83 plus ventilation 118.40 at n=0.7/h. KIND CORRECTED
-      2026-08-01 from `measured` to `prior`: the note used to say the total is
-      "corroborated by a measured whole-house H of ~267 W/K", but the owner
-      confirms 267 comes straight from the BUILDING PERMIT CALCULATION. A design
-      calculation is not a measurement and cannot corroborate itself.
-      The evidence points LOWER. D-028's winter fit gives H = 216 +- 18 W/K, and
-      the 2026-08-01 moisture work independently implies n ~ 0.39-0.58 rather
-      than 0.7; at n = 0.40 the ventilation term falls to 67.7 and the total to
-      216.5 W/K - agreeing with D-028 to better than 1 W/K. Three routes
-      converge on ~216, none of them on 267.
-      Not changed to 216 here because the moisture-derived n rests on a PRIOR
-      for household moisture production, not a measurement. See BACKLOG.
-      The split does not matter to a 2-state model and will matter per room.
+      THE MEASURED VALUE, adopted 2026-10-20 (D-052). D-028's winter fit,
+      216 +- 18 W/K (eta, COP map and statistics in quadrature). Two further
+      routes agree: n ~ 0.40/h from the 2026-08-01 moisture work gives 216.5,
+      and the replay harness scores 216 better than 267 for both the 2-state
+      and the per-room model at every horizon over 10-14..17 (LOGBOOK).
+      The building permit calculation, 267.2 (fabric+bridges 148.83 plus
+      ventilation 118.40 at an assumed n = 0.7/h), is the PRIOR this replaces:
+      a design calculation, never a measurement. Where the 51 W/K difference
+      sits - ventilation or the 18 % thermal-bridge default - only a blower
+      door separates. Phase 3 identification refines this number; it does not
+      return to 267 without a measurement saying so.
 
   # Room air -> water. IDENTIFIED FROM OPERATING DATA 2026-07-30, replacing a
   # guess of 1000 that was above a measured upper bound.
