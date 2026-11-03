@@ -67,6 +67,11 @@ class Demand:
 
 
 class DemandController:
+    # Rooms whose need differs by less than this share the flow floor's
+    # remainder evenly (`enforce_flow_floor` phase 2). A tenth of a kelvin is
+    # one step of the room sensors' published resolution.
+    TIE_K = 0.1
+
     def __init__(self, cfg: dict, can_command_source_mode: bool = False):
         d = dict(cfg["control"].get("source_demand") or {})
         # `enabled` gates ACTING on source_request (holding the unit
@@ -116,6 +121,10 @@ class DemandController:
         # is to stay clear of Er03. See D-041.
         self.flow_full_open_pct = float(
             (cfg["control"].get("distribution") or {}).get("full_open_pct", 100.0))
+        # THE COMMAND AT WHICH WATER STARTS TO MOVE (D-041: 20 %). The floor
+        # shares out FLOW, which is the opening above this, not the command.
+        self.flow_open_threshold_pct = float(
+            (cfg["control"].get("distribution") or {}).get("open_threshold_pct", 0.0))
         # Anti-short-cycle. The compressor already cycles ~10 min on / ~9 min
         # off unaided; this must not make that worse.
         self.min_on_s = float(d.get("min_on_s", 600.0))
@@ -163,7 +172,8 @@ class DemandController:
                 vals.append(valves_pct[name])
         return sum(vals) / len(vals) if vals else None
 
-    def enforce_flow_floor(self, commanded: dict[str, float]
+    def enforce_flow_floor(self, commanded: dict[str, float],
+                           need: dict[str, float | None] | None = None
                            ) -> tuple[dict[str, float], float | None]:
         """Raise valve openings until the flow proxy clears `min_open_pct`.
 
@@ -175,13 +185,8 @@ class DemandController:
         unit throws **Er03 and stops**. The owner shut every valve but circuit
         11 on 2026-07-28 and tripped it instantly. Without this, heatctl can
         do the same to itself - distribution is free to drive every circuit
-        down to `distribution.open_threshold_pct` (5 %), far under the floor,
-        and the plant would fault out in the hour the house most needs it.
-
-        It has never been reachable so far only because 8 of the 10
-        water-carrying circuits are open pipe and count as 100 %, pinning the
-        mean at >= 80 %. **It becomes reachable the moment the remaining
-        actuators are fitted**, which is why this is here before they are.
+        down to `distribution.open_threshold_pct`, far under the floor, and
+        the plant would fault out in the hour the house most needs it.
 
         DIRECTION IS THE WHOLE POINT: too little flow is a reason to OPEN
         valves, never to close them. A version of this that throttled instead
@@ -189,11 +194,27 @@ class DemandController:
         asserts the direction rather than merely asserting that something
         changed.
 
-        Openings are scaled by ONE COMMON FACTOR, so relative proportions are
-        preserved - this is D-017's normalisation applied at the bottom end
-        instead of the top. Circuits that hit 100 % are clipped and their
-        shortfall is redistributed across the rest, which is the only place
-        proportionality genuinely cannot be kept.
+        WHO GETS THE EXTRA FLOW. Changed 2026-11-03. The floor fixes how much
+        water must move, not where it goes, and it used to scale every
+        command by one common factor. Since D-041 a command of 20 % means
+        ZERO flow, so that turned "this room wants nothing" into 37 %, about
+        57 % of full flow: on 2026-11-02 both children's rooms sat at 37 %
+        all day, 2 K above setpoint, while only the two bathrooms asked for
+        heat. Now, in two phases:
+
+        1. Circuits whose room still wants the current mode (`need` > 0: below
+           setpoint in heating, above it in cooling) take the shortfall first,
+           scaled by one common factor ON THEIR FLOW (opening above
+           `open_threshold_pct`) - D-017's proportions, kept where they mean
+           something. Clipped circuits pass their excess on.
+        2. Only if those all saturate does flow go to rooms already at or
+           past setpoint, least-satisfied first, each to full before the next.
+           The room furthest past setpoint is opened last.
+
+        `need` absent (or None for a circuit with no room air, which runs on
+        its return temperature) counts as wanting it: no information is not
+        a reason to starve a circuit. The TOTAL is exactly what it was, so the
+        Er03 margin is unchanged; only its allocation moved.
 
         Unactuated circuits are left alone: they are open pipe, so commanding
         them changes no flow. Only actuated circuits can help.
@@ -209,42 +230,77 @@ class DemandController:
 
         n_unact = len([v for v in self.circuit_valves if v in self.unactuated])
         # Sum of actuated openings needed for the mean to reach the floor.
-        need = (self.min_open_pct * n_total
-                - self.flow_full_open_pct * n_unact)
+        target = (self.min_open_pct * n_total
+                  - self.flow_full_open_pct * n_unact)
         have = sum(commanded[v] for v in actuated)
-        if need <= have:
+        if target <= have:
             return commanded, None
 
         out = dict(commanded)
-        if need >= self.flow_full_open_pct * len(actuated):
+        full = self.flow_full_open_pct
+        if target >= full * len(actuated):
             # Even wide open cannot make the floor. Open everything and let
             # the source-side handle it - see BACKLOG. Still the right
             # direction, and the most flow we can offer.
             for v in actuated:
-                out[v] = self.flow_full_open_pct
+                out[v] = full
             log.warning("flow floor %.0f%% unreachable: all %d actuated "
                         "circuits forced open", self.min_open_pct, len(actuated))
             return out, self.open_pct(out)
 
-        free = list(actuated)
-        while free:
-            have_free = sum(out[v] for v in free)
-            if have_free <= 0.0:
-                # Nothing to scale - distribute the requirement evenly.
-                for v in free:
-                    out[v] = need / len(free)
-                break
-            k = need / have_free
-            clipped = [v for v in free
-                       if out[v] * k > self.flow_full_open_pct]
-            if not clipped:
-                for v in free:
-                    out[v] = out[v] * k
-                break
+        thr = self.flow_open_threshold_pct
+
+        def wants(v: str) -> bool:
+            n = None if need is None else need.get(v)
+            return n is None or n > 0.0
+
+        deficit = target - have
+        # Phase 1: common factor on the FLOW of the circuits that want it.
+        free = [v for v in actuated if wants(v) and out[v] < full]
+        while free and deficit > 1e-9:
+            flow = {v: max(0.0, out[v] - thr) for v in free}
+            total = sum(flow.values())
+            if total <= 0.0:
+                # Nobody is passing water yet: share the requirement evenly.
+                share = deficit / len(free)
+                clipped = [v for v in free if out[v] + share > full]
+                if not clipped:
+                    for v in free:
+                        out[v] += share
+                    deficit = 0.0
+                    break
+            else:
+                k = 1.0 + deficit / total
+                clipped = [v for v in free if out[v] + flow[v] * (k - 1.0) > full]
+                if not clipped:
+                    for v in free:
+                        out[v] += flow[v] * (k - 1.0)
+                    deficit = 0.0
+                    break
             for v in clipped:
-                out[v] = self.flow_full_open_pct
-                need -= self.flow_full_open_pct
+                deficit -= full - out[v]
+                out[v] = full
                 free.remove(v)
+        # Phase 2: rooms at or past setpoint, least-satisfied first. Rooms
+        # within TIE_K of each other share evenly: rooms on the house-average
+        # proxy all carry the same need, and filling ties in config order
+        # would hand the whole remainder to whichever is listed first.
+        if deficit > 1e-9:
+            def nd(v: str) -> float:
+                return (need or {}).get(v) or 0.0
+            rest = sorted((v for v in actuated if not wants(v) and out[v] < full),
+                          key=lambda v: -nd(v))
+            while rest and deficit > 1e-9:
+                group = [v for v in rest if nd(rest[0]) - nd(v) <= self.TIE_K]
+                rest = rest[len(group):]
+                while group and deficit > 1e-9:
+                    share = deficit / len(group)
+                    room = min(full - out[v] for v in group)
+                    step = min(share, room)
+                    for v in group:
+                        out[v] += step
+                    deficit -= step * len(group)
+                    group = [v for v in group if out[v] < full - 1e-9]
         return out, self.open_pct(out)
 
     # ---------- demand ----------

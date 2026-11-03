@@ -499,3 +499,89 @@ class TestModeFromSlabExcess:
         out = d.step("off", {"a": 21.0}, {"a": 21.0}, {}, 0.0,
                      excess_wh=+50000.0, capacity_wh=self.CAP)
         assert out.mode == "off" and out.source_request is False
+
+
+# ---------- who gets the floor's extra flow (2026-11-03) ----------
+
+def _plant(cfg, n=10):
+    """The real manifold's shape: ten actuated circuits, water moving from
+    20 % and saturating at 50 % (D-041), floor at 41 % mean."""
+    import copy
+    c = copy.deepcopy(cfg)
+    names = [f"valve_hk{i:02d}" for i in range(1, n + 1)]
+    c["valves"]["channels"] = [{"index": i, "name": v} for i, v in enumerate(names)]
+    c["rooms"] = [{"name": f"r{i}", "circuits": [{"sensor": f"rl{i}", "valve": v}]}
+                  for i, v in enumerate(names)]
+    c["control"]["distribution"] = {**(c["control"].get("distribution") or {}),
+                                    "open_threshold_pct": 20.0,
+                                    "full_open_pct": 50.0}
+    c["control"]["source_demand"] = {"enabled": False, "min_open_pct": 41.0}
+    return DemandController(c), names
+
+
+def test_a_room_past_setpoint_is_the_last_the_floor_opens(cfg):
+    """2026-11-02: both children's rooms 2 K above setpoint, only the two
+    bathrooms asking for heat. Distribution put the eight satisfied circuits
+    at 20 % - zero flow - and the floor then scaled EVERY command by one
+    factor, 20 x 1.85 = 37 %: 57 % of full flow into rooms that were too
+    warm, all day. The floor must still be met, by the rooms that are least
+    past setpoint, with the warmest left shut."""
+    d, v = _plant(cfg)
+    cmd = {x: 20.0 for x in v}
+    cmd[v[0]] = cmd[v[5]] = 50.0                        # the bathrooms
+    need = {x: -0.3 for x in v}
+    need[v[0]], need[v[5]] = 1.2, 0.6
+    need[v[2]], need[v[3]] = -2.0, -1.7                 # the children
+    out, raised = d.enforce_flow_floor(cmd, need)
+    assert raised == pytest.approx(41.0)
+    assert out[v[2]] == 20.0 and out[v[3]] == 20.0, out
+    assert all(out[x] >= cmd[x] for x in v)              # never closes
+
+
+def test_the_floor_shares_flow_not_commands_among_rooms_that_want_it(cfg):
+    """Among rooms still below setpoint, D-017's proportions hold - on the
+    water each passes, which is the opening above 20 %, not the command."""
+    d, v = _plant(cfg)
+    cmd = {x: 20.0 for x in v}
+    cmd[v[0]], cmd[v[1]] = 25.0, 30.0                   # flows 5 and 10
+    need = {x: -0.5 for x in v}
+    need[v[0]] = need[v[1]] = 0.5
+    out, _ = d.enforce_flow_floor(cmd, need)
+    # 410 needed, 215 present: both saturate, then the satisfied rooms.
+    assert out[v[0]] == out[v[1]] == 50.0
+    d2, _ = _plant(cfg, n=10)
+    d2.min_open_pct = 22.0                               # small shortfall: 15
+    out2, _ = d2.enforce_flow_floor(cmd, need)
+    assert (out2[v[1]] - 30.0) == pytest.approx(2 * (out2[v[0]] - 25.0))
+    assert all(out2[x] == 20.0 for x in v[2:])
+
+
+def test_unknown_need_is_not_a_reason_to_starve_a_circuit(cfg):
+    """A circuit on return-temperature control has no room air and so no
+    `need`. It shares phase 1 with the rooms that want heat, rather than
+    waiting behind rooms that are known to be too warm."""
+    d, v = _plant(cfg)
+    cmd = {x: 20.0 for x in v}
+    need = {x: -1.0 for x in v}
+    need[v[4]] = None
+    out, _ = d.enforce_flow_floor(cmd, need)
+    assert out[v[4]] == 50.0
+
+
+def test_rooms_tied_on_need_share_the_remainder_evenly(cfg):
+    """2026-11-03, the house as it stood: the HA bridge down after a power
+    cut, four rooms on the house-average proxy and therefore carrying the
+    SAME need. Filling ties in config order gave the whole remainder to the
+    first of them - one child's room - and left the others shut."""
+    d, v = _plant(cfg)
+    cmd = {x: 20.0 for x in v}
+    cmd[v[0]] = cmd[v[5]] = 50.0
+    need = {x: -0.6 for x in v}                          # house_avg rooms
+    need[v[0]], need[v[5]] = 1.2, 0.6
+    for x in (v[1], v[7], v[8], v[9]):
+        need[x] = -0.4                                   # one sensed room
+    out, raised = d.enforce_flow_floor(cmd, need)
+    assert raised == pytest.approx(41.0)
+    assert all(out[x] == 50.0 for x in (v[1], v[7], v[8], v[9]))
+    tied = [out[x] for x in (v[2], v[3], v[4], v[6])]
+    assert max(tied) - min(tied) < 1e-9 and tied[0] == pytest.approx(27.5)

@@ -5651,3 +5651,31 @@ The per-room model's unexplained heat (`b_out`) falls from ~980 W to ~350 W.
 Still negative everywhere: 216 is a correction, not the missing piece.
 Layer 1's default moves 240 -> 216 (slab targets ~0.7 K lower at 8 degC
 outside); layer 2 267.2 -> 216. Neither is live until a deploy.
+
+## 2026-11-03 — Power cut 11-02 ~22:00; children's rooms too warm; the flow floor's allocation
+
+**State at 07:40.** PFC up since ~21:57 on 11-02, all five containers up,
+heating, compressor 49 Hz, outdoor 4 degC. `ua_ao` 216 confirmed live (the
+10-21 deploy completed; my session dropped mid-check). Owner: both children's
+rooms at ~25, setpoint 22.
+
+**Home Assistant did not come back.** The host answers ping; 8123, 22 and 1883
+are closed. Everything HA forwards stopped at 21:57 and has not resumed:
+`roomtemp/kind_natalie`, `kind_naomi`, `schlafzimmer`, `badezimmer`. Those
+rooms run on the house-average proxy. Separately, Arbeitszimmer's rtl_433 WH32
+stopped at 19:56, two hours BEFORE the cut. The retained `room/<n>/temp` for
+the proxied rooms (24.0, 23.7) are pre-cut values, not current.
+
+**The outage made it worse but is not the cause.** On 11-02, sensors working,
+both children's rooms read 24.0-24.4 all day and their valves sat at 37 %.
+Every circuit except the two bathrooms (setpoint 23.5, the only rooms below
+target) was at 37-39 %: `demand/open_pct` 41 = `min_open_pct`. The flow floor
+scaled every command by one common factor; since D-041 a 20 % command is ZERO
+flow, so "wants nothing" became 37 %, about 57 % of full flow, into rooms 2 K
+too warm. A fourth thing that should have moved with D-041 and did not.
+
+**Fix (coded, tested, not deployed):** the floor keeps its total and changes
+its allocation. Rooms still wanting the mode share the shortfall on their
+FLOW (opening above 20 %); only when they saturate does it go to satisfied
+rooms, least-past-setpoint first, ties shared evenly. Five tests, each
+mutation-verified, including the sign in cooling.

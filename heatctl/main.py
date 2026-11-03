@@ -570,6 +570,7 @@ class Controller:
 
         now = time.monotonic()
         demands: dict[str, tuple[float, str]] = {}
+        needs: dict[str, float | None] = {}
 
         # House demand / source engagement. Computed from the PREVIOUS cycle's
         # valve positions, which is correct: the flow proxy describes the
@@ -684,6 +685,14 @@ class Controller:
                 # with MQTT dead there are no room temperatures at all.
                 self._room_src[n] = "return"
             await self.plane.publish(f"room/{n}/source", self._room_src[n])
+            # How much this room still wants the current mode, for the flow
+            # floor's allocation: positive = below setpoint in heating, above
+            # it in cooling. None without room air (return control).
+            room_need: float | None = None
+            if room_t is not None:
+                room_need = targets[n] - room_t
+                if self.mode == "cooling":
+                    room_need = -room_need
 
             for circ in room["circuits"]:
                 valve = circ.get("valve")
@@ -700,6 +709,7 @@ class Controller:
                     proposed = self._return_control(
                         valve, sensor, state, return_sp, dt, now)
                 demands[valve] = (proposed, sensor)
+                needs[valve] = room_need
 
         # Normalise across ALL circuits before safety sees anything: the
         # distribution is a property of the whole manifold, not of one room.
@@ -735,7 +745,7 @@ class Controller:
         # exempt: no flow is wanted at all, and the source is not running.
         self._flow_floor_pct = None
         if self.mode != "off":
-            commanded, raised = self.demand.enforce_flow_floor(commanded)
+            commanded, raised = self.demand.enforce_flow_floor(commanded, needs)
             if raised is not None:
                 self._flow_floor_pct = raised
                 # Log the TRANSITION, then at most once a minute. This fires

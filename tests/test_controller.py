@@ -1346,3 +1346,36 @@ async def test_the_slab_target_is_clamped_while_heating(controller, cfg):
     assert min(targets) >= limit - 1e-9, (
         f"a target below the {limit} condensation limit survived while "
         f"heating: {sorted(targets)}")
+
+
+@pytest.mark.parametrize("mode,expect_positive", [("heating", False),
+                                                  ("cooling", True)])
+async def test_the_flow_floor_is_told_which_rooms_still_want_the_mode(
+        controller, mode, expect_positive):
+    """The floor fills rooms that still want the current mode first and the
+    rooms furthest past setpoint last (2026-11-03). Which way "past" points
+    flips with the mode: a room 4 K above its target wants nothing in
+    heating and everything in cooling. Swap the sign and the floor pours its
+    extra water into the warmest room in winter - the defect it was changed
+    to fix."""
+    ctl = controller(
+        temps={"rl_hk01": 22.0, "rl_hk02": 22.0, "rl_hk03": 22.0,
+               "vl_total": 22.0},
+        room_temps={"gaestebad": 25.0},
+        dew_point=10.0,
+        control={"mode": mode},
+    )
+    seen = {}
+    real = ctl.demand.enforce_flow_floor
+
+    def spy(commanded, need=None):
+        seen.update(need or {})
+        return real(commanded, need)
+
+    ctl.demand.enforce_flow_floor = spy
+    ctl.room_setpoints["gaestebad"] = 21.0
+    ctl.io.touch(time.monotonic())
+    await ctl.step(1.0)
+    assert "valve_hk01" in seen, "floor never consulted - test is vacuous"
+    n = seen["valve_hk01"]
+    assert n is not None and (n > 0) == expect_positive, (mode, n)
