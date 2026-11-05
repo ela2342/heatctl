@@ -5740,3 +5740,25 @@ mean. In heating it is reachable by closing the valve. Expected side effect,
 a theory to check: until the air falls, its recovery term lowers its slab
 target sharply and, at 11 % weight, the house water target by ~1 K, so the
 bathrooms run slightly cooler for a while. Revisit before cooling.
+
+## 2026-11-05 — The room PIs were saturated, not controlling; tuning vs time constants
+
+Owner asked whether the room PI oscillates. 30-min means of the commanded
+valves over 10-29..10-30 (heating): bathrooms and Arbeitszimmer at 50 %, every
+other circuit at 37.0 %, unchanged for 48 h. Every room PI sat at a limit (100
+below setpoint, 0 above it, the floor turning 0 into 37), so per-room control
+was open loop and the rooms followed the water temperature. Since 23de7eb
+(11-05 19:44) the valves can move, so the loop closes for the first time this
+season and its stability becomes a live question.
+
+Tuning against the models (THEORY, nothing identified per room):
+- room PI kp 25 %/K, ki 0.005 -> integral time 5000 s = 1.4 h;
+- house model (216): fast 5.8 h, slow 68 h; per-room model: air 2.9-5.0 h,
+  slab->air 10.6 h for EVERY slab room - identical by construction, because
+  the parameters are split by area. No per-room time constant is measured;
+- an integral time well under the plant's lags (1.4 h against air + slab in
+  series) is the shape that limit-cycles, with a period of many hours that
+  the daily solar swing would hide;
+- the PID's anti-windup clamps the integral to out_max + |p|, so a room held
+  below setpoint (the bathrooms) winds to ~125 %; at 0.5 K over it takes
+  ~14 h to unwind to the point where the valve starts closing.
