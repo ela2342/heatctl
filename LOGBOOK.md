@@ -5688,3 +5688,18 @@ are still on the house-average proxy (now ~3 days). `set/mode off` at 19:22:27
 (compressor already 0 Hz); `deploy-heatctl.sh` then REFUSED because it cannot
 read the HA App's boot/state - correct, it fails closed. Mode set back to
 `heating` at 19:23:37, ~70 s off. Nothing deployed.
+
+## 2026-11-05 19:44 — Deployed 23de7eb (flow-floor allocation); HA back
+
+HA host rebooted by the owner (~19:23). The old App: stopped, boot manual,
+watchdog off, so the peer check passed. **Correction to 11-03 and 11-05:** the
+web UI was never on 8123 (owner), so "8123 closed" said nothing; SSH and 1883
+being closed on 11-03 is what showed HA down. All seven rooms back on their own
+sensors by 19:39; children's rooms 24.2 / 24.3.
+
+Mode off 19:40:43, compressor 70 -> 0 Hz by 19:43:48, deployed, `TIE_K` in the
+container, back in `heating`. Settled valves: bathrooms 50, Schlafzimmer and
+Arbeitszimmer 50 (raised by the floor, least past setpoint), Wohnzimmer 40,
+children 26 (was 39). The 26 is distribution's eps, not the floor: eps 5
+against a peak demand of ~20 just after the restart gives a zero-demand room
+a fifth of the span. Falls toward 20 as the bathroom PIDs integrate up.
