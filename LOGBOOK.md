@@ -5679,3 +5679,12 @@ its allocation. Rooms still wanting the mode share the shortfall on their
 FLOW (opening above 20 %); only when they saturate does it go to satisfied
 rooms, least-past-setpoint first, ties shared evenly. Five tests, each
 mutation-verified, including the sign in cooling.
+
+## 2026-11-05 19:22 — Deploy of 23de7eb refused: HA still down, peer check fails closed
+
+Owner approved the flow-floor deploy on 11-03; tried 11-05. Plant unchanged
+since 11-03: HA host pings, 8123/22/1883 closed, so the four HA-bridged rooms
+are still on the house-average proxy (now ~3 days). `set/mode off` at 19:22:27
+(compressor already 0 Hz); `deploy-heatctl.sh` then REFUSED because it cannot
+read the HA App's boot/state - correct, it fails closed. Mode set back to
+`heating` at 19:23:37, ~70 s off. Nothing deployed.
