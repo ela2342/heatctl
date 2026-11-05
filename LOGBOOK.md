@@ -5829,3 +5829,16 @@ improves at every horizon (3/6/12/24 h: −0.33 / −0.53 / −1.32 / −2.42 fr
 −0.36 / −0.59 / −1.43 / −2.52). Theory (1) confirmed in part. Remaining
 theories: Wohnzimmer's +1 kW (it holds the kitchen and a wood-fired cooker on
 the plan - is it used?), afternoon solar overstatement, partition mass.
+
+## 2026-11-05 — Opaque-envelope solar checked against the November gap: ruled out
+
+Owner asked whether solar through walls and roof was considered. It was sized
+on 2026-07-30 ("Open: opaque-envelope solar is not modelled at all", ~610 W at
+summer noon, roof the bulk) and never implemented. Against the ~1.8 kW
+unexplained heat of 10-27..11-01 it does not fit: November horizontal
+irradiance ~30 W/m2 daily mean gives ~15-20 W for the roof and tens of W for
+the walls (~50 W total, a few %); the near-massless roof delivers in daytime
+while the gap peaks at night; clear-night sky radiation (~−94 W, summer
+estimate) runs the other way; and the children's rooms have no roof. Still
+worth modelling for summer peaks (~12 % of peak load), roof absorptance the
+main unknown.
