@@ -88,6 +88,13 @@ them is blocked, and none of them is urgent.
         and peak demand is ~100 in 164/165 h); (3) owner: the bathrooms'
         23.5 is unreachable at this water temperature with valves saturated.
 
+  - [ ] **Wohnzimmer is not one air temperature (2026-11-05).** Owner measured
+        20.3 at the outer wall against 22.7 / 22.9 inside; the replay puts an
+        effective 1-1.5 K envelope-side offset behind most of the room's 1 kW
+        unexplained heat (LOGBOOK). Next in the filter: a per-room offset
+        parameter, identified, not hard-coded. A logged second sensor on the
+        outer-wall side would pin it - owner: "maybe one day", not now.
+
 ## Milestone 1 - harden layer 1
 
 - [ ] DEFERRED, deliberately: put the dew-point margin on a proper footing.
