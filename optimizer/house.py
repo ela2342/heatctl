@@ -94,6 +94,18 @@ def build_rooms(cfg: dict, params: dict) -> list[Room]:
     zones = {n: float(z["floor_area_m2"]) for n, z in
              (params.get("zones") or {}).items()}
     total += sum(zones.values())
+    # ENVELOPE by its own take-off when there is one (params `envelope_share`,
+    # renormalised over the rooms present), else by floor area. The children's
+    # rooms showed why area is wrong: no roof, so their area share charged
+    # them losses they do not have, which the filter then reported as heat.
+    env = {n: float(v) for n, v in (params.get("envelope_share") or {}).items()}
+    names = [r["name"] for r in rooms_cfg] + list(zones)
+    env_total = sum(env.get(n, 0.0) for n in names)
+    use_env = bool(env) and all(n in env for n in names) and env_total > 0
+
+    def env_share(n: str, area: float) -> float:
+        return env[n] / env_total if use_env else area / total
+
     out = []
     for r in rooms_cfg:
         a = float(r["floor_area_m2"])
@@ -101,7 +113,7 @@ def build_rooms(cfg: dict, params: dict) -> list[Room]:
         share = a / total
         out.append(Room(
             name=r["name"], area_m2=a, slab=slab,
-            ua_ao=float(b["ua_ao"]) * share,
+            ua_ao=float(b["ua_ao"]) * env_share(r["name"], a),
             ua_sa=ua_sa * a / slab_rooms if slab else 0.0,
             ua_sg=float(b["ua_sg"]) * a / slab_area if slab else 0.0,
             c_air=float(b["c_air_wh"]) * share * J_PER_WH,
@@ -113,7 +125,7 @@ def build_rooms(cfg: dict, params: dict) -> list[Room]:
     for n, a in zones.items():
         share = a / total
         out.append(Room(
-            name=n, area_m2=a, slab=False, ua_ao=float(b["ua_ao"]) * share,
+            name=n, area_m2=a, slab=False, ua_ao=float(b["ua_ao"]) * env_share(n, a),
             ua_sa=0.0, ua_sg=0.0,
             c_air=float(b["c_air_wh"]) * share * J_PER_WH, c_slab=0.0,
             q_int=float(b["q_internal_w"]) * share, temp_topic=None))

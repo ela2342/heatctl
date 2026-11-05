@@ -335,6 +335,25 @@ zones:
       kind: specified
       note: Diele 9.33 + HWR 8.98 + Abstell 1.19, plan areas. Air only.
 
+envelope_share:
+  # Each room's share of the house envelope conductance (ua_ao), from a
+  # per-room take-off: outside wall runs and windows off the plans, the
+  # certificate's per-element U-values (walls 0.18, windows 0.80, roof 0.174,
+  # annex wall at Fx 0.5), thermal bridges 0.10 over each room's envelope, and
+  # ventilation at n = 0.4 by room volume. SHARES ONLY: the total stays the
+  # measured ua_ao (D-052). Replaces the split by floor area, which charged
+  # the children's rooms - under Arbeitszimmer, no roof - for roof they do not
+  # have (owner confirms). 2026-11-05; geometry +-10 %, details in the
+  # git-excluded building notes.
+  kind_natalie: {value: 0.0785, unit: '-', sigma: 0.0118, kind: measured}
+  kind_naomi: {value: 0.0496, unit: '-', sigma: 0.0074, kind: measured}
+  gaestebad: {value: 0.0203, unit: '-', sigma: 0.0050, kind: measured}
+  diele: {value: 0.1210, unit: '-', sigma: 0.0181, kind: measured}
+  badezimmer: {value: 0.0521, unit: '-', sigma: 0.0078, kind: measured}
+  schlafzimmer: {value: 0.0851, unit: '-', sigma: 0.0128, kind: measured}
+  wohnzimmer: {value: 0.3974, unit: '-', sigma: 0.0596, kind: measured}
+  arbeitszimmer: {value: 0.1960, unit: '-', sigma: 0.0294, kind: measured}
+
 couplings:
   partition_u_w_per_m2k:
     value: 1.05

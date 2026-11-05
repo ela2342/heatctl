@@ -5805,3 +5805,27 @@ children's rooms roof losses they do not have - they sit under Arbeitszimmer;
 (2) the solar model overstates afternoon gains; (3) the 4-6 kWh/K of solid-wood
 partitions no model contains (would give the diurnal shape, not the mean).
 (1) is checkable: a per-room envelope take-off from the plans.
+
+## 2026-11-05 — Per-room envelope take-off: the children's rooms have no roof, and half their mystery heat goes
+
+Owner confirmed the children's rooms have no roof and pointed at the plans.
+The certificate's roofs map exactly onto them (2° roof = the upper floor's
+8.91 × 6.01 m footprint; 8.1° roof = the rest of the ground floor). Per-room
+envelope from wall runs, windows and roof with the certificate's U-values,
+bridges and ventilation; shares only, scaled to the measured 216 (D-052).
+Checks: fabric 93.4 / bridges 34.1 W/K vs the certificate's 93.6 / 34.5.
+
+| room | share by area | by envelope |
+|---|---|---|
+| kind_natalie | 11.0 % | 7.9 % |
+| kind_naomi | 10.5 % | 5.0 % |
+| wohnzimmer | 28.4 % | 39.7 % |
+| arbeitszimmer | 21.1 % | 19.6 % |
+
+Replay 10-27..11-01, returns in coast, per-room gains - unknown heat:
+kind_naomi 359 -> 166 W, kind_natalie 394 -> 281 W, wohnzimmer 702 -> 1023 W,
+schlafzimmer 133 -> 167 W; total unchanged (~1.76 kW), it moved. House skill
+improves at every horizon (3/6/12/24 h: −0.33 / −0.53 / −1.32 / −2.42 from
+−0.36 / −0.59 / −1.43 / −2.52). Theory (1) confirmed in part. Remaining
+theories: Wohnzimmer's +1 kW (it holds the kitchen and a wood-fired cooker on
+the plan - is it used?), afternoon solar overstatement, partition mass.

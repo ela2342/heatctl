@@ -298,3 +298,22 @@ def test_returns_are_used_only_flowing_and_coasting(tmp_path):
     assert rp_.return_updates["coast"] >= 1
     assert "rl_b" not in rp_.filter.return_innovations
     assert "rl_a" in rp_.filter.return_innovations
+
+
+def test_the_envelope_follows_its_take_off_not_the_floor_area():
+    """2026-11-05: split by floor area, the children's rooms - under
+    Arbeitszimmer, no roof - were charged roof losses they do not have, and
+    the filter reported the difference as 300-400 W of mystery heat per room.
+    With `envelope_share` each room gets its own share of the measured total;
+    the total is unchanged. A share missing for any room falls back to area
+    for all, rather than mixing two bases."""
+    p = _params()
+    rooms = build_rooms(CFG, p)
+    assert rooms[0].ua_ao == pytest.approx(120.0 * 20.0 / 30.0)      # area
+    p["envelope_share"] = {"a": Param(0.1), "b": Param(0.3)}
+    rooms = build_rooms(CFG, p)
+    assert rooms[0].ua_ao == pytest.approx(120.0 * 0.25)
+    assert sum(r.ua_ao for r in rooms) == pytest.approx(120.0)
+    p["envelope_share"] = {"a": Param(0.1)}
+    rooms = build_rooms(CFG, p)
+    assert rooms[0].ua_ao == pytest.approx(120.0 * 20.0 / 30.0)
