@@ -42,6 +42,24 @@ INPUT_LIFE_S = 300.0        # an input older than this is no input
 READING_LIFE_S = 7800.0     # the Shelly's 7200 s heartbeat, plus slack
 R_AIR_K = math.sqrt(0.1 ** 2 + 0.5 ** 2 / 12.0)   # noise + 0.5 K quantisation
 
+# RETURNS AS SLAB MEASUREMENTS (DESIGN_ESTIMATION_PLANNING 2.4).
+# `returns="coast"`: only while the compressor has been off COAST_S and the
+#   pump circulates - the supply is then the mixed return, so the water sits
+#   at slab temperature and `a` hardly matters (taken as 1, its residual in R).
+# `returns="all"`: also while the source runs, with each circuit's `a` learned
+#   against the filter's own slab estimate. Adaptive and partly circular - the
+#   slab it learns against was itself anchored by returns - which is why the
+#   coast-only variant is the honest baseline.
+# Validity is rl_gate's rule (D-009, D-041): open >= 27.5 % for >= 300 s.
+RL_MIN_OPEN_PCT = 27.5
+RL_SETTLE_S = 300.0
+COAST_S = 1200.0
+RETURN_EVERY_S = 600.0      # one update per circuit per 10 min: consecutive
+                            # 1 Hz readings are not independent measurements
+R_RETURN_K = math.sqrt(0.1 ** 2 + 0.1 ** 2 / 12.0 + 0.3 ** 2)  # sensor, 0.1 K
+                            # step, and circuit-vs-room-node mismatch (0.3)
+A_PRIOR, A_MIN, A_MAX, A_ALPHA = 0.7, 0.3, 1.0, 0.02
+
 
 @dataclass
 class Row:
@@ -52,11 +70,15 @@ class Row:
 
 
 class RoomReplay:
-    def __init__(self, cfg: dict, params: dict) -> None:
+    def __init__(self, cfg: dict, params: dict, returns: str = "off",
+                 gains: str = "house") -> None:
+        if returns not in ("off", "coast", "all"):
+            raise ValueError(f"returns must be off|coast|all, got {returns!r}")
+        self.returns = returns
         b, f = params["building"], params["filter"]
         self.rooms = build_rooms(cfg, params)
         self.model = HouseModel(self.rooms, float(b["f_sol"]),
-                                build_couplings(params))
+                                build_couplings(params), gains)
         self.fp = f
         self.t_ground = float(b["t_ground"])
         base = cfg.get("mqtt", {}).get("base_topic", "heatctl")
@@ -76,9 +98,17 @@ class RoomReplay:
         self._next: float | None = None
         self._unstepped = 0.0
         self.heat_mismatch = 0
+        self.freq_topic = f"{base}/hp/compressor_freq"
+        self.rl_total_topic = f"{base}/temp/rl_total"
+        self._open_since: dict[str, float] = {}     # valve -> above threshold since
+        self._running_until = 0.0                   # last time compressor > 0
+        self._last_return: dict[str, float] = {}
+        self.a: dict[str, float] = {}               # circuit -> learned a
+        self.return_updates = {"coast": 0, "running": 0}
 
     def topics(self) -> set[str]:
-        t = {self.state_topic, self.vl_topic} | set(self.sol_topic.values())
+        t = {self.state_topic, self.vl_topic, self.freq_topic,
+             self.rl_total_topic} | set(self.sol_topic.values())
         t |= set(self.room_of_topic)
         for r in self.rooms:
             for sensor, valve in r.circuits:
@@ -108,6 +138,14 @@ class RoomReplay:
             v = float(payload)
         except ValueError:
             return
+        if topic == self.freq_topic and v > 0.0:
+            self._running_until = t
+        if topic.startswith(f"{self.base}/valve_actual/"):
+            valve = topic.rsplit("/", 1)[1]
+            if v < RL_MIN_OPEN_PCT:
+                self._open_since.pop(valve, None)
+            else:
+                self._open_since.setdefault(valve, t)
         room = self.room_of_topic.get(topic)
         if room is not None:
             self.latest[room] = Reading(v, t)
@@ -167,7 +205,9 @@ class RoomReplay:
                                       f["p0_slab_k"], f["q_air_k_per_h"],
                                       f["q_slab_k_per_h"],
                                       f.get("p0_b_out_k", 3.0),
-                                      f.get("q_b_out_k_per_h", 0.3))
+                                      f.get("q_b_out_k_per_h", 0.3),
+                                      f.get("p0_gain_w", 300.0),
+                                      f.get("q_gain_w_per_h", 60.0))
             self.pending.clear()
             self._unstepped = 0.0
         else:
@@ -176,9 +216,54 @@ class RoomReplay:
             for room, z in self.pending.items():
                 self.filter.update_air(room, z, R_AIR_K)
             self.pending.clear()
+            if self.returns != "off":
+                self._fold_returns(t)
         # The input over [t, t+60) is the one standing at t.
         self._last_u = u
         self.rows.append(Row(t, tuple(self.filter.x), tuple(u), air))
+
+
+    def _fold_returns(self, t: float) -> None:
+        vl = self._input(self.vl_topic)
+        freq = self._input(self.freq_topic)
+        if vl is None or freq is None:
+            return
+        coast = freq == 0.0 and t - self._running_until >= COAST_S
+        mixed = self._input(self.rl_total_topic)
+        if coast and (mixed is None or abs(vl - mixed) > 0.3):
+            coast = False         # supply not yet at the mixed return
+        if not coast and self.returns != "all":
+            return
+        f = self.filter
+        for r in self.rooms:
+            if not r.slab:
+                continue          # a fan coil's return is the water, not a slab
+            for sensor, valve in r.circuits:
+                since = self._open_since.get(valve)
+                if since is None or t - since < RL_SETTLE_S:
+                    continue      # stagnant: reads the cabinet (D-009)
+                if t - self._last_return.get(sensor, -1e18) < RETURN_EVERY_S:
+                    continue
+                rl = self._input(f"{self.base}/temp/{sensor}")
+                if rl is None:
+                    continue
+                self._last_return[sensor] = t
+                slab = f.x[self.model.slab[r.name]]
+                if coast:
+                    f.update_return(sensor, r.name, rl, vl, 1.0, R_RETURN_K)
+                    self.return_updates["coast"] += 1
+                    continue
+                a = self.a.get(sensor, A_PRIOR)
+                # Learn a where it is observable: water well off the slab.
+                if abs(vl - slab) > 1.5:
+                    est = (vl - rl) / (vl - slab)
+                    est = min(A_MAX, max(A_MIN, est))
+                    self.a[sensor] = a = a + A_ALPHA * (est - a)
+                # R grows with what `a` does not know: sigma_a 0.15 times the
+                # supply-to-slab gap it multiplies.
+                r_k = math.hypot(R_RETURN_K, 0.15 * abs(vl - slab))
+                f.update_return(sensor, r.name, rl, vl, a, r_k)
+                self.return_updates["running"] += 1
 
 
 def score(rp: RoomReplay, horizons=HORIZONS_H, warmup_h: float = 24.0):
@@ -234,8 +319,9 @@ def score(rp: RoomReplay, horizons=HORIZONS_H, warmup_h: float = 24.0):
     return out
 
 
-def run(cfg: dict, params: dict, journals: list[str]) -> RoomReplay:
-    rp = RoomReplay(cfg, params)
+def run(cfg: dict, params: dict, journals: list[str],
+        returns: str = "off", gains: str = "house") -> RoomReplay:
+    rp = RoomReplay(cfg, params, returns, gains)
     for t, topic, payload in read_journal(journals, rp.topics()):
         rp.feed(t, topic, payload)
     return rp
@@ -248,19 +334,36 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--params", default="optimizer/params.yaml")
     ap.add_argument("--set", action="append", default=[], dest="sets")
     ap.add_argument("--warmup-h", type=float, default=24.0)
+    ap.add_argument("--returns", choices=("off", "coast", "all"), default="off",
+                    help="use circuit returns as slab measurements")
+    ap.add_argument("--gains", choices=("house", "rooms"), default="house",
+                    help="unknown heat: one outdoor bias, or one gain per room")
     a = ap.parse_args(argv)
     with open(a.config) as f:
         cfg = yaml.safe_load(f)
     params = load_params(a.params)
     apply_overrides(params, a.sets)
-    rp = run(cfg, params, a.journals)
-    print(f"{len(rp.rows)} minutes replayed, {len(rp.rooms)} rooms"
+    rp = run(cfg, params, a.journals, a.returns, a.gains)
+    print(f"{len(rp.rows)} minutes replayed, {len(rp.rooms)} rooms, "
+          f"returns {a.returns} {rp.return_updates}"
           + (f", overrides: {' '.join(a.sets)}" if a.sets else ""))
     if rp.filter:
-        bo = [r.x[rp.model.b_out] for r in rp.rows]
-        H = sum(r.ua_ao for r in rp.rooms)
-        print(f"b_out: final {bo[-1]:+.2f} K, mean {sum(bo) / len(bo):+.2f} K"
-              f" (= {H * sum(bo) / len(bo):+.0f} W the model was missing)")
+        if rp.model.b_out is not None:
+            bo = [r.x[rp.model.b_out] for r in rp.rows]
+            H = sum(r.ua_ao for r in rp.rooms)
+            print(f"b_out: final {bo[-1]:+.2f} K, mean {sum(bo) / len(bo):+.2f} K"
+                  f" (= {H * sum(bo) / len(bo):+.0f} W the model was missing)")
+        if rp.model.gain:
+            print("unknown gain per room, W (mean over the run, then last day):")
+            tail = [r for r in rp.rows if r.t >= rp.rows[-1].t - 86400]
+            tot = 0.0
+            for n, i in rp.model.gain.items():
+                m_all = sum(r.x[i] for r in rp.rows) / len(rp.rows)
+                m_day = sum(r.x[i] for r in tail) / len(tail)
+                tot += m_all
+                area = next(r.area_m2 for r in rp.rooms if r.name == n)
+                print(f"   {n:13s} {m_all:+6.0f}   {m_day:+6.0f}   ({m_all / area:+5.1f} W/m2)")
+            print(f"   {'total':13s} {tot:+6.0f}")
         print("innovations   room            n    mean     sd    lag1")
         for n, v in rp.filter.innovations.items():
             if len(v) > 2:
@@ -269,6 +372,13 @@ def main(argv: list[str] | None = None) -> int:
                 lag = (sum((v[i] - mu) * (v[i - 1] - mu) for i in range(1, len(v)))
                        / len(v) / var) if var > 0 else 0.0
                 print(f"              {n:13s} {len(v):5d} {mu:+6.2f} {var ** .5:6.2f} {lag:+6.2f}")
+        if rp.filter.return_innovations:
+            print("return innovations  circuit  n    mean     sd   learned a")
+            for c, v in sorted(rp.filter.return_innovations.items()):
+                mu = sum(v) / len(v)
+                sd = (sum((q - mu) ** 2 for q in v) / len(v)) ** 0.5
+                print(f"                    {c:8s} {len(v):4d} {mu:+6.2f} {sd:6.2f}"
+                      f"   {rp.a.get(c, float('nan')):.2f}")
     s = score(rp, warmup_h=a.warmup_h)
     print("skill (model RMSE / persistence RMSE)")
     hs = HORIZONS_H

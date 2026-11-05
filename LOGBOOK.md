@@ -5762,3 +5762,46 @@ Tuning against the models (THEORY, nothing identified per room):
 - the PID's anti-windup clamps the integral to out_max + |p|, so a room held
   below setpoint (the bathrooms) winds to ~125 %; at 0.5 K over it takes
   ~14 h to unwind to the point where the valve starts closing.
+
+## 2026-11-05 — Filter v2 gets the returns and per-room unknown gains; where the missing heat is
+
+Built (replay only, nothing on the plant): circuit returns as slab
+measurements, `RL = a T_slab + (1 - a) VL`, gated by rl_gate's rule (>= 27.5 %
+for >= 300 s), in two variants - `coast` (compressor off >= 20 min, supply
+within 0.3 K of the mixed return, a = 1) and `all` (also running, `a` learned
+per circuit against the filter's slab). And `gains=rooms`: one unknown heat
+input per sensed room's air instead of the house-wide `b_out`.
+
+Replay 10-27..11-01 (6 days), house skill 3/6/12/24 h:
+
+| variant | 3 h | 6 h | 12 h | 24 h |
+|---|---|---|---|---|
+| air only, b_out | −0.43 | −0.51 | −0.95 | −1.79 |
+| returns coast, b_out | −0.42 | −0.58 | −1.26 | −2.14 |
+| air only, per-room gains | −0.37 | −0.52 | −1.19 | −1.91 |
+| returns coast, per-room gains | −0.36 | −0.59 | −1.43 | −2.52 |
+
+Returns do not improve the air score. What they do is pin the slabs, and the
+returns read LOWER than the air-only filter had inferred (coast innovations
+−0.03..−0.19 K on 8 of 9 circuits). With warm slabs ruled out, the missing heat
+roughly doubles (b_out ~0.8 -> ~1.8 kW) and, per room, it is concentrated:
+
+| room | unknown gain (coast) | per m2 |
+|---|---|---|
+| kind_natalie | +394 W | +24 |
+| kind_naomi | +359 W | +23 |
+| wohnzimmer | +702 W | +17 |
+| schlafzimmer | +133 W | +12 |
+| gaestebad / badezimmer | +24 / +61 W | +7 |
+| arbeitszimmer | +115 W | +4 |
+
+Same order as the measured overheating. Coast returns: children's slabs only
+~0.8 K above their air, so this is heat into the AIR, not a floor error (400 W
+through 0.8 K would need ~3x the conductance a heated floor has). By time of
+day it is LARGEST AT NIGHT (children ~+440 W 00-09) and smallest after the sun
+(~+290 W 15-18); Arbeitszimmer goes negative in the afternoon. Not the sun.
+THEORIES, in order of size: (1) the envelope split by floor area charges the
+children's rooms roof losses they do not have - they sit under Arbeitszimmer;
+(2) the solar model overstates afternoon gains; (3) the 4-6 kWh/K of solid-wood
+partitions no model contains (would give the diurnal shape, not the mean).
+(1) is checkable: a per-room envelope take-off from the plans.

@@ -221,3 +221,80 @@ def test_the_true_model_predicts_its_own_two_rooms(tmp_path):
     for room in ("a", "b", "house"):
         for h in (3, 6):
             assert s[room][h]["rmse"] < 0.05, (room, h, s[room][h])
+
+
+# ---------- returns and per-room gains (2026-11-05) ----------
+
+def test_a_return_measures_the_slab_through_a():
+    """`RL = a T_slab + (1 - a) VL`. Started 3 K wrong on the slab, the
+    filter must find it from returns alone, for a = 1 (coast) and for a
+    partial exchange where the supply is part of the reading. Getting the
+    offset or the gain of the measurement wrong biases the slab by
+    (1 - a)(VL - T_slab)."""
+    r = _room("r", topic="t")
+    for a, vl in ((1.0, 24.0), (0.6, 32.0)):
+        m = HouseModel([r], 0.3)
+        f = HouseFilter(m, [22.0, 21.0], 0.1, 3.0, 0.0, 0.0, 0.001, 0.0)
+        for _ in range(50):
+            f.update_return("rl", "r", a * 24.0 + (1 - a) * vl, vl, a, 0.1)
+        assert f.x[m.slab["r"]] == pytest.approx(24.0, abs=0.05), a
+
+
+def test_an_unknown_gain_is_found_in_its_own_room():
+    """With per-room gains, 300 W of internal gain the model does not know
+    about in room a's AIR (people, electronics) must land in a's gain, not
+    be spread over b by envelope share as the single `b_out` does."""
+    import dataclasses
+    a, b = _room("a", topic="ta"), _room("b", topic="tb")
+    a_true = dataclasses.replace(a, q_int=300.0)
+    truth = HouseModel([a_true, b], 0.3, {("a", "b"): 20.0})
+    m = HouseModel([a, b], 0.3, {("a", "b"): 20.0}, gains="rooms")
+    assert set(m.gain) == {"a", "b"} and m.b_out is None
+    u = [0.0] * truth.m
+    u[truth.U_OUT], u[truth.U_GROUND], u[truth.U_ONE] = 5.0, 10.0, 1.0
+    x = [20.0, 20.0, 20.0, 20.0, 0.0]
+    f = HouseFilter(m, [20.0, 20.0, 20.0, 20.0], 0.1, 0.1, 0.02, 0.02,
+                    p0_gain_w=300.0, q_gain_w_per_h=20.0)
+    for k in range(96 * 60):
+        x = truth.step(x, u, 60.0)
+        f.predict(u, 60.0)
+        f.update_air("a", x[0], 0.05)
+        f.update_air("b", x[1], 0.05)
+        if k % 10 == 0:                            # the slabs are measured
+            f.update_return("ra", "a", x[2], 25.0, 1.0, 0.05)
+            f.update_return("rb", "b", x[3], 25.0, 1.0, 0.05)
+    assert f.x[m.gain["a"]] == pytest.approx(300.0, rel=0.15)
+    assert abs(f.x[m.gain["b"]]) < 30.0
+
+
+def test_returns_are_used_only_flowing_and_coasting(tmp_path):
+    """rl_gate's rule (D-009): a circuit below 27.5 % or opened less than
+    300 s ago reads the cabinet, not its slab, and must not be folded in.
+    And in `coast` mode nothing is used while the compressor runs."""
+    rp_ = None
+    from optimizer.replay_rooms import RoomReplay
+    rp_ = RoomReplay(CFG, _params(), returns="coast")
+    B = BASE
+
+    def msg(t, topic, v):
+        rp_.feed(T0 + t, topic, str(v))
+
+    def minute(t, freq, valve_a):
+        msg(t, f"{B}/opt/state", json.dumps({"outdoor": 5.0}))
+        for topic, v in ((f"{B}/temp/vl_total", 24.0), (f"{B}/temp/rl_total", 24.0),
+                         (f"{B}/temp/rl_a", 24.0), (f"{B}/temp/rl_b", 24.0),
+                         (f"{B}/valve_actual/valve_a", valve_a),
+                         (f"{B}/valve_actual/valve_b", 20.0),
+                         (f"{B}/hp/compressor_freq", freq),
+                         ("room/a", 21.0), ("room/b", 21.0)):
+            msg(t + 1, topic, v)
+
+    t = 0
+    for _ in range(40):                    # running: no coast returns
+        minute(t, 40.0, 50.0); t += 60
+    assert rp_.return_updates == {"coast": 0, "running": 0}
+    for _ in range(40):                    # coasting, a open, b shut
+        minute(t, 0.0, 50.0); t += 60
+    assert rp_.return_updates["coast"] >= 1
+    assert "rl_b" not in rp_.filter.return_innovations
+    assert "rl_a" in rp_.filter.return_innovations

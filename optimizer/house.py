@@ -26,9 +26,14 @@ WHAT IS STILL A STAND-IN, stated so nobody mistakes it for identified:
   with sqrt(dT), and is linearised here. The door states are unobserved.
 - The hall (`zones.diele`) is an air node with no circuit and no sensor:
   every bedroom opens onto it and it is open to Wohnzimmer.
-- No disturbance states (`b_out`, `k_sol`) and no augmented parameters yet.
-- Only the room air is measured. The return equation, the first direct
-  measurement of the slab (section 2.4), is the next step.
+- Unknown heat: either ONE house-wide `b_out` (outdoor bias, the default)
+  or one unknown gain PER SENSED ROOM (`gains="rooms"`), watts into that
+  room's air. The second says where the model's missing heat is; with
+  returns pinning the slabs, `b_out` spread ~1.8 kW by envelope area into
+  rooms that did not have it (LOGBOOK 2026-11-05).
+- The return equation (section 2.4) is in the filter (`update_return`);
+  WHEN a return may be used, and with which `a`, is the caller's choice -
+  see optimizer/replay_rooms.py.
 
 THE HEAT INPUT IS PER CIRCUIT, FROM WATER: `Q = m_dot c_p (VL - RL)`, with
 the flow from the valve opening through D-041's calibration (0 at 20 %,
@@ -154,7 +159,8 @@ def circuit_heat_w(opening_pct: float, vl_c: float, rl_c: float) -> float:
 class HouseModel:
     """The linear model: state, input layout, and its discretisation.
 
-    State: every room's air, then the slab rooms' slabs, then `b_out`.
+    State: every room's air, then the slab rooms' slabs, then either
+    `b_out` or one unknown gain per sensed room (`gain`).
     Input: [T_out, T_ground, 1, q_sol per room..., Q per room...]; the
     constant 1 carries the internal gains, so they are part of the model
     rather than something each caller has to remember to add.
@@ -163,7 +169,10 @@ class HouseModel:
     U_OUT, U_GROUND, U_ONE = 0, 1, 2
 
     def __init__(self, rooms: list[Room], f_sol: float,
-                 couplings: dict[tuple[str, str], float] | None = None) -> None:
+                 couplings: dict[tuple[str, str], float] | None = None,
+                 gains: str = "house") -> None:
+        if gains not in ("house", "rooms"):
+            raise ValueError(f"gains must be house|rooms, got {gains!r}")
         self.rooms = rooms
         self.f_sol = float(f_sol)
         # Pairs naming a room this model does not have are dropped, so a
@@ -182,8 +191,20 @@ class HouseModel:
         # STEADY energy gap - wrong UA, unmodelled gains, a biased forecast -
         # lands here instead of dragging every prediction one way. Its size
         # is therefore a measurement of that gap, H * b_out watts.
-        self.b_out = nr + len(self.slab)
-        self.n = self.b_out + 1
+        #
+        # Per-room gains instead: a random walk in W into each SENSED room's
+        # air. Unsensed zones (the hall) get none - nothing could observe it.
+        first = nr + len(self.slab)
+        self.gain: dict[str, int] = {}
+        if gains == "house":
+            self.b_out: int | None = first
+            self.n = first + 1
+        else:
+            self.b_out = None
+            for r in rooms:
+                if r.temp_topic:
+                    self.gain[r.name] = first + len(self.gain)
+            self.n = first + len(self.gain)
         self.u_sol = {r.name: 3 + i for i, r in enumerate(rooms)}
         self.u_heat = {r.name: 3 + nr + i for i, r in enumerate(rooms)}
         self.m = 3 + 2 * nr
@@ -200,7 +221,10 @@ class HouseModel:
             i = self.air[r.name]
             A[i][i] -= r.ua_ao / r.c_air
             B[i][self.U_OUT] += r.ua_ao / r.c_air
-            A[i][self.b_out] += r.ua_ao / r.c_air
+            if self.b_out is not None:
+                A[i][self.b_out] += r.ua_ao / r.c_air
+            if r.name in self.gain:
+                A[i][self.gain[r.name]] += 1.0 / r.c_air
             B[i][self.U_ONE] += r.q_int / r.c_air
             for o in self.rooms:
                 if o is not r:
@@ -263,19 +287,24 @@ class HouseFilter:
     def __init__(self, model: HouseModel, x0: Vector, p0_air_k: float,
                  p0_slab_k: float, q_air_k_per_h: float,
                  q_slab_k_per_h: float, p0_b_out_k: float = 3.0,
-                 q_b_out_k_per_h: float = 0.3) -> None:
-        """`x0` gives the air and slab states; `b_out` starts at 0."""
+                 q_b_out_k_per_h: float = 0.3, p0_gain_w: float = 300.0,
+                 q_gain_w_per_h: float = 60.0) -> None:
+        """`x0` gives the air and slab states; disturbances start at 0."""
         self.model = model
         self.x = list(x0) + [0.0] * (model.n - len(x0))
         nr = len(model.rooms)
         p0 = [p0_air_k if i < nr else p0_slab_k for i in range(model.n)]
         q = [q_air_k_per_h if i < nr else q_slab_k_per_h for i in range(model.n)]
-        p0[model.b_out], q[model.b_out] = p0_b_out_k, q_b_out_k_per_h
+        if model.b_out is not None:
+            p0[model.b_out], q[model.b_out] = p0_b_out_k, q_b_out_k_per_h
+        for i in model.gain.values():
+            p0[i], q[i] = p0_gain_w, q_gain_w_per_h
         self.P = [[0.0] * model.n for _ in range(model.n)]
         for i in range(model.n):
             self.P[i][i] = p0[i] ** 2
         self.q = [v * v for v in q]
         self.innovations: dict[str, list[float]] = {r.name: [] for r in model.rooms}
+        self.return_innovations: dict[str, list[float]] = {}
 
     def predict(self, u: Vector, dt_s: float) -> None:
         F, _ = self.model.discretise(dt_s)
@@ -288,19 +317,38 @@ class HouseFilter:
 
     def update_air(self, room: str, z: float, r_k: float) -> float:
         """Fold in one room's air reading; returns the innovation."""
-        i = self.model.air[room]
+        y = self._update(self.model.air[room], 1.0, 0.0, z, r_k)
+        v = self.innovations[room]
+        v.append(y)
+        del v[:-5000]
+        return y
+
+    def update_return(self, circuit: str, room: str, z: float, vl: float,
+                      a: float, r_k: float) -> float:
+        """Fold in one circuit's return temperature (section 2.4).
+
+        `RL = a T_slab + (1 - a) VL`: water that has crossed the slab sits
+        between the supply and the slab, `a = 1 - exp(-NTU)`. The first
+        direct measurement of a slab in this model. Only valid while the
+        circuit flows (D-009); the caller decides that."""
+        y = self._update(self.model.slab[room], a, (1.0 - a) * vl, z, r_k)
+        v = self.return_innovations.setdefault(circuit, [])
+        v.append(y)
+        del v[:-5000]
+        return y
+
+    def _update(self, i: int, h: float, offset: float, z: float,
+                r_k: float) -> float:
+        """Scalar update, z = h x_i + offset + v. Returns the innovation."""
         n = self.model.n
-        y = z - self.x[i]
-        s = self.P[i][i] + r_k * r_k
-        k = [self.P[j][i] / s for j in range(n)]
+        y = z - (h * self.x[i] + offset)
+        s = h * h * self.P[i][i] + r_k * r_k
+        k = [h * self.P[j][i] / s for j in range(n)]
         self.x = [self.x[j] + k[j] * y for j in range(n)]
         # Joseph form, as kalman.KalmanFilter: (I-KH) P (I-KH)' + K R K'.
-        ikh = [[(1.0 if a == b else 0.0) - (k[a] if b == i else 0.0)
+        ikh = [[(1.0 if a == b else 0.0) - (k[a] * h if b == i else 0.0)
                 for b in range(n)] for a in range(n)]
         P = matmul(matmul(ikh, self.P), transpose(ikh))
         rr = r_k * r_k
         self.P = madd(P, [[k[a] * k[b] * rr for b in range(n)] for a in range(n)])
-        v = self.innovations[room]
-        v.append(y)
-        del v[:-5000]
         return y
