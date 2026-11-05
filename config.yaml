@@ -427,7 +427,16 @@ rooms:
     # 22.0 matches the other bedrooms and is reachable. It does NOT fix the
     # underlying mean-versus-per-room problem - see BACKLOG, "give the energy
     # shadow authority" - it removes the worst distortion feeding it.
-    setpoint_c: 22.0
+    #
+    # 22.0 -> 19.0 on 2026-11-05, owner, in HEATING. The room ran +0.9 K over
+    # 22 for the week before, and in winter 19 is reachable by closing the
+    # valve, which the August objection (a slab below the dew point) is not
+    # about. Two things to watch: until the air comes down, the recovery term
+    # pulls this room's slab target - and with 11 % weight the house water
+    # target - down, so the bathrooms run slightly cooler; and BEFORE THE
+    # COOLING SEASON this has to be revisited, or the August distortion
+    # returns.
+    setpoint_c: 19.0
     floor_area_m2: 11.08   # Schlafen
     circuits: [{sensor: rl_hk07, valve: valve_hk07}]
     room_temp_topic: "roomtemp/schlafzimmer"   # Shelly H&T G3, via the HA bridge

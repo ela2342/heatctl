@@ -5728,3 +5728,15 @@ have asked for WARMER water every hour. The defect is a 3.5 K spread between
 rooms under one water temperature, plus a steady house offset of +0.7 K (the
 D-051 cost (1) shape, consistent with the replay's missing ~350 W).
 Not built. Options recorded in BACKLOG.
+
+## 2026-11-05 20:04 — Schlafzimmer setpoint 22 -> 19 (owner); bathrooms stay at 23.5
+
+Owner: "I like the bathrooms warm. We can lower the Schlafzimmer to 19."
+Live by `set/setpoint/schlafzimmer 19` (accepted, room at 22.3); live config
+line 244 (backup `config.yaml.bak-20261105-schlaf19`) and repo config, so it
+survives a restart. History: it was 19 until 08-26, raised because in COOLING
+19 needed a slab below the dew point and its permanent "too warm" skewed the
+mean. In heating it is reachable by closing the valve. Expected side effect,
+a theory to check: until the air falls, its recovery term lowers its slab
+target sharply and, at 11 % weight, the house water target by ~1 K, so the
+bathrooms run slightly cooler for a while. Revisit before cooling.
