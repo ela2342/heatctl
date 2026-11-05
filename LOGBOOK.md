@@ -5842,3 +5842,24 @@ while the gap peaks at night; clear-night sky radiation (~−94 W, summer
 estimate) runs the other way; and the children's rooms have no roof. Still
 worth modelling for summer peaks (~12 % of peak load), roof absorptance the
 main unknown.
+
+## 2026-11-05 — Wohnzimmer's 1 kW: not cooking, not a sensor fault - a 2.4 K gradient in the room
+
+Owner: no cooking, no wood fire. Then measured by hand: the old wall unit on
+the OUTER wall 20.3; the configured Shelly 22.7 and an independent thermometer
+22.9 (inner side, near the bathroom and Schlafzimmer walls). So the Shelly is
+right for the interior, and the 1.4-2.1 K it read above the old unit on
+10-14..17 (largest 06-12, east sun) is the room's gradient, not a fault.
+"Shelly reads high" is refuted.
+
+The model has one air node per room and charges envelope loss on the interior
+reading; the air along the glazed outer walls is colder, so loss is
+overstated and comes back as unexplained heat. Replay 10-27..11-01, returns
+in coast, per-room gains, with the envelope-side temperature taken as the
+Shelly minus 0 / 1.0 / 1.5 K: Wohnzimmer +1023 / +538 / +295 W; house skill at
+24 h −2.42 / −2.11 / −1.97. An effective 1-1.5 K would explain most of it
+(THEORY). Fix: a per-room "envelope side vs sensor" offset, identified rather
+than hard-coded; a logged second sensor on Wohnzimmer's outer-wall side would
+pin it. Also corrected: the roof (PU, light) lags its sun by ~5-6 h, not
+"within the hour" as written above - lands at 17-20 h, still not the
+night-time shape, and the daily mean (~15-20 W) is unchanged by mass.
