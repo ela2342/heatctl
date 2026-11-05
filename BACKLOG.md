@@ -78,6 +78,16 @@ them is blocked, and none of them is urgent.
         figures (cooling_kwh, store, precharge) count the cooling direction
         only - heating awareness there belongs to the overhaul (Now #5).
 
+  - [ ] **Room spread under one water temperature (measured 2026-11-05).**
+        Children's rooms +2.0..+2.3 K, bathrooms −1.0..−1.1 K, house +0.7 K,
+        over 10-27..11-02 (LOGBOOK). In order: (1) watch the flow-floor
+        allocation (23de7eb, live 11-05 19:44) for 2-3 days - it removes the
+        children's forced flow, which predates it; (2) close the house offset
+        by correcting the model's missing heat or a very slow integral on the
+        area-weighted house deviation (NOT the neediest room: D-051 cost 2,
+        and peak demand is ~100 in 164/165 h); (3) owner: the bathrooms'
+        23.5 is unreachable at this water temperature with valves saturated.
+
 ## Milestone 1 - harden layer 1
 
 - [ ] DEFERRED, deliberately: put the dew-point margin on a proper footing.

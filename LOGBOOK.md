@@ -5703,3 +5703,28 @@ Arbeitszimmer 50 (raised by the floor, least past setpoint), Wohnzimmer 40,
 children 26 (was 39). The 26 is distribution's eps, not the floor: eps 5
 against a peak demand of ~20 just after the restart gives a zero-demand room
 a fifth of the span. Falls toward 20 as the bathroom PIDs integrate up.
+
+## 2026-11-05 — Water-setpoint feedback on valve closure: scored against 10-27..11-02, not built
+
+Owner proposal: when the valves close, the water setpoint should come down.
+Checked against seven days of hourly means before the power cut (165 h,
+heating throughout, `ua_ao` 216 live):
+
+| room | mean air - setpoint |
+|---|---|
+| kind_natalie | +2.32 K |
+| kind_naomi | +2.03 K |
+| schlafzimmer | +0.87 K |
+| wohnzimmer | +0.73 K |
+| arbeitszimmer | −0.22 K |
+| badezimmer | −0.97 K |
+| gaestebad | −1.13 K |
+| house, area-weighted | +0.72 K (+0.02 .. +2.16) |
+
+**Peak demand was ~100 in 164 of 165 hours.** The two bathrooms (setpoint
+23.5) sit below setpoint almost continuously with their valves saturated, so
+the neediest room never goes quiet: a valve- or peak-driven feedback would
+have asked for WARMER water every hour. The defect is a 3.5 K spread between
+rooms under one water temperature, plus a steady house offset of +0.7 K (the
+D-051 cost (1) shape, consistent with the replay's missing ~350 W).
+Not built. Options recorded in BACKLOG.
