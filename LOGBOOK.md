@@ -5863,3 +5863,15 @@ than hard-coded; a logged second sensor on Wohnzimmer's outer-wall side would
 pin it. Also corrected: the roof (PU, light) lags its sun by ~5-6 h, not
 "within the hour" as written above - lands at 17-20 h, still not the
 night-time shape, and the daily mean (~15-20 W) is unchanged by mass.
+
+## 2026-11-06 07:47 — First morning after the flow-floor deploy and Schlafzimmer 19
+
+3 degC outside, heating, compressor 49 Hz, P05 27, all rooms on their own
+sensors. Since 11-05 19:40: kind_natalie 24.3 -> 23.3, kind_naomi 24.2 -> 23.4,
+Schlafzimmer 22.3 -> 21.0, valves hk03/04/07 at 21 % (shut) - the allocation
+works and nothing is swinging. Bathrooms colder: Badezimmer 23.3 -> 22.2,
+Gaestebad 22.7 -> 21.8, valves saturated at 50 %; Schlafzimmer's slab target
+(21.1) pulls the house target (28.3) down ~0.8 K, as predicted. Arbeitszimmer
+22.2 -> 20.5 with its valve at 50 %: fan coil, fan off. Owner offered: wait a
+day for the Schlafzimmer pull to fade, or weight the water law toward rooms
+below setpoint (a D-051 change).
