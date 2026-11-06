@@ -5885,3 +5885,5 @@ WiFi). Otherwise: heating, 2.7 degC, compressor 39 Hz, P05 26, no hp faults,
 opt ok. Children 23.3/23.4 -> 22.9/23.0, Schlafzimmer 21.0 -> 20.6, valves
 hk03/04/07 still 21 %. Badezimmer 22.1, Gaestebad ~21.6 (last real reading),
 Arbeitszimmer 20.1 (fan coil, fan off).
+Its last status (10:25): battery 42 %, WiFi RSSI −93 dBm - at the edge of
+connectivity, the likelier cause of a missed wake than the battery (THEORY).
