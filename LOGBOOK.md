@@ -5887,3 +5887,16 @@ hk03/04/07 still 21 %. Badezimmer 22.1, Gaestebad ~21.6 (last real reading),
 Arbeitszimmer 20.1 (fan coil, fan off).
 Its last status (10:25): battery 42 %, WiFi RSSI −93 dBm - at the edge of
 connectivity, the likelier cause of a missed wake than the battery (THEORY).
+
+## 2026-11-06 19:47 — kind_naomi jumped 23.2 -> 25.5 within the hour, valve shut
+
+Monitoring check. Gaestebad back on its sensor (19:41, 21.9; the 12:25-18:25
+wakes were missed). kind_naomi: flat 23.0-23.2 all afternoon, then 25.5 in the
+19:00 hour, with its valve at 21 % and no sun. 2.3 K/h in a room with ~800 Wh/K
+of air is ~1.8 kW - not a person; a local source next to the sensor (laptop,
+lamp, hair dryer, an electric heater) or the device handled. No control harm:
+the valve was already shut. THEORY worth keeping: if the children's sensors
+regularly sit near evening heat sources, part of the filter's night-time
+"unknown gain" in those rooms is sensor placement. kind_natalie 23.0, steady.
+Rest: compressor 49 Hz, P05 28, no faults, opt ok; Schlafzimmer 20.6,
+bathrooms 22.2 / 21.9, Arbeitszimmer 19.9 (fan off).
