@@ -5875,3 +5875,13 @@ Gaestebad 22.7 -> 21.8, valves saturated at 50 %; Schlafzimmer's slab target
 22.2 -> 20.5 with its valve at 50 %: fan coil, fan off. Owner offered: wait a
 day for the Schlafzimmer pull to fade, or weight the water law toward rooms
 below setpoint (a D-051 change).
+
+## 2026-11-06 13:47 — Gaestebad Shelly missed its 12:25 wake; room on house average
+
+Monitoring check. The Gaestebad H&T (direct to the plant broker, not via HA)
+reported on its 2 h period at 06:24, 08:24, 10:25, then nothing: the 12:25
+wake was missed and the room fell to `house_avg`. Cause unknown (battery,
+WiFi). Otherwise: heating, 2.7 degC, compressor 39 Hz, P05 26, no hp faults,
+opt ok. Children 23.3/23.4 -> 22.9/23.0, Schlafzimmer 21.0 -> 20.6, valves
+hk03/04/07 still 21 %. Badezimmer 22.1, Gaestebad ~21.6 (last real reading),
+Arbeitszimmer 20.1 (fan coil, fan off).
