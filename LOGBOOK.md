@@ -5919,3 +5919,11 @@ compressor idle. Expected with the fan on: the coil's spread widens and the
 room rises. The fan state is an unobserved switched input for the models
 (like a door): replays across this time must not treat the step as a
 parameter change.
+
+## 2026-11-07 13:47 — Arbeitszimmer fan on: the coil now delivers
+
+Coil spread 1.7 K (supply 23.8, rl_hk11 22.1) against 0.8 K at 11:58 with the
+fan off; ~240 W at D-041's 2 l/min. Room 19.5 -> 20.3. Compressor idle, P05
+22 (midday, sun in the forecast). kind_naomi back to 23.2 (23.9 at 07:47),
+kind_natalie 23.0, Schlafzimmer 19.9 (19.3), bathrooms 22.5 / 21.7,
+Wohnzimmer 21.6, no faults, opt ok.
