@@ -5910,3 +5910,12 @@ kind_natalie 22.9, both valves at 21 % all night: Naomi's room did not come
 back down after the evening jump, so whatever heated it lasted the night (or
 the sensor sits by it). Wohnzimmer 21.6 (valves 49 %), bathrooms 22.2 / 21.7,
 Arbeitszimmer 19.5 (fan off, 2.5 K under).
+
+## 2026-11-07 ~12:00 — Owner switches the Arbeitszimmer fan coil's fan on
+
+Room 19.5 against 22, valve hk11 at 50 % for days with no effect (fan off).
+Baseline at 11:58: supply 24.9, coil return rl_hk11 24.1 (0.8 K spread),
+compressor idle. Expected with the fan on: the coil's spread widens and the
+room rises. The fan state is an unobserved switched input for the models
+(like a door): replays across this time must not treat the step as a
+parameter change.
