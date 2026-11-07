@@ -5900,3 +5900,13 @@ regularly sit near evening heat sources, part of the filter's night-time
 "unknown gain" in those rooms is sensor placement. kind_natalie 23.0, steady.
 Rest: compressor 49 Hz, P05 28, no faults, opt ok; Schlafzimmer 20.6,
 bathrooms 22.2 / 21.9, Arbeitszimmer 19.9 (fan off).
+
+## 2026-11-07 07:47 — Schlafzimmer at 19.3; kind_naomi stays ~1 K above kind_natalie
+
+Monitoring check, 1.0 degC outside, compressor 69 Hz, P05 28, no faults, opt
+ok, all rooms on their sensors. Schlafzimmer 20.6 -> 19.3, so its pull on the
+house water target should now fade. kind_naomi 23.9 (25.5 at 19:xx) vs
+kind_natalie 22.9, both valves at 21 % all night: Naomi's room did not come
+back down after the evening jump, so whatever heated it lasted the night (or
+the sensor sits by it). Wohnzimmer 21.6 (valves 49 %), bathrooms 22.2 / 21.7,
+Arbeitszimmer 19.5 (fan off, 2.5 K under).
