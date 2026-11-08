@@ -6179,3 +6179,25 @@ kind_natalie tie at −1.3 K and share it (TIE_K), hk03 34 % with that room at
 23.3. Designed behaviour, and its cost: the floor heats a room 1.3 K too warm
 because the water has to go somewhere. kind_naomi 23.5 (21 %), Schlafzimmer
 20.5 (21 %), Wohnzimmer 21.7, bathrooms 22.2 / 21.7.
+
+## 2026-11-08 — Wohnzimmer controlled on its room mean (owner: setpoint = room average); proportional to indoor-outdoor
+
+Owner chose the room average as the meaning of Wohnzimmer's setpoint, and
+expects the gradient to depend on outdoor temperature. Both readings so far
+came at ~20 K indoor-outdoor, so constant vs proportional is not yet
+distinguishable; built proportional: room mean = reading - 0.06 x (T - T_out)
+(1.2 K at 20 K).
+- Layer 1 (config `rooms[].room_temp_offset_per_k`, Wohnzimmer 0.06): the room
+  PID, house demand, energy figures and the house-average fallback use the
+  room mean (`Controller._room_air`); safety never reads it; `room/<n>/temp`
+  stays the raw measurement and the mean goes to `room/<n>/temp_mean`. No
+  outdoor figure -> raw reading (today's behaviour). The outdoor chain is now
+  one method (`Controller._outdoor`) shared with the energy figures.
+- Layer 2: `sensor_offset_per_k` (same 0.06, duplicated on purpose) replaces
+  the constant `sensor_offset_k` in the per-room replay, and the live 2-state
+  estimator's house air now uses the room means too.
+Replay 10-27..11-01 (outdoor mean ~10, so the correction averaged ~0.8 K):
+per-room 3/6/12/24 h −0.25 / −0.34 / −0.81 / −1.77 (from −0.32 / −0.44 /
+−0.99 / −1.86); 2-state unchanged (24 h −3.69). Tests: one per layer plus the
+replay, five mutations caught. NOT DEPLOYED - plant-behaviour change, needs
+the owner's go.

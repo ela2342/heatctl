@@ -455,3 +455,20 @@ def test_current_is_none_when_the_forecast_has_run_out():
         w._cache = [dataclasses.replace(_pt(12), time=f"{yesterday}T12:00")]
     assert w.current() is None
     assert w.ahead() == []
+
+
+def test_the_house_air_uses_each_rooms_mean():
+    """Layer 2's house air must be the same room means layer 1 controls on:
+    Wohnzimmer's reading corrected by `sensor_offset_per_k` x (T - T_out)."""
+    from optimizer.estimator import Reading
+    cfg = {"rooms": [{"name": "w", "room_temp_topic": "r/w"},
+                     {"name": "k", "room_temp_topic": "r/k"}]}
+    est = _estimator(cfg)
+    est.params["sensor_offset_per_k"] = {"w": 0.06}
+    est.__init__(est.cfg, est.params)
+    est.readings["r/w"] = Reading(22.0)
+    est.readings["r/k"] = Reading(22.0)
+    est.outdoor_c = lambda: 2.0
+    assert est.house_air() == pytest.approx((22.0 - 1.2 + 22.0) / 2)
+    est.outdoor_c = lambda: None
+    assert est.house_air() == pytest.approx(22.0)

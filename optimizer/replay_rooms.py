@@ -79,7 +79,7 @@ class RoomReplay:
         b, f = params["building"], params["filter"]
         self.params = params
         self.sensor_offset = {n: float(x) for n, x in
-                              (params.get("sensor_offset_k") or {}).items()}
+                              (params.get("sensor_offset_per_k") or {}).items()}
         self.rooms = build_rooms(cfg, params)
         self.model = HouseModel(self.rooms, float(b["f_sol"]),
                                 build_couplings(params), gains)
@@ -157,8 +157,13 @@ class RoomReplay:
             # (owner: 19.1 at the south wall vs 21.8 opposite; an unconnected
             # chimney with a fresh-air annulus draws). The model's air node is
             # the room mean, so the reading is corrected before it is used -
-            # for the filter and the score alike.
-            v -= self.sensor_offset.get(room, 0.0)
+            # for the filter and the score alike - by a fraction of the
+            # indoor-outdoor difference (`sensor_offset_per_k`), the same
+            # form layer 1 uses.
+            k = self.sensor_offset.get(room, 0.0)
+            out = self._input(self.state_topic)
+            if k and out is not None and v > out:
+                v -= k * (v - out)
             self.latest[room] = Reading(v, t)
             self.pending[room] = v
         else:

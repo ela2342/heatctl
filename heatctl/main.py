@@ -55,6 +55,11 @@ class Controller:
 
         self.room_setpoints: dict[str, float] = {}
         self.room_pids: dict[str, PID] = {}
+        # Room-mean correction for a sensor that sits off the room's mean, as
+        # a fraction of the indoor-outdoor difference. See `_room_air`.
+        self.room_offset_per_k: dict[str, float] = {
+            r["name"]: float(r.get("room_temp_offset_per_k", 0.0) or 0.0)
+            for r in cfg.get("rooms", [])}
         # Which measurement drove each room this cycle: "sensor", "house_avg"
         # or "return". Held so a source change can reset that room's PID, and
         # published so an operator can see which loop is actually in charge.
@@ -576,9 +581,9 @@ class Controller:
         # valve positions, which is correct: the flow proxy describes the
         # manifold as it currently stands, not as this cycle is about to
         # command it.
+        outdoor_now, _ = self._outdoor()
         room_temps = {r["name"]: t for r in self.rooms
-                      if (t := self.plane.room_temp(
-                          r["name"], self.room_temp_max_age_s)) is not None}
+                      if (t := self._room_air(r["name"], outdoor_now)) is not None}
 
         # PRE-CONDITIONING DELTA. `active = dial + delta`, computed ONCE here so
         # the wall dial and layer 2 can never fight over one value - the bridge
@@ -658,7 +663,7 @@ class Controller:
 
         for room in self.rooms:
             n = room["name"]
-            room_t = self.plane.room_temp(n, self.room_temp_max_age_s)
+            room_t = self._room_air(n, outdoor_now)
             src = "sensor"
             if room_t is None and house_mean is not None:
                 room_t, src = house_mean, "house_avg"
@@ -678,7 +683,13 @@ class Controller:
                 # same failure as the Controme server serving a frozen
                 # last-known temperature that HA then recorded as real.
                 if src == "sensor":
-                    await self.plane.publish(f"room/{n}/temp", f"{room_t:.1f}")
+                    # The MEASUREMENT on the measurement topic; the corrected
+                    # room mean, where it differs, on its own.
+                    raw = self.plane.room_temp(n, self.room_temp_max_age_s)
+                    await self.plane.publish(f"room/{n}/temp", f"{raw:.1f}")
+                    if self.room_offset_per_k.get(n):
+                        await self.plane.publish(f"room/{n}/temp_mean",
+                                                 f"{room_t:.2f}")
             else:
                 # No sensor anywhere in the house: fall back to the return
                 # loop. This is what keeps layer 1 independent of the broker -
@@ -859,6 +870,43 @@ class Controller:
         self._log_db(state)
         self._cycle += 1
 
+    def _outdoor(self) -> tuple[float | None, str]:
+        """Outdoor temperature and its source: forecast average, then the
+        weather station, then the heat pump's own register. One chain for
+        every consumer, so the energy figures and the room-air correction
+        never disagree about the weather. See `_publish_energy_shadow`."""
+        outdoor = self.plane.outdoor_avg()
+        if outdoor is not None:
+            return outdoor, "forecast"
+        outdoor = self.plane.outdoor_temp()
+        if outdoor is not None:
+            return outdoor, "station"
+        reg = hpm.by_name("outdoor_ambient")
+        raw = self.hp.status.get(reg.addr) if self.hp is not None else None
+        if raw is not None:
+            return float(hpm.decode(reg, raw)), "hp_register"
+        return None, "none"
+
+    def _room_air(self, name: str, outdoor: float | None) -> float | None:
+        """A room's air temperature AS CONTROL SEES IT: the room's mean.
+
+        For most rooms that is the sensor. Wohnzimmer's Shelly sits in the warm
+        part of a room with a measured gradient - 20.3 / 19.1 at the outer and
+        south walls against 22.7-22.9 / 21.8 inside (owner, 2026-11-05/08),
+        cold air from glazing and an unconnected chimney pooling on the south
+        side. The owner decided its setpoint means the ROOM AVERAGE (2026-11-08),
+        so the reading is corrected by `room_temp_offset_per_k` times the
+        indoor-outdoor difference: proportional, because the cold air scales
+        with the cold outside (owner's expectation, not yet measured at a
+        second outdoor temperature). Without an outdoor figure the raw reading
+        is used - today's behaviour, not a guess. Safety never reads this.
+        """
+        t = self.plane.room_temp(name, self.room_temp_max_age_s)
+        k = self.room_offset_per_k.get(name, 0.0)
+        if t is None or not k or outdoor is None or t <= outdoor:
+            return t
+        return t - k * (t - outdoor)
+
     async def _publish_energy_shadow(self, state, targets: dict[str, float],
                                      room_temps: dict[str, float],
                                      house_mean: float | None,
@@ -892,18 +940,7 @@ class Controller:
         # "deficit" on the night of 2026-08-06: slabs cold from the day's
         # cooling, target computed against a 20 degC night, and the stored
         # coolth read as something to make up with heat.
-        outdoor = self.plane.outdoor_avg()
-        outdoor_src = "forecast"
-        if outdoor is None:
-            outdoor = self.plane.outdoor_temp()
-            outdoor_src = "station"
-        if outdoor is None:
-            outdoor_src = "hp_register"
-            reg = hpm.by_name("outdoor_ambient")
-            raw = self.hp.status.get(reg.addr)
-            outdoor = None if raw is None else float(hpm.decode(reg, raw))
-        if outdoor is None:
-            outdoor_src = "none"
+        outdoor, outdoor_src = self._outdoor()
         await self.plane.publish("energy/outdoor_source", outdoor_src)
         if outdoor is not None:
             await self.plane.publish("energy/outdoor_c", f"{outdoor:.1f}")

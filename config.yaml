@@ -362,6 +362,14 @@ rooms:
     # number - but it is a dependency the raw topic did not have. Accepting
     # more than one source per room would remove it; see BACKLOG.
     room_temp_topic: "sensors/room/wohnzimmer/temperature_c"
+    # THE SETPOINT MEANS THE ROOM AVERAGE (owner, 2026-11-08), and the Shelly
+    # sits in the warm part: 20.3 / 19.1 at the outer and south walls against
+    # 22.7-22.9 / 21.8 inside, at ~20 K indoor-outdoor. The room mean is taken
+    # as the reading less 0.06 K per K of indoor-outdoor difference (1.2 K at
+    # 20 K) - proportional on the owner's expectation that the cold air scales
+    # with the cold outside, not yet measured at a second outdoor temperature.
+    # Control only; safety and the published measurement use the raw reading.
+    room_temp_offset_per_k: 0.06
     # HUMIDITY, and the first room to provide it. This is what lets heatctl
     # compute its own dew point instead of consuming HA's - see D-045. One
     # room is not enough to replace the HA helper, which is exactly why

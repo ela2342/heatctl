@@ -119,6 +119,11 @@ class Estimator:
         # of model.py on why this stage is a stepping stone.
         self.room_topics = [r["room_temp_topic"] for r in cfg.get("rooms", [])
                             if r.get("room_temp_topic")]
+        offs = params.get("sensor_offset_per_k") or {}
+        self.sensor_offset: dict[str, float] = {
+            r["room_temp_topic"]: float(offs[r["name"]])
+            for r in cfg.get("rooms", [])
+            if r.get("room_temp_topic") and r["name"] in offs}
         self.readings: dict[str, Reading] = {}
         # THE OWNER'S ROOM SETPOINTS, the air target every forecast is
         # computed against (`target_air`). Seeded from config exactly as
@@ -199,9 +204,20 @@ class Estimator:
     # ---------- inputs ----------
 
     def house_air(self) -> float | None:
-        """Mean of the fresh room readings, or None if none are fresh."""
-        vals = [r.value for t, r in self.readings.items()
-                if t in self.room_topics and r.fresh(self.max_age_s, self.clock())]
+        """Mean of the fresh room readings, or None if none are fresh.
+
+        Each reading is first taken to its ROOM'S MEAN where the sensor is
+        known to sit off it (`sensor_offset_per_k`, Wohnzimmer since
+        2026-11-08) - the same correction layer 1 controls on."""
+        out = self.outdoor_c()
+        vals = []
+        for t, r in self.readings.items():
+            if t not in self.room_topics or not r.fresh(self.max_age_s, self.clock()):
+                continue
+            v, k = r.value, self.sensor_offset.get(t, 0.0)
+            if k and out is not None and v > out:
+                v -= k * (v - out)
+            vals.append(v)
         return sum(vals) / len(vals) if vals else None
 
     def target_air(self) -> float | None:

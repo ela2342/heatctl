@@ -1379,3 +1379,30 @@ async def test_the_flow_floor_is_told_which_rooms_still_want_the_mode(
     assert "valve_hk01" in seen, "floor never consulted - test is vacuous"
     n = seen["valve_hk01"]
     assert n is not None and (n > 0) == expect_positive, (mode, n)
+
+
+async def test_a_room_is_controlled_on_its_mean_and_reported_raw(controller):
+    """Wohnzimmer's setpoint means the room average (owner, 2026-11-08) and
+    its sensor sits in the warm part, so control uses the reading less
+    `room_temp_offset_per_k` x (T - T_out). Here a room 1 K over setpoint by
+    its sensor is 0.2 K UNDER by its mean, so its controller must integrate
+    toward heat, not away. The measurement topic keeps the raw reading - the
+    archive records what was measured - and without an outdoor figure the
+    raw reading is used, today's behaviour."""
+    ctl = controller(
+        temps={"rl_hk01": 24.0, "rl_hk02": 24.0, "rl_hk03": 24.0,
+               "vl_total": 30.0},
+        room_temps={"gaestebad": 22.0},
+        control={"mode": "heating"},
+    )
+    ctl.room_setpoints["gaestebad"] = 21.0
+    ctl.room_offset_per_k["gaestebad"] = 0.06
+    ctl.plane.outdoor_forecast = 2.0
+    assert ctl._room_air("gaestebad", 2.0) == pytest.approx(20.8)
+    assert ctl._room_air("gaestebad", None) == pytest.approx(22.0)
+    ctl.io.touch(time.monotonic())
+    await ctl.step(1.0)
+    assert ctl.room_pids["gaestebad"]._i > 0.0, "controlled on the raw reading"
+    pub = {t: v for t, v, _ in ctl.plane.published}
+    assert pub["room/gaestebad/temp"] == "22.0"
+    assert pub["room/gaestebad/temp_mean"] == "20.80"

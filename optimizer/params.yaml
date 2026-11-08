@@ -432,16 +432,19 @@ heated_area_m2:
   # use this; the unheated floor is not modelled.
   wohnzimmer: {value: 32.2, unit: m2, sigma: 2.0, kind: measured}
 
-sensor_offset_k:
-  # How far a room's sensor reads ABOVE the room's mean air, K. Wohnzimmer:
-  # the Shelly sits in the warm part; the owner measured 20.3 / 19.1 at the
-  # outer and south walls against 22.7-22.9 / 21.8 inside, and an unconnected
-  # chimney with a fresh-air annulus draws cold air in. Half the measured
-  # wall-to-interior difference as the prior. Replayed 10-27..11-01 this beat
-  # an envelope-only correction (`envelope_side_k`, the 11-08 first form) at
-  # every horizon past 6 h and took Wohnzimmer's unexplained heat from ~860
-  # to ~470 W.
-  wohnzimmer: {value: 1.2, unit: K, sigma: 0.6, kind: prior}
+sensor_offset_per_k:
+  # How far a room's sensor reads ABOVE the room's mean air, as a fraction of
+  # the indoor-outdoor difference. Wohnzimmer: the Shelly sits in the warm
+  # part; the owner measured 20.3 / 19.1 at the outer and south walls against
+  # 22.7-22.9 / 21.8 inside at ~20 K indoor-outdoor, with cold air from the
+  # glazing and an unconnected chimney pooling on the south side. Half the
+  # wall-to-interior difference, 1.2 K at 20 K -> 0.06. PROPORTIONAL on the
+  # owner's expectation that it scales with the cold outside (2026-11-08; the
+  # first form was a constant 1.2 K). The SAME value as layer 1's
+  # `room_temp_offset_per_k` in config.yaml, deliberately duplicated (layer 1
+  # may not read this file). Replayed, a room-mean correction beat an
+  # envelope-only one at every horizon past 6 h.
+  wohnzimmer: {value: 0.06, unit: K/K, sigma: 0.03, kind: prior}
 
 occupancy:
   # People per room by time of day, from the owner's account (2026-11-08):

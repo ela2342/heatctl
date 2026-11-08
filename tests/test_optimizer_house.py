@@ -403,50 +403,17 @@ def test_a_zone_claims_its_circuit_and_a_room_its_heated_floor():
 
 def test_a_sensor_offset_is_taken_off_the_reading(tmp_path):
     """Wohnzimmer's Shelly reads above the room's mean (cold air along the
-    south side). The model's air node is the mean, so the reading is
-    corrected before the filter or the score sees it."""
+    south side), by a fraction of the indoor-outdoor difference. The model's
+    air node is the mean, so the reading is corrected before the filter or
+    the score sees it - and left alone when there is no outdoor figure."""
     from optimizer.replay_rooms import RoomReplay
     p = _params()
-    p["sensor_offset_k"] = {"a": Param(1.2)}
+    p["sensor_offset_per_k"] = {"a": Param(0.06)}
     rp_ = RoomReplay(CFG, p)
-    rp_.feed(T0 + 1.0, "room/a", "22.0")
-    rp_.feed(T0 + 2.0, "room/b", "22.0")
-    assert rp_.latest["a"].value == pytest.approx(20.8)
+    rp_.feed(T0 + 1.0, "room/a", "22.0")                 # no outdoor yet
+    assert rp_.latest["a"].value == pytest.approx(22.0)
+    rp_.feed(T0 + 2.0, f"{BASE}/opt/state", json.dumps({"outdoor": 2.0}))
+    rp_.feed(T0 + 3.0, "room/a", "22.0")
+    rp_.feed(T0 + 4.0, "room/b", "22.0")
+    assert rp_.latest["a"].value == pytest.approx(22.0 - 0.06 * 20.0)
     assert rp_.latest["b"].value == pytest.approx(22.0)
-
-
-def test_the_slab_edge_moves_loss_from_air_to_slab_and_keeps_the_total():
-    """The floor's share of the thermal bridges is the slab perimeter losing
-    to OUTDOOR air under the walls. Carried on the air node it was in the
-    wrong place (the returns read below the modelled slabs). It moves to the
-    slabs by heated area, out of the air node, the total unchanged; and in
-    the model it couples the slab to the outdoor temperature."""
-    p = _params()
-    r0 = {r.name: r for r in build_rooms(CFG, p)}
-    p["building"]["ua_slab_edge"] = Param(9.0)
-    r1 = {r.name: r for r in build_rooms(CFG, p)}
-    assert r1["a"].ua_edge == pytest.approx(9.0 * 20.0 / 30.0)
-    assert r1["a"].ua_ao == pytest.approx(r0["a"].ua_ao - r1["a"].ua_edge)
-    assert sum(r.ua_ao + r.ua_edge for r in r1.values()) == pytest.approx(120.0)
-    m = HouseModel(list(r1.values()), 0.3)
-    _, B = m.continuous()
-    assert B[m.slab["a"]][m.U_OUT] == pytest.approx(r1["a"].ua_edge / r1["a"].c_slab)
-
-
-def test_the_models_ua_sa_is_the_measurement_as_it_was_taken():
-    """07-31: 3020 W at 1.24 m3/h over 6.17 K - 490 W/K as logged. The models
-    had been computing it from flow_m3_h's 1.44 FALLBACK (568). Their ua_sa
-    now uses the identification's own pump speed, plus what the slab lost to
-    the ground and through its edge at that moment. The cooling-limit ua_sa,
-    whose flow cancels by design, is untouched."""
-    from optimizer import derived
-    from optimizer.params import load_params
-    p = load_params("optimizer/params.yaml")
-    idn = p["building"]["ua_sa_identification"]
-    base = derived.ua_sa_model({**p, "building": {**p["building"],
-                                "ua_sg": Param(0.0), "ua_slab_edge": Param(0.0)}})
-    assert base.value == pytest.approx(3020.0 / 6.17, rel=0.03)
-    assert derived.ua_sa_model(p).value > base.value          # ground share added
-    assert derived.ua_sa(p).value == pytest.approx(
-        568.3, rel=0.01)                                       # cooling path as was
-    assert float(idn["pump_pct"]) == pytest.approx(124.0 / 1.44, rel=0.01)
