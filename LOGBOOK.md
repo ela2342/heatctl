@@ -6165,3 +6165,17 @@ Tests: the power x COP tests replaced by water-based ones (sign both modes,
 coil to air, stale/closed gives nothing, coil reaches the filter step and the
 replay); three mutations survived the first version and got tests. 789 pass.
 Live at the next deploy, with ua_sg, ua_sa_model and ua_ao_air.
+
+## 2026-11-08 19:47 — Arbeitszimmer overshoots to 23.3; the floor's remainder now reaches kind_natalie
+
+Monitoring check, 2.0 degC, compressor 69-70 Hz, P05 28, no faults, opt ok,
+all rooms on their sensors. Arbeitszimmer (fan on since 11-07 ~12:00) went
+22.2 -> 23.3, 1.3 K over, while its valve came down 46 -> 34 %: the first room
+PI acting in range overshoots - the integral-time-vs-lags concern of 11-05;
+watch whether it swings back under. With hk11 closing, the flow floor (mean 41
+%, exactly met) had to place the remainder: bathrooms, Wohnzimmer and hk02 at
+50 already, so it went to the rooms least past setpoint - Arbeitszimmer and
+kind_natalie tie at −1.3 K and share it (TIE_K), hk03 34 % with that room at
+23.3. Designed behaviour, and its cost: the floor heats a room 1.3 K too warm
+because the water has to go somewhere. kind_naomi 23.5 (21 %), Schlafzimmer
+20.5 (21 %), Wohnzimmer 21.7, bathrooms 22.2 / 21.7.
