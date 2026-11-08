@@ -6232,3 +6232,11 @@ sets it; return setpoint ~34 against 28, supply ~37-38, within the 40 band.
 The back-off when too many valves want to close is in BACKLOG, to be designed
 from the trial. Tests: selection rules and the controller wiring, four
 mutations caught (the last needed the balance and neediest to differ).
+
+## 2026-11-08 22:09 — Deployed c27f79c: neediest-room water law live
+
+Mode off 22:06:56, compressor 48 -> 0 Hz by 22:08:11. Live config:
+`water_setpoint.target: neediest` (backup `config.yaml.bak-20261108-neediest`).
+Deployed, back in heating. First cycle: target_source gaestebad, direct target
+34.0 (balance would be 30.25), register at 29 pending the 10 min confirmation
+and 15 min rate limit. Revert: `target: balance` in the live config + restart.
