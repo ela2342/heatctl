@@ -113,6 +113,20 @@ them is blocked, and none of them is urgent.
         for it; it pins the compressor at full output and lowest COP. The
         back-off should know the capacity, not only the valves.
 
+  - [ ] **BEFORE THE COOLING SEASON: silent mode is OFF (owner, 2026-11-08).**
+        Switched off for heating, where it capped the compressor at R30 = 70 Hz.
+        But cooling depends on it: capacity.py's ceiling R32 (0x00F1) only binds
+        in silent mode, and silent mode was enabled on 2026-07-30 precisely to
+        stop the cycling at the condensation limit. Owner: "we need to fix this
+        properly before cooling season". Properly means: either a seasonal
+        switch heatctl owns (silent on in cooling, off in heating, written once
+        per mode change - flash budget D-013), or a capacity control in cooling
+        that does not need silent mode. And re-check D09 (0x00F4, silent
+        cooling fan cap): set to 1000 on 07-30, it now reads 65512 - garbage;
+        at its default 60 the condenser fan would be nearly stopped in silent
+        cooling. capacity.py already refuses to act without both conditions
+        (it reports "silent mode or fan cap not configured").
+
 ## Milestone 1 - harden layer 1
 
 - [ ] DEFERRED, deliberately: put the dew-point margin on a proper footing.

@@ -6265,3 +6265,21 @@ Baseline 22:26 (switch-off just after; the "~22:40" above is approximate):
 P05 already 34 (written by the neediest law), compressor 69 Hz, supply 30.2;
 Arbeitszimmer 23.3, hk11 42 %, rl_hk11 25.5; kind_natalie 23.5, hk03 23 %
 (down from 34 % at 19:47); hk04 23 %, hk07 23 %.
+
+## 2026-11-08 22:33 — Silent mode OFF for the heating season; R13 back to factory
+
+Owner asked why the compressor sat at 69-70 Hz against an 8 kW unit. Silent
+mode was on (0x0001 = 41, bit 5) since 2026-07-30, enabled so R32 could cap
+cooling capacity at the condensation limit and stop the cycling there
+(owner's recollection; LOGBOOK 2026-07-30). In heating it caps the compressor
+at R30, 0x00EF silent_max_freq_heating = 70 Hz - exactly where it sat, ~3 kW
+at ~30 degC supply. The silent heating fan cap D08 (0x00F3) reads 60 but the
+outdoor fan ran 606 RPM with the coil at -2.5 vs 1.0 degC air, so the
+evaporator was not starved. Owner: switch silent mode off; and R13 to factory.
+- 22:33:12 `heat pump 0x0001: 41 -> 9 (silent_mode off: mqtt)` - via
+  hp/set/bit/silent_mode, read-modify-write on a real read, bits 0 and 3 kept.
+- 22:33:21 `heat pump 0x00C5: 50 -> 80 (mqtt raw)` - R13 had been left at 50
+  since the 2026-07-30 test that showed it does not bind.
+Read back: silent_mode 0, freq_max_hz 80. Compressor 69 -> 89 Hz within a
+minute, no faults. Two flash writes, one-time configuration (D-013).
+NOT FIXED: what cooling needs - see BACKLOG.
