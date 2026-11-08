@@ -1070,7 +1070,15 @@ class Controller:
             need = self.energy.neediest_slab_target(rooms, targets,
                                                     room_temps, self.mode)
             if need is not None:
-                water_target, source = (need[0], need[1]), need[2]
+                # The TARGET is the neediest room's, but the reference the
+                # law's spread is computed against stays the HOUSE setpoint:
+                # spread = r x (water mean - rooms) is a property of the whole
+                # house's heat flow - the water runs through every open
+                # circuit, not just the one that asked for it. (First version
+                # used the neediest room's own setpoint; owner questioned the
+                # spread, 2026-11-08.)
+                ref = house[1] if house is not None else need[1]
+                water_target, source = (need[0], ref), need[2]
         self.water_sp.observe_house_target(water_target, now)
         await self.plane.publish("water_sp/target_source", source)
         x = self.water_sp.direct_value(now)

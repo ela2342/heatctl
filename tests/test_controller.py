@@ -1438,3 +1438,11 @@ async def test_the_water_follows_the_neediest_room_when_configured(controller, c
     assert seen and seen[-1][0] == pytest.approx(rooms.target_c, abs=0.01)
     bal = {t: v for t, v, _ in ctl.plane.published}["energy/house_slab_target"]
     assert float(bal) < rooms.target_c - 0.5, "balance and neediest coincide"
+    # ...and the spread's reference is the HOUSE setpoint, not the room's:
+    # the water runs through every open circuit.
+    house = ctl.energy.house_slab_target(
+        [ctl.energy.room(n, ctl.room_setpoints[n], 2.0, None, None,
+                         room_c=20.0, mode="heating")
+         for n in ("gaestebad", "wohnzimmer")], dict(ctl.room_setpoints))
+    assert seen[-1][1] == pytest.approx(house[1], abs=0.01)
+    assert seen[-1][1] != pytest.approx(ctl.room_setpoints["gaestebad"], abs=0.5)

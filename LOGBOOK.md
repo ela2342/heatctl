@@ -6240,3 +6240,14 @@ Mode off 22:06:56, compressor 48 -> 0 Hz by 22:08:11. Live config:
 Deployed, back in heating. First cycle: target_source gaestebad, direct target
 34.0 (balance would be 30.25), register at 29 pending the 10 min confirmation
 and 15 min rate limit. Revert: `target: balance` in the live config + restart.
+
+## 2026-11-08 — Neediest law: the spread's reference is the house, not the neediest room (fix, not yet deployed)
+
+Owner did not follow the spread calculation; re-deriving it found my error.
+The 0.34 is the 07-31 ratio of manifold spread to water-to-room difference
+(2.10 / 6.17), so spread = 0.34 x (water mean - rooms) for the WHOLE house's
+heat flow. In neediest mode the deployed code used the neediest room's own
+setpoint as "rooms" (Gaestebad 23.5): 36.2 - 0.17 x 12.7 = 34.0, against
+36.2 - 0.17 x ~14.2 = ~33.8 with the house setpoint. Fixed: target from the
+neediest room, reference from the house; test extended, mutation caught.
+0.2 K tonight; goes out with the next deploy.
