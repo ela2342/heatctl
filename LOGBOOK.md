@@ -6201,3 +6201,17 @@ per-room 3/6/12/24 h −0.25 / −0.34 / −0.81 / −1.77 (from −0.32 / −0.
 −0.99 / −1.86); 2-state unchanged (24 h −3.69). Tests: one per layer plus the
 replay, five mutations caught. NOT DEPLOYED - plant-behaviour change, needs
 the owner's go.
+
+## 2026-11-08 21:41 — Deployed f56e05e: Wohnzimmer on its room mean; layer-2 corrections live
+
+Owner approved. Mode off 21:38:37, compressor 39 -> 0 Hz by 21:39:52. Live
+config: `room_temp_offset_per_k: 0.06` added under Wohnzimmer (backup
+`config.yaml.bak-20261108-wz-roommean`). Deployed; `_room_air`, `coil_heat_w`
+and ua_sg 20 confirmed in the container; back in `heating`. Also live with it:
+layer 2's heat input from the water, ua_sa_model (510), ua_ao_air (211), COP
+out of the model - the estimator now reports fast/slow modes 6.4 / 73.6 h.
+First minutes: Wohnzimmer raw 21.8, temp_mean 20.60 (outdoor 1.9, forecast);
+its slab target 33.3 (was ~29.4), house slab target 30.3 (was ~28.3), water
+direct target 28.8 - the water goes up, as expected. Watch: bathrooms (should
+gain), kind_natalie (takes the floor's remainder, may stay warm), and the
+sitting area, which should settle a little above 22.
