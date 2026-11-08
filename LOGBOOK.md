@@ -6261,3 +6261,7 @@ instead of kind_natalie's floor (hk03 was at 34 %). The neediest-room water
 law ignores the room (no slab). Fan state is an unobserved switched input:
 fan ON 11-07 ~12:00 to 11-08 ~22:40. See the baseline line below for the
 moment of the switch.
+Baseline 22:26 (switch-off just after; the "~22:40" above is approximate):
+P05 already 34 (written by the neediest law), compressor 69 Hz, supply 30.2;
+Arbeitszimmer 23.3, hk11 42 %, rl_hk11 25.5; kind_natalie 23.5, hk03 23 %
+(down from 34 % at 19:47); hk04 23 %, hk07 23 %.
