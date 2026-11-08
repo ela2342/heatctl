@@ -6010,3 +6010,31 @@ Wohnzimmer gradient takes most of the rest. The flat 350 W of internal gains by
 floor area is the wrong structure. Next for the filter (replay only): a
 per-room occupancy schedule, and a per-room envelope-side offset (Wohnzimmer
 first).
+
+## 2026-11-08 — Occupancy schedule and Wohnzimmer's envelope-side factor in filter v2
+
+Owner, second Wohnzimmer reading: south wall 19.1 vs 21.8 on the opposite
+side (the Shelly agrees). With 11-05's 20.3 vs 22.7/22.9, the air along the
+envelope sits ~13 % of the indoor-outdoor difference below the interior:
+`envelope_side_k.wohnzimmer = 0.13`, effective ua_ao (1 - k), envelope only
+(the open paths run from the interior air - the 11-05 sensor-shift replay
+shifted those too and so overstated the effect). And `occupancy`: per-room
+schedule from the owner's account (children in kind_natalie at night and
+weekend days, parents in schlafzimmer at night; Wohnzimmer evenings/weekend
+days a guess), 70 W asleep / 90 W awake, base load 200 W by area replacing the
+flat 350 W.
+
+Replay 10-27..11-01, returns in coast, per-room gains:
+
+| variant | wohnzimmer | kind_natalie | schlafzimmer | total | skill 6 h / 12 h |
+|---|---|---|---|---|---|
+| baseline | +1023 | +281 | +167 | 1757 | −0.53 / −1.32 |
+| + occupancy | +1023 | +174 | +127 | 1671 | −0.47 / −1.13 |
+| + envelope side | +867 | +281 | +167 | 1600 | −0.51 / −1.29 |
+| both | +867 | +174 | +127 | 1515 | −0.46 / −1.10 |
+
+Wohnzimmer still carries ~870 W. THEORIES left for it: the hall is warmer than
+the model's unheated, unsensed hall node (the manifold cabinet and distribution
+pipes are there), which would cut the 200 W/K open-path loss; the void exchange
+to Arbeitszimmer (110 W/K prior) smaller than assumed, especially while
+Arbeitszimmer ran 2 K colder with the fan off. Both are identifiable.

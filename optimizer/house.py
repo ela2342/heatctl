@@ -82,6 +82,20 @@ def build_rooms(cfg: dict, params: dict) -> list[Room]:
     and no sensor.
     """
     b = params["building"]
+    # INTERNAL GAINS. With an occupancy schedule (`occupancy`), the flat
+    # q_internal_w is replaced by a smaller base load (appliances, standby)
+    # spread by area, and the people arrive per room through the schedule
+    # (`occupancy_w`) - 2026-11-08: four occupants sat exactly where the model
+    # was short at night, which a flat figure by floor area cannot express.
+    occ = params.get("occupancy") or {}
+    q_base = float(occ["base_w"]) if "base_w" in occ else float(b["q_internal_w"])
+    # ENVELOPE-SIDE FACTOR. The air along a big glazed envelope is colder than
+    # the sensor in the room: Wohnzimmer measured 2.4-2.7 K below the interior
+    # at ~20 K indoor-outdoor (owner, 11-05 and 11-08), i.e. ~13 % of the
+    # difference. Loss through the envelope is driven by that colder air, so
+    # the room's effective ua_ao is (1 - k). Not renormalised: this is a
+    # correction to the room, not a redistribution of the house total.
+    side = {n: float(v) for n, v in (params.get("envelope_side_k") or {}).items()}
     ua_sa = (derived.ua_sa(params).value if "ua_sa_identification" in b
              else float(b["ua_sa"]))
     rooms_cfg = [r for r in cfg.get("rooms", []) if r.get("floor_area_m2")]
@@ -113,12 +127,13 @@ def build_rooms(cfg: dict, params: dict) -> list[Room]:
         share = a / total
         out.append(Room(
             name=r["name"], area_m2=a, slab=slab,
-            ua_ao=float(b["ua_ao"]) * env_share(r["name"], a),
+            ua_ao=float(b["ua_ao"]) * env_share(r["name"], a)
+            * (1.0 - side.get(r["name"], 0.0)),
             ua_sa=ua_sa * a / slab_rooms if slab else 0.0,
             ua_sg=float(b["ua_sg"]) * a / slab_area if slab else 0.0,
             c_air=float(b["c_air_wh"]) * share * J_PER_WH,
             c_slab=float(b["c_slab_wh"]) * a / slab_area * J_PER_WH if slab else 0.0,
-            q_int=float(b["q_internal_w"]) * share,
+            q_int=q_base * share,
             temp_topic=r.get("room_temp_topic"),
             circuits=[(c["sensor"], c["valve"]) for c in r.get("circuits", [])
                       if c.get("sensor") and c.get("valve")]))
@@ -128,7 +143,7 @@ def build_rooms(cfg: dict, params: dict) -> list[Room]:
             name=n, area_m2=a, slab=False, ua_ao=float(b["ua_ao"]) * env_share(n, a),
             ua_sa=0.0, ua_sg=0.0,
             c_air=float(b["c_air_wh"]) * share * J_PER_WH, c_slab=0.0,
-            q_int=float(b["q_internal_w"]) * share, temp_topic=None))
+            q_int=q_base * share, temp_topic=None))
     return out
 
 
@@ -154,6 +169,27 @@ def build_couplings(params: dict) -> dict[tuple[str, str], float]:
     for key, ua in (c.get("open") or {}).items():
         add(key, float(ua))
     return out
+
+
+def occupancy_w(params: dict, room: str, hour: float, weekend: bool) -> float:
+    """Sensible heat from people in `room` at local `hour`, W.
+
+    `occupancy.schedule.<room>` is a list of [days, from_h, to_h, persons,
+    state]; days is all|weekday|weekend, the span may wrap midnight, state is
+    asleep|awake. A PRIOR from the owner's account, to be corrected by the
+    owner and checked against the per-room gains the filter reports."""
+    occ = params.get("occupancy") or {}
+    w = {"asleep": float(occ.get("w_asleep", 70.0)),
+         "awake": float(occ.get("w_awake", 90.0))}
+    total = 0.0
+    for days, h0, h1, persons, state in (occ.get("schedule") or {}).get(room, []):
+        if days == "weekday" and weekend or days == "weekend" and not weekend:
+            continue
+        h0, h1 = float(h0), float(h1)
+        inside = h0 <= hour < h1 if h0 < h1 else (hour >= h0 or hour < h1)
+        if inside:
+            total += float(persons) * w[state]
+    return total
 
 
 def circuit_flow_kg_s(opening_pct: float, open_pct: float = 20.0,
@@ -219,7 +255,10 @@ class HouseModel:
             self.n = first + len(self.gain)
         self.u_sol = {r.name: 3 + i for i, r in enumerate(rooms)}
         self.u_heat = {r.name: 3 + nr + i for i, r in enumerate(rooms)}
-        self.m = 3 + 2 * nr
+        # People, W into the room's air, from `occupancy_w`. Zero when there
+        # is no schedule, so the model is unchanged without one.
+        self.u_occ = {r.name: 3 + 2 * nr + i for i, r in enumerate(rooms)}
+        self.m = 3 + 3 * nr
         self._cache: dict[float, tuple[Matrix, Matrix]] = {}
 
     def coupling(self, a: Room, b: Room) -> float:
@@ -238,6 +277,7 @@ class HouseModel:
             if r.name in self.gain:
                 A[i][self.gain[r.name]] += 1.0 / r.c_air
             B[i][self.U_ONE] += r.q_int / r.c_air
+            B[i][self.u_occ[r.name]] += 1.0 / r.c_air
             for o in self.rooms:
                 if o is not r:
                     k = self.coupling(r, o)

@@ -354,6 +354,36 @@ envelope_share:
   wohnzimmer: {value: 0.3974, unit: '-', sigma: 0.0596, kind: measured}
   arbeitszimmer: {value: 0.1960, unit: '-', sigma: 0.0294, kind: measured}
 
+envelope_side_k:
+  # Fraction of the indoor-outdoor difference by which the air along a room's
+  # envelope is colder than its sensor; the room's effective ua_ao is (1 - k)
+  # (optimizer/house.py build_rooms). Wohnzimmer from two owner measurements:
+  # outer wall 20.3 vs interior 22.7/22.9 (11-05), south wall 19.1 vs 21.8
+  # (11-08), both at ~20 K indoor-outdoor -> 2.4-2.7 K, ~13 %. Rooms not listed
+  # are 0. A prior from two spot readings, for identification to refine.
+  wohnzimmer: {value: 0.13, unit: '-', sigma: 0.05, kind: measured}
+
+occupancy:
+  # People per room by time of day, from the owner's account (2026-11-08):
+  # both children sleep and spend weekend days in kind_natalie; the parents
+  # sleep in schlafzimmer. Evenings and weekend daytime in wohnzimmer are a
+  # GUESS. Sensible heat per person: ~70 W asleep, ~90 W awake (seated).
+  # `base_w` (appliances, standby, lighting averaged) replaces the flat
+  # q_internal_w of the 2-state model when this block is present.
+  base_w: {value: 200.0, unit: W, sigma: 100.0, kind: prior}
+  w_asleep: {value: 70.0, unit: W, sigma: 15.0, kind: prior}
+  w_awake: {value: 90.0, unit: W, sigma: 20.0, kind: prior}
+  schedule:        # [days, from_h, to_h, persons, asleep|awake]; may wrap midnight
+    kind_natalie:
+      - [all, 21, 7, 2, asleep]
+      - [weekday, 15, 21, 2, awake]
+      - [weekend, 7, 21, 2, awake]
+    schlafzimmer:
+      - [all, 22, 7, 2, asleep]
+    wohnzimmer:
+      - [weekday, 18, 22, 2, awake]
+      - [weekend, 9, 22, 2, awake]
+
 couplings:
   partition_u_w_per_m2k:
     value: 1.05

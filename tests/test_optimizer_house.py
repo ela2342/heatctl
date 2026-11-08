@@ -120,7 +120,12 @@ def test_the_real_params_split_back_to_the_house_totals():
     p = load_params("optimizer/params.yaml")
     with open("config.yaml") as f:
         rooms = build_rooms(yaml.safe_load(f), p)
-    assert sum(r.ua_ao for r in rooms) == pytest.approx(float(p["building"]["ua_ao"]))
+    # The split itself invents and loses nothing; the only deliberate
+    # departure is each room's envelope-side factor (2026-11-08), applied to
+    # that room alone and not renormalised.
+    side = {n: float(v) for n, v in (p.get("envelope_side_k") or {}).items()}
+    restored = sum(r.ua_ao / (1.0 - side.get(r.name, 0.0)) for r in rooms)
+    assert restored == pytest.approx(float(p["building"]["ua_ao"]))
     assert sum(r.ua_sa for r in rooms) == pytest.approx(derived.ua_sa(p).value)
     names = {r.name for r in rooms}
     for a, b in build_couplings(p):
@@ -317,3 +322,49 @@ def test_the_envelope_follows_its_take_off_not_the_floor_area():
     p["envelope_share"] = {"a": Param(0.1)}
     rooms = build_rooms(CFG, p)
     assert rooms[0].ua_ao == pytest.approx(120.0 * 20.0 / 30.0)
+
+
+# ---------- occupancy and envelope side (2026-11-08) ----------
+
+def test_occupancy_follows_the_schedule_across_midnight_and_weekends():
+    """People are in particular rooms at particular times: two children
+    asleep 21-07 every night, awake 15-21 on weekdays and 07-21 at weekends.
+    A span that wraps midnight is the case a naive h0 <= h < h1 drops."""
+    from optimizer.house import occupancy_w
+    p = {"occupancy": {"w_asleep": Param(70.0), "w_awake": Param(90.0),
+                       "schedule": {"k": [["all", 21, 7, 2, "asleep"],
+                                          ["weekday", 15, 21, 2, "awake"],
+                                          ["weekend", 7, 21, 2, "awake"]]}}}
+    assert occupancy_w(p, "k", 3.0, False) == 140.0        # wraps midnight
+    assert occupancy_w(p, "k", 22.5, True) == 140.0
+    assert occupancy_w(p, "k", 10.0, False) == 0.0         # at school
+    assert occupancy_w(p, "k", 10.0, True) == 180.0
+    assert occupancy_w(p, "k", 16.0, False) == 180.0
+    assert occupancy_w(p, "other", 3.0, False) == 0.0
+
+
+def test_occupancy_heats_its_own_rooms_air():
+    """The occupancy input lands in its room's air, like the fan coil."""
+    a, b = _room("a"), _room("b")
+    m = HouseModel([a, b], 0.3)
+    u = [0.0] * m.m
+    u[m.U_OUT] = u[m.U_GROUND] = 20.0
+    u[m.u_occ["a"]] = 1000.0
+    x = m.step([20.0, 20.0, 20.0, 20.0, 0.0], u, 60.0)
+    assert x[m.air["a"]] > 20.01 and x[m.air["b"]] == pytest.approx(20.0)
+
+
+def test_the_envelope_side_factor_cuts_only_that_rooms_loss():
+    """Wohnzimmer's air along its glazed envelope is ~13 % of the indoor-
+    outdoor difference colder than its sensor (owner, two readings), so its
+    effective ua_ao is (1 - k). Not renormalised onto the other rooms: it is
+    a correction to one room, not a redistribution of the house total. A
+    base load replaces q_internal_w once there is an occupancy block."""
+    p = _params()
+    r0 = {r.name: r for r in build_rooms(CFG, p)}
+    p["envelope_side_k"] = {"a": Param(0.13)}
+    p["occupancy"] = {"base_w": Param(60.0)}
+    r1 = {r.name: r for r in build_rooms(CFG, p)}
+    assert r1["a"].ua_ao == pytest.approx(r0["a"].ua_ao * 0.87)
+    assert r1["b"].ua_ao == pytest.approx(r0["b"].ua_ao)
+    assert sum(r.q_int for r in r1.values()) == pytest.approx(60.0)

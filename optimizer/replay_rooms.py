@@ -26,12 +26,13 @@ from __future__ import annotations
 import argparse
 import math
 import sys
+import time
 from dataclasses import dataclass
 
 import yaml
 
 from .house import (HouseFilter, HouseModel, build_couplings, build_rooms,
-                    circuit_heat_w)
+                    circuit_heat_w, occupancy_w)
 from .params import load_params
 from .replay import apply_overrides, read_journal
 from .estimator import Reading
@@ -76,6 +77,7 @@ class RoomReplay:
             raise ValueError(f"returns must be off|coast|all, got {returns!r}")
         self.returns = returns
         b, f = params["building"], params["filter"]
+        self.params = params
         self.rooms = build_rooms(cfg, params)
         self.model = HouseModel(self.rooms, float(b["f_sol"]),
                                 build_couplings(params), gains)
@@ -178,9 +180,12 @@ class RoomReplay:
         m = self.model
         u = [0.0] * m.m
         u[m.U_OUT], u[m.U_GROUND], u[m.U_ONE] = outdoor, self.t_ground, 1.0
+        lt = time.localtime(self.now)
+        hour, weekend = lt.tm_hour + lt.tm_min / 60.0, lt.tm_wday >= 5
         for r in self.rooms:
             u[m.u_sol[r.name]] = self._input(self.sol_topic[r.name]) or 0.0
             u[m.u_heat[r.name]] = heat[r.name]
+            u[m.u_occ[r.name]] = occupancy_w(self.params, r.name, hour, weekend)
         return u
 
     def standing(self) -> dict[str, float]:
