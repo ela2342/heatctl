@@ -5927,3 +5927,15 @@ fan off; ~240 W at D-041's 2 l/min. Room 19.5 -> 20.3. Compressor idle, P05
 22 (midday, sun in the forecast). kind_naomi back to 23.2 (23.9 at 07:47),
 kind_natalie 23.0, Schlafzimmer 19.9 (19.3), bathrooms 22.5 / 21.7,
 Wohnzimmer 21.6, no faults, opt ok.
+
+## 2026-11-08 07:47 — Children's rooms plateau near 23 after 60 h with no flow; Arbeitszimmer at setpoint
+
+Monitoring check, 1.9 degC, compressor 69 Hz, P05 28, no faults, opt ok.
+kind_naomi 23.3, kind_natalie 22.9: valves at 21 % (no flow) since 11-05
+19:44, ~60 h, five slab time constants - the floor's stored heat is spent, yet
+both rooms sit ~1 K above 22 while Wohnzimmer (21.5) and the bathrooms (22.1 /
+21.5) are below theirs. Corroborates the filter's per-room unknown gain in
+those rooms (+170-280 W after the envelope take-off): real heat sources, or
+heat arriving from neighbours, not the floor. Arbeitszimmer 22.2 with the fan
+on, and its valve has left saturation (46 %): the first room PI acting in its
+range since the flow-floor fix - watch for swinging. Schlafzimmer 19.1.
