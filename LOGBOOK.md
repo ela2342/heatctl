@@ -6286,3 +6286,25 @@ NOT FIXED: what cooling needs - see BACKLOG.
 Correction: the fan was actually switched off at ~22:42 on 11-08 (owner forgot it
 at first), not ~22:26-22:40. Fan ON 11-07 ~12:00 to 11-08 ~22:42. At 22:36,
 with the fan still on, the coil return was 25.7 against 31.1 supply.
+
+## 2026-11-08 22:53 — Powerful mode ON; first defrost of the higher-output regime; the 1.56x current factor disputed
+
+Owner asked for a power mode: compressor at 89 Hz after silent mode off, the
+current register at ~8 A where the owner has seen ~10 A last winter. 89 Hz
+fits R11 (0x00C3) = 90 Hz, plausibly the top of the ambient-banded maximum
+(R08-R11 = 75/80/85/90; semantics not stated by the map - not touched).
+22:53:32 `heat pump 0x0001: 9 -> 25 (powerful_mode on: mqtt)` - bit 4,
+read-modify-write; factory feature, +R29 (0x00EE, 5 Hz default) in heating.
+
+Then, from 22:55, a DEFROST, not a response to the write: supply fell below
+return (22.5 vs 27.1) with the compressor at 69 Hz, the outdoor coil went
+-3.5 -> +30 degC and the fan 821 -> 146 RPM; ended ~23:02 (supply back to 30,
+compressor restarting). No defrost flag is mapped; coil and fan are
+unambiguous. Expected at 1 degC under high load; more frequent the harder the
+compressor runs, and each one takes heat back out of the floor water.
+
+DISPUTED (owner): the August finding that the current register over-reads
+mains current ~1.56x. Owner does not consider it solid and has seen ~10 A
+register readings last winter. Until re-measured, the 1.56 factor - and the
+COP 2.66 derived with it - should be treated as unverified. (The models no
+longer use either since today.)
