@@ -130,6 +130,10 @@ class Controller:
         # Load compensation: house demand -> water temperature setpoint. The
         # third level of the cascade; see setpoint.py.
         self.water_sp = SetpointController(cfg)
+        # balance (D-051) | neediest (owner trial, 2026-11-08). See
+        # `EnergyDemand.neediest_slab_target`.
+        self.water_target_law = str(
+            (c.get("water_setpoint") or {}).get("target", "balance"))
         # Frequency ceiling: takes as much spread as the dew point allows.
         # Spread is how the plant delivers capacity, so this MAXIMISES it under
         # a constraint rather than minimising it - see capacity.py.
@@ -1053,10 +1057,22 @@ class Controller:
         # targets only - never from the RL-based slab estimate, which would put
         # the law on its own actuator.
         house = self.energy.house_slab_target(rooms, targets)
-        self.water_sp.observe_house_target(house, now)
         await self.plane.publish(
             "energy/house_slab_target",
             "unknown" if house is None else f"{house[0]:.2f}")
+        # WHICH TARGET THE WATER FOLLOWS. `balance` is D-051's capacity-
+        # weighted house target; `neediest` (on trial since 2026-11-08) the
+        # room that needs the most among those still wanting the mode, falling
+        # back to the balance when none does. Published, so an operator can
+        # see which room is setting the water.
+        water_target, source = house, "balance"
+        if self.water_target_law == "neediest":
+            need = self.energy.neediest_slab_target(rooms, targets,
+                                                    room_temps, self.mode)
+            if need is not None:
+                water_target, source = (need[0], need[1]), need[2]
+        self.water_sp.observe_house_target(water_target, now)
+        await self.plane.publish("water_sp/target_source", source)
         x = self.water_sp.direct_value(now)
         await self.plane.publish(
             "water_sp/direct_target", "unknown" if x is None else f"{x:.2f}")

@@ -1406,3 +1406,35 @@ async def test_a_room_is_controlled_on_its_mean_and_reported_raw(controller):
     pub = {t: v for t, v, _ in ctl.plane.published}
     assert pub["room/gaestebad/temp"] == "22.0"
     assert pub["room/gaestebad/temp_mean"] == "20.80"
+
+
+async def test_the_water_follows_the_neediest_room_when_configured(controller, cfg):
+    """With `water_setpoint.target: neediest` the direct law is fed the
+    target of the room that needs most among those below setpoint, not the
+    capacity-weighted balance, and the deciding room is published."""
+    ctl = controller(
+        temps={"rl_hk01": 24.0, "rl_hk02": 24.0, "rl_hk03": 24.0,
+               "vl_total": 30.0},
+        room_temps={"gaestebad": 20.0},
+        control={"mode": "heating"},
+        rooms=_energy_rooms(cfg["rooms"]),
+    )
+    ctl.water_target_law = "neediest"
+    ctl.plane.outdoor_forecast = 2.0
+    # A second room with a much lower target, so the balance and the
+    # neediest room cannot coincide (they did in the first version, and a
+    # mutant that ignored the neediest target passed).
+    ctl.room_setpoints["wohnzimmer"] = 16.0
+    seen = []
+    real = ctl.water_sp.observe_house_target
+    ctl.water_sp.observe_house_target = lambda t, now: (seen.append(t), real(t, now))
+    ctl.io.touch(time.monotonic())
+    await ctl._publish_energy_shadow(ctl.io.state, dict(ctl.room_setpoints),
+                                     {"gaestebad": 20.0}, 20.0, time.monotonic())
+    pub = {t: v for t, v, _ in ctl.plane.published}
+    assert pub.get("water_sp/target_source") == "gaestebad", pub.get("water_sp/target_source")
+    rooms = ctl.energy.room("gaestebad", ctl.room_setpoints["gaestebad"], 2.0,
+                            None, None, room_c=20.0, mode="heating")
+    assert seen and seen[-1][0] == pytest.approx(rooms.target_c, abs=0.01)
+    bal = {t: v for t, v, _ in ctl.plane.published}["energy/house_slab_target"]
+    assert float(bal) < rooms.target_c - 0.5, "balance and neediest coincide"

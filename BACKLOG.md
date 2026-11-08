@@ -95,6 +95,17 @@ them is blocked, and none of them is urgent.
         parameter, identified, not hard-coded. A logged second sensor on the
         outer-wall side would pin it - owner: "maybe one day", not now.
 
+  - [ ] **Neediest-room water law: build the back-off (owner, 2026-11-08).**
+        `water_setpoint.target: neediest` is on trial: the water follows the
+        highest target among slab rooms below setpoint. Owner expects to need
+        "something to reduce the target once too many valves want to close".
+        Design it from what the trial shows - candidates: lower the target
+        while the count (or capacity share) of circuits at the open threshold
+        exceeds a limit; or cap at the second-neediest when one room alone
+        holds it up. Watch first: P05, `water_sp/target_source`, how many
+        valves sit at 20-21 %, kind_natalie (takes the floor's remainder),
+        COP at the higher supply.
+
 ## Milestone 1 - harden layer 1
 
 - [ ] DEFERRED, deliberately: put the dew-point margin on a proper footing.

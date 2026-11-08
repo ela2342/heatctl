@@ -519,3 +519,33 @@ class TestHouseSlabTarget:
         e = EnergyDemand(self.CFG)
         r = e.room("wohnzimmer", 23.0, None, 26.0, 18.0)
         assert e.house_slab_target([r], {"wohnzimmer": 23.0}) is None
+
+
+# ---------- the neediest-room water target (owner trial, 2026-11-08) ----------
+
+def test_the_neediest_room_below_setpoint_sets_the_water():
+    """The balance averaged the bathrooms' ~35 degC water-mean targets with
+    rooms that needed far less, and they sat fully open and short for weeks.
+    On trial: the water follows the highest target among slab rooms still
+    below setpoint. A room past setpoint must not set it however high its
+    number, a fan-coil room has no slab, and a room without a fresh reading
+    is not asked."""
+    from heatctl.energy import RoomEnergy
+    e = EnergyDemand.__new__(EnergyDemand)
+    e.emitters = {"bad": "slab", "kid": "slab", "wohn": "slab", "fan": "fan_coil"}
+
+    def room(n, target):
+        return RoomEnergy(n, None, target, None, None, None, False, "x")
+
+    rooms = [room("bad", 35.0), room("kid", 37.0), room("wohn", 33.0),
+             room("fan", 40.0), room("quiet", 39.0)]
+    sps = {"bad": 23.5, "kid": 22.0, "wohn": 22.0, "fan": 22.0, "quiet": 22.0}
+    air = {"bad": 22.2, "kid": 23.3, "wohn": 21.0, "fan": 20.0}
+    got = e.neediest_slab_target(rooms, sps, air, "heating")
+    assert got == (35.0, 23.5, "bad")
+    # cooling mirrors: the lowest target among rooms ABOVE setpoint
+    got = e.neediest_slab_target(rooms, sps, air, "cooling")
+    assert got == (37.0, 22.0, "kid")
+    # nobody wants heat -> None, and the caller falls back to the balance
+    warm = {k: 30.0 for k in air}
+    assert e.neediest_slab_target(rooms, sps, warm, "heating") is None

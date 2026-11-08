@@ -791,6 +791,13 @@ control:
 
   water_setpoint:
     enabled: true
+    # WHICH TARGET THE WATER FOLLOWS. `balance`: D-051's capacity-weighted
+    # house slab target. `neediest`: the highest target among slab rooms still
+    # below setpoint (lowest above it in cooling), else the balance. Owner,
+    # 2026-11-08, ON TRIAL: the balance left the bathrooms - valves fully open -
+    # 1-2 K short for weeks. A back-off for when too many valves want to close
+    # is expected to be needed (BACKLOG). Revert = `balance` + restart.
+    target: neediest
     # THE DIRECT LAW (D-051). The setpoint is computed, not walked:
     #   P0x = T_target - spread_ratio/2 * (T_target - T_set)
     # with T_target / T_set the capacity-weighted house slab target and room

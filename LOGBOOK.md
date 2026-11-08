@@ -6215,3 +6215,20 @@ its slab target 33.3 (was ~29.4), house slab target 30.3 (was ~28.3), water
 direct target 28.8 - the water goes up, as expected. Watch: bathrooms (should
 gain), kind_natalie (takes the floor's remainder, may stay warm), and the
 sitting area, which should settle a little above 22.
+
+## 2026-11-08 — The water follows the neediest room (owner trial), not the house balance
+
+Owner asked how a slab could ever reach a target above its water. It cannot:
+layer 1's "slab target" is really a WATER-MEAN target (D-051 built it on the
+490 W/K measured room->water), and per-room targets of 33-36 degC (bathrooms,
+Wohnzimmer after tonight's room-mean change) sat above the ~30.5 water mean
+the balanced law aims at - D-051's accepted "cost 2", and the bathrooms'
+chronic shortfall. Owner: "Let's try 1 for a while" - the water follows the
+highest target among slab rooms below setpoint (lowest above it in cooling),
+falling back to the balance when no room wants the mode
+(`water_setpoint.target: neediest`, `EnergyDemand.neediest_slab_target`,
+`water_sp/target_source` published). Expected now: Gaestebad (target 36.2)
+sets it; return setpoint ~34 against 28, supply ~37-38, within the 40 band.
+The back-off when too many valves want to close is in BACKLOG, to be designed
+from the trial. Tests: selection rules and the controller wiring, four
+mutations caught (the last needed the balance and neediest to differ).

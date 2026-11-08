@@ -380,6 +380,45 @@ class EnergyDemand:
             return None
         return num / den, sp / den
 
+    def neediest_slab_target(self, rooms: list[RoomEnergy],
+                             setpoints: dict[str, float],
+                             room_temps: dict[str, float],
+                             mode: str) -> tuple[float, float, str] | None:
+        """The water-mean target of the room that needs the most, among slab
+        rooms that still want the current mode: (target, setpoint, room).
+
+        THE NEEDIEST-ROOM LAW, on trial since 2026-11-08 (owner: "let's try
+        it for a while"). The balanced `house_slab_target` averages reachable
+        targets with unreachable ones: the bathrooms want ~35-36 degC of water
+        mean, the house average was ~30, so they sat with valves fully open
+        and 1-2 K short for weeks - D-051's accepted "cost 2". D-051 rejected
+        the neediest room because warm water was then forced through every
+        slab; since the flow-floor fix (2026-11-03) rooms past setpoint really
+        shut, so the cost is now mostly COP and the floor's remainder.
+
+        Heating: the HIGHEST target among slab rooms below setpoint. Cooling:
+        the LOWEST among rooms above it. Rooms without a fresh air reading are
+        not asked - their target would be a guess about whether they want
+        anything. None when no room wants the mode; the caller falls back to
+        the balanced target.
+
+        NOT YET BUILT, and expected to be needed: a back-off when too many
+        valves want to close (BACKLOG).
+        """
+        best = None
+        for r in rooms:
+            if (r.target_c is None or not self.has_slab(r.name)
+                    or r.name not in setpoints or r.name not in room_temps):
+                continue
+            below = room_temps[r.name] < setpoints[r.name]
+            if mode == "heating" and below:
+                if best is None or r.target_c > best[0]:
+                    best = (r.target_c, setpoints[r.name], r.name)
+            elif mode == "cooling" and not below:
+                if best is None or r.target_c < best[0]:
+                    best = (r.target_c, setpoints[r.name], r.name)
+        return best
+
     def house_excess_wh(self, rooms: list[RoomEnergy]) -> float | None:
         """Signed house total, or None if nothing was estimable.
 
