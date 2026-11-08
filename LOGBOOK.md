@@ -5967,3 +5967,9 @@ a tablet) + plausibly its two windows' sun. kind_naomi, currently unoccupied,
 +166 W and ~23 with no flow: the connecting-door THEORY now applies to it -
 asked the owner. Its 11-06 19:00 jump to 25.5 is unexplained unless the
 children were in there that evening.
+Owner: the connecting door is usually closed - door theory ruled out for
+kind_naomi. Its neighbours are all cooler, yet it holds ~23 with no flow for
+60 h. Remaining THEORIES: other circuits' feed lines crossing its floor on
+the way from the manifold (location not documented; the ground-floor plan
+labels "Heizkreis" along the HWR wall), slab continuity under the walls, or
+sensor placement. Asked the owner for the manifold location / laying plan.
