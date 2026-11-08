@@ -100,14 +100,35 @@ def build_rooms(cfg: dict, params: dict) -> list[Room]:
              else float(b["ua_sa"]))
     rooms_cfg = [r for r in cfg.get("rooms", []) if r.get("floor_area_m2")]
     total = sum(float(r["floor_area_m2"]) for r in rooms_cfg)
-    slab_rooms = sum(float(r["floor_area_m2"]) for r in rooms_cfg
+    # HEATED floor, which is not always the floor (owner, 2026-11-08: about
+    # 10 m2 of Wohnzimmer around the chimney and under the stair has no
+    # pipes). The slab node is the heated part: its capacity, its share of the
+    # identified slab-to-air conductance, its ground loss.
+    heated = {n: float(v) for n, v in (params.get("heated_area_m2") or {}).items()}
+
+    def heated_of(r: dict) -> float:
+        return heated.get(r["name"], float(r["floor_area_m2"]))
+
+    slab_rooms = sum(heated_of(r) for r in rooms_cfg
                      if r.get("emitter", "slab") == "slab")
     slab_area = float(b.get("slab_area_m2", slab_rooms) or slab_rooms)
     # Zones: air the model needs that layer 1 does not control. They take
     # their share of the envelope and the internal gains like any room.
-    zones = {n: float(z["floor_area_m2"]) for n, z in
-             (params.get("zones") or {}).items()}
+    zcfg = params.get("zones") or {}
+    zones = {n: float(z["floor_area_m2"]) for n, z in zcfg.items()}
     total += sum(zones.values())
+    # A zone may carry a heated floor and circuits of its own (2026-11-08,
+    # owner: the Diele is heated by circuit 2, which config.yaml lists under
+    # Wohnzimmer because layer 1 runs it on Wohnzimmer's temperature). A
+    # circuit claimed by a zone is the zone's here, whatever room config puts
+    # it under: this file models where the heat GOES, config says who
+    # COMMANDS it.
+    zone_heated = {n: float(z.get("heated_area_m2", 0.0) or 0.0)
+                   for n, z in zcfg.items()}
+    zone_circuits = {n: [tuple(c) for c in (z.get("circuits") or [])]
+                     for n, z in zcfg.items()}
+    claimed = {c[1] for cs in zone_circuits.values() for c in cs}
+    slab_rooms += sum(zone_heated.values())
     # ENVELOPE by its own take-off when there is one (params `envelope_share`,
     # renormalised over the rooms present), else by floor area. The children's
     # rooms showed why area is wrong: no roof, so their area share charged
@@ -129,21 +150,29 @@ def build_rooms(cfg: dict, params: dict) -> list[Room]:
             name=r["name"], area_m2=a, slab=slab,
             ua_ao=float(b["ua_ao"]) * env_share(r["name"], a)
             * (1.0 - side.get(r["name"], 0.0)),
-            ua_sa=ua_sa * a / slab_rooms if slab else 0.0,
-            ua_sg=float(b["ua_sg"]) * a / slab_area if slab else 0.0,
+            ua_sa=ua_sa * heated_of(r) / slab_rooms if slab else 0.0,
+            ua_sg=float(b["ua_sg"]) * heated_of(r) / slab_area if slab else 0.0,
             c_air=float(b["c_air_wh"]) * share * J_PER_WH,
-            c_slab=float(b["c_slab_wh"]) * a / slab_area * J_PER_WH if slab else 0.0,
+            c_slab=float(b["c_slab_wh"]) * heated_of(r) / slab_area * J_PER_WH
+            if slab else 0.0,
             q_int=q_base * share,
             temp_topic=r.get("room_temp_topic"),
             circuits=[(c["sensor"], c["valve"]) for c in r.get("circuits", [])
-                      if c.get("sensor") and c.get("valve")]))
+                      if c.get("sensor") and c.get("valve")
+                      and c["valve"] not in claimed]))
     for n, a in zones.items():
         share = a / total
+        ha = zone_heated[n]
         out.append(Room(
-            name=n, area_m2=a, slab=False, ua_ao=float(b["ua_ao"]) * env_share(n, a),
-            ua_sa=0.0, ua_sg=0.0,
-            c_air=float(b["c_air_wh"]) * share * J_PER_WH, c_slab=0.0,
-            q_int=q_base * share, temp_topic=None))
+            name=n, area_m2=a, slab=ha > 0.0,
+            ua_ao=float(b["ua_ao"]) * env_share(n, a)
+            * (1.0 - side.get(n, 0.0)),
+            ua_sa=ua_sa * ha / slab_rooms if ha else 0.0,
+            ua_sg=float(b["ua_sg"]) * ha / slab_area if ha else 0.0,
+            c_air=float(b["c_air_wh"]) * share * J_PER_WH,
+            c_slab=float(b["c_slab_wh"]) * ha / slab_area * J_PER_WH if ha else 0.0,
+            q_int=q_base * share, temp_topic=None,
+            circuits=zone_circuits[n]))
     return out
 
 

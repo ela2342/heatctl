@@ -6038,3 +6038,30 @@ the model's unheated, unsensed hall node (the manifold cabinet and distribution
 pipes are there), which would cut the 200 W/K open-path loss; the void exchange
 to Arbeitszimmer (110 W/K prior) smaller than assumed, especially while
 Arbeitszimmer ran 2 K colder with the fan off. Both are identifiable.
+
+## 2026-11-08 — Diele heated by hk02; Wohnzimmer's unheated patch; the chimney; sensor offset replaces envelope-only
+
+Owner: (1) ventilation - asked what the model assumes: n = 0.4/h house-wide
+(D-028 / moisture work), ~68 W/K of the 216, by room volume; nothing local.
+(2) An unconnected, insulated chimney with a fresh-air annulus in Wohnzimmer
+draws (a passive counterflow ventilator). It cannot supply heat, but cold
+supply air pooling along the south side fits the measured gradient - so the
+Shelly is unrepresentative of the whole room, not just of the envelope air.
+(3) The Diele is heated by circuit 2 (config lists hk02 under Wohnzimmer,
+which commands it); the manifold is in the HWR. (4) ~10 m2 of Wohnzimmer
+around the chimney and under the stair has no pipes (heated 32.2 of 42.1).
+
+Model (replay only): zones.diele gets a heated floor (9.33 m2) and hk02;
+`heated_area_m2.wohnzimmer` 32.2; `sensor_offset_k.wohnzimmer` 1.2 K (the
+reading taken as 1.2 K above the room mean, half the measured wall-interior
+difference) REPLACES `envelope_side_k`. config.yaml annotated at hk02, wiring
+unchanged. Replay 10-27..11-01, returns coast, per-room gains:
+
+| variant | wohnzimmer | arbeitszimmer | total | 24 h skill |
+|---|---|---|---|---|
+| occupancy + envelope-only (11-08 first) | +867 | +103 | 1515 | −2.40 |
+| + heated hall + heated area | +859 | +103 | 1490 | −2.35 |
+| same, sensor offset instead | +467 | +233 | 1296 | −2.01 |
+
+Void conductance 110 -> 30 W/K moves Arbeitszimmer only 233 -> 211: not the
+cause, not identifiable from this week; stays at its prior.

@@ -78,6 +78,8 @@ class RoomReplay:
         self.returns = returns
         b, f = params["building"], params["filter"]
         self.params = params
+        self.sensor_offset = {n: float(x) for n, x in
+                              (params.get("sensor_offset_k") or {}).items()}
         self.rooms = build_rooms(cfg, params)
         self.model = HouseModel(self.rooms, float(b["f_sol"]),
                                 build_couplings(params), gains)
@@ -150,6 +152,13 @@ class RoomReplay:
                 self._open_since.setdefault(valve, t)
         room = self.room_of_topic.get(topic)
         if room is not None:
+            # A sensor that is not where the room's mean is: Wohnzimmer's Shelly
+            # sits in the warm part, with cold air pooling along the south side
+            # (owner: 19.1 at the south wall vs 21.8 opposite; an unconnected
+            # chimney with a fresh-air annulus draws). The model's air node is
+            # the room mean, so the reading is corrected before it is used -
+            # for the filter and the score alike.
+            v -= self.sensor_offset.get(room, 0.0)
             self.latest[room] = Reading(v, t)
             self.pending[room] = v
         else:

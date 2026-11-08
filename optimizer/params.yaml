@@ -333,7 +333,19 @@ zones:
       unit: m2
       sigma: 0.5
       kind: specified
-      note: Diele 9.33 + HWR 8.98 + Abstell 1.19, plan areas. Air only.
+      note: Diele 9.33 + HWR 8.98 + Abstell 1.19, plan areas.
+    # The Diele floor is HEATED, by circuit 2 (owner, 2026-11-08), which
+    # config.yaml lists under Wohnzimmer because layer 1 commands it on
+    # Wohnzimmer's air - a layer-1 wiring question, flagged, not changed. The
+    # HWR holds the manifold. Here the circuit's heat goes to the hall.
+    heated_area_m2:
+      value: 9.33
+      unit: m2
+      sigma: 1.0
+      kind: specified
+      note: The Diele between the children's rooms and the Gaestebad.
+    circuits:
+      - [rl_hk02, valve_hk02]
 
 envelope_share:
   # Each room's share of the house envelope conductance (ua_ao), from a
@@ -354,14 +366,25 @@ envelope_share:
   wohnzimmer: {value: 0.3974, unit: '-', sigma: 0.0596, kind: measured}
   arbeitszimmer: {value: 0.1960, unit: '-', sigma: 0.0294, kind: measured}
 
-envelope_side_k:
-  # Fraction of the indoor-outdoor difference by which the air along a room's
-  # envelope is colder than its sensor; the room's effective ua_ao is (1 - k)
-  # (optimizer/house.py build_rooms). Wohnzimmer from two owner measurements:
-  # outer wall 20.3 vs interior 22.7/22.9 (11-05), south wall 19.1 vs 21.8
-  # (11-08), both at ~20 K indoor-outdoor -> 2.4-2.7 K, ~13 %. Rooms not listed
-  # are 0. A prior from two spot readings, for identification to refine.
-  wohnzimmer: {value: 0.13, unit: '-', sigma: 0.05, kind: measured}
+heated_area_m2:
+  # Floor area with pipes, where it is not the room's floor area (owner,
+  # 2026-11-08): Wohnzimmer is unheated in a rectangle around the chimney -
+  # from the wall to kind_naomi east to ~1 m past the chimney, from the
+  # stair's northern extent to the wood stove's south edge, ~4.0 x 2.5 m read
+  # off the plan. The slab node, its slab-to-air share and its ground loss
+  # use this; the unheated floor is not modelled.
+  wohnzimmer: {value: 32.2, unit: m2, sigma: 2.0, kind: measured}
+
+sensor_offset_k:
+  # How far a room's sensor reads ABOVE the room's mean air, K. Wohnzimmer:
+  # the Shelly sits in the warm part; the owner measured 20.3 / 19.1 at the
+  # outer and south walls against 22.7-22.9 / 21.8 inside, and an unconnected
+  # chimney with a fresh-air annulus draws cold air in. Half the measured
+  # wall-to-interior difference as the prior. Replayed 10-27..11-01 this beat
+  # an envelope-only correction (`envelope_side_k`, the 11-08 first form) at
+  # every horizon past 6 h and took Wohnzimmer's unexplained heat from ~860
+  # to ~470 W.
+  wohnzimmer: {value: 1.2, unit: K, sigma: 0.6, kind: prior}
 
 occupancy:
   # People per room by time of day, from the owner's account (2026-11-08):

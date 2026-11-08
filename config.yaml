@@ -325,6 +325,11 @@ rooms:
     setpoint_c: 22.0
     floor_area_m2: 42.11   # Wohnen/Essen
     circuits:
+      # hk02 HEATS THE DIELE (owner, 2026-11-08), the hall between the
+      # children's rooms and the Gaestebad - not this room. It is listed here
+      # because that is how it is commanded today: on Wohnzimmer's air.
+      # Recorded, not changed; layer 2 models it as the hall's
+      # (optimizer/params.yaml zones.diele).
       - {sensor: rl_hk02, valve: valve_hk02}
       # Assigned 2026-07-27: with 16 analog outputs every circuit has one, and
       # the mapping is 1:1 with the circuit number.

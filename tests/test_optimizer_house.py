@@ -368,3 +368,39 @@ def test_the_envelope_side_factor_cuts_only_that_rooms_loss():
     assert r1["a"].ua_ao == pytest.approx(r0["a"].ua_ao * 0.87)
     assert r1["b"].ua_ao == pytest.approx(r0["b"].ua_ao)
     assert sum(r.q_int for r in r1.values()) == pytest.approx(60.0)
+
+
+# ---------- where the heat goes vs who commands it (2026-11-08) ----------
+
+def test_a_zone_claims_its_circuit_and_a_room_its_heated_floor():
+    """Circuit 2 heats the Diele (owner), though config lists it under
+    Wohnzimmer because layer 1 commands it on Wohnzimmer's air. The model
+    follows the heat: the zone gets the circuit and a slab, the room loses
+    it. And a room with an unheated patch (Wohnzimmer around the chimney)
+    gets a slab sized to its heated floor, not its floor area."""
+    p = _params()
+    p["zones"] = {"hall": {"floor_area_m2": Param(5.0),
+                           "heated_area_m2": Param(5.0),
+                           "circuits": [["rl_b", "valve_b"]]}}
+    p["heated_area_m2"] = {"a": Param(10.0)}
+    rooms = {r.name: r for r in build_rooms(CFG, p)}
+    assert rooms["b"].circuits == []
+    assert rooms["hall"].circuits == [("rl_b", "valve_b")] and rooms["hall"].slab
+    # slab-to-air shared over heated floor: a 10, b 10, hall 5
+    assert rooms["a"].ua_sa == pytest.approx(300.0 * 10.0 / 25.0)
+    assert rooms["hall"].ua_sa == pytest.approx(300.0 * 5.0 / 25.0)
+    assert rooms["a"].c_slab == pytest.approx(4000.0 * 10.0 / 30.0 * 3600.0)
+
+
+def test_a_sensor_offset_is_taken_off_the_reading(tmp_path):
+    """Wohnzimmer's Shelly reads above the room's mean (cold air along the
+    south side). The model's air node is the mean, so the reading is
+    corrected before the filter or the score sees it."""
+    from optimizer.replay_rooms import RoomReplay
+    p = _params()
+    p["sensor_offset_k"] = {"a": Param(1.2)}
+    rp_ = RoomReplay(CFG, p)
+    rp_.feed(T0 + 1.0, "room/a", "22.0")
+    rp_.feed(T0 + 2.0, "room/b", "22.0")
+    assert rp_.latest["a"].value == pytest.approx(20.8)
+    assert rp_.latest["b"].value == pytest.approx(22.0)
