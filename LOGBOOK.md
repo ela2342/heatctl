@@ -5982,3 +5982,31 @@ is within the model's resolution: the 21 % command may pass a trickle
 assumption, likely lower for a shut room); south-window sun; sensor placement.
 ~166 W in 15.6 m2 = ~10 W/m2. Not chased further without a new measurement
 (floor surface temperature, a second room thermometer).
+
+## 2026-11-08 — Per-room heat balance; the north walls; occupancy closes most of it
+
+Owner: the north double wall borders the unheated annex corridor (13 degC
+today) only behind the HWR and a small part of Badezimmer; Schlafzimmer faces
+outside (the summer kitchen beyond a ~20 cm gap). That is what the 11-05
+envelope take-off already assumed (hall's north wall at Fx 0.5, Bad and
+Schlafzimmer outside); a variant with ALL ground-floor north walls to the
+corridor moved Badezimmer by only 27 W. `envelope_share` unchanged.
+
+Balance, replay 10-27..11-01, returns in coast, per-room gains, envelope
+shares (unexplained heat; W/m2):
+
+| room | W | W/m2 | reading |
+|---|---|---|---|
+| gaestebad | +13 | +4 | balanced |
+| badezimmer | +35 | +4 | balanced |
+| arbeitszimmer | +72 | +2 | balanced (afternoon sun overstated) |
+| schlafzimmer | +167 | +14 | two adults asleep (~120-150 W) |
+| kind_natalie | +281 | +17 | two children + chargers, two windows |
+| kind_naomi | +166 | +11 | unexplained, within resolution |
+| wohnzimmer | +1023 | +24 | the measured 2.4 K room gradient + daytime use |
+
+Four occupants (~400-600 W) sit where the model is short at night; the
+Wohnzimmer gradient takes most of the rest. The flat 350 W of internal gains by
+floor area is the wrong structure. Next for the filter (replay only): a
+per-room occupancy schedule, and a per-room envelope-side offset (Wohnzimmer
+first).
