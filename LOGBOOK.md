@@ -5955,3 +5955,15 @@ people (bedrooms at night, living areas by day), not a flat 350 W by area; and
 doors switch couplings (DESIGN 6.1 already says so for the void door).
 Control: with both valves shut the plant cannot take those rooms below what
 occupants and neighbours supply.
+
+## 2026-11-08 — CORRECTION to the entry above: the occupied room is kind_natalie
+
+Owner: Natalie's is the room with the two windows, and both children sleep and
+live there at present. The config already says so (kind_natalie = plan "Kind
+1", "the room with TWO"); I had inferred "eastern" from the plan's orientation
+instead of taking the room from the config. Re-read: kind_natalie's +281 W
+unexplained = two children (~120-160 W) + chargers (~10-15 W, two phones and
+a tablet) + plausibly its two windows' sun. kind_naomi, currently unoccupied,
++166 W and ~23 with no flow: the connecting-door THEORY now applies to it -
+asked the owner. Its 11-06 19:00 jump to 25.5 is unexplained unless the
+children were in there that evening.
