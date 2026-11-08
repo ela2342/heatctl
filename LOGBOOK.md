@@ -6251,3 +6251,13 @@ setpoint as "rooms" (Gaestebad 23.5): 36.2 - 0.17 x 12.7 = 34.0, against
 36.2 - 0.17 x ~14.2 = ~33.8 with the house setpoint. Fixed: target from the
 neediest room, reference from the house; test extended, mutation caught.
 0.2 K tonight; goes out with the next deploy.
+
+## 2026-11-08 ~22:40 — Owner unplugs the Arbeitszimmer fan: the coil becomes the floor's bypass
+
+Owner: interrupts the Arbeitszimmer PI observation, but frees flow through
+hk11. With the fan off the room cools, its PI opens hk11 to 50 %, and the
+coil passes water with little heat - so the flow floor's remainder goes there
+instead of kind_natalie's floor (hk03 was at 34 %). The neediest-room water
+law ignores the room (no slab). Fan state is an unobserved switched input:
+fan ON 11-07 ~12:00 to 11-08 ~22:40. See the baseline line below for the
+moment of the switch.
