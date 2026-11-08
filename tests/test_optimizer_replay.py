@@ -16,6 +16,7 @@ import pytest
 
 from optimizer.model import (N_INPUTS, U_GROUND, U_HEAT, U_INTERNAL,
                              U_OUTDOOR, U_SOLAR, BuildingParams, discretise)
+from optimizer.house import circuit_heat_w
 from optimizer.params import Param
 from optimizer.replay import apply_overrides, run, score
 
@@ -36,17 +37,19 @@ def _params(ua_ao: float = 267.2) -> dict:
 
 
 CFG = {"mqtt": {"host": "127.0.0.1", "base_topic": "heatctl"},
-       "rooms": [{"name": "a", "room_temp_topic": ROOM}],
+       "rooms": [{"name": "a", "room_temp_topic": ROOM,
+                  "circuits": [{"sensor": "rl_a", "valve": "valve_a"}]}],
        "safety": {"stale_data_timeout_s": 300}}
 
 
 def _house(hours: int, gap: tuple[int, int] | None = None) -> list[str]:
     """Journal lines for a house simulated by the model it will be scored on.
 
-    The day swings outdoor 4-14 degC with a midday sun. The compressor heats
-    from 00:00-06:00 and COOLS from 12:00-16:00 at the same electrical power,
-    so a harness or estimator that loses the sign of the heat input is
-    visibly wrong, not subtly wrong.
+    The day swings outdoor 4-14 degC with a midday sun. The floor circuit
+    HEATS from 00:00-06:00 and COOLS from 12:00-16:00 at the same ~3 kW, as
+    the journal shows it: supply, return and valve read-back. A harness or
+    estimator that loses the sign of the heat input is visibly wrong, not
+    subtly wrong.
     """
     b = _params()["building"]
     bp = BuildingParams(ua_ao=b["ua_ao"], ua_sa=b["ua_sa"], ua_sg=b["ua_sg"],
@@ -62,22 +65,22 @@ def _house(hours: int, gap: tuple[int, int] | None = None) -> list[str]:
         solar = max(0.0, 3000.0 * math.sin(math.pi * (hod - 7.0) / 10.0)) \
             if 7.0 <= hod <= 17.0 else 0.0
         if hod < 6.0:
-            mode, power = "heating", 900.0
+            vl, rl, valve = 35.0, 35.0 - 21.6, 50.0      # ~3 kW in
         elif 12.0 <= hod < 16.0:
-            mode, power = "cooling", 900.0
+            vl, rl, valve = 12.0, 12.0 + 21.6, 50.0      # ~3 kW out
         else:
-            mode, power = ("heating" if hod < 12.0 else "cooling"), 0.0
-        sign = 1.0 if mode == "heating" else -1.0
+            vl, rl, valve = 24.0, 24.0, 20.0              # no flow
         skip = gap is not None and gap[0] * 60 <= m < gap[1] * 60
         lines.append(f"{t + 1}.5 {ROOM} {x[0]:.3f}")
         if not skip:
             lines.append(f"{t + 2}.0 heatctl/opt/state " + json.dumps(
                 {"outdoor": outdoor, "q_solar_w": solar}))
-        lines.append(f"{t + 3}.0 heatctl/hp/power_estimate {power}")
-        lines.append(f"{t + 3}.5 heatctl/hp/mode_name {mode}")
+        lines.append(f"{t + 3}.0 heatctl/temp/vl_total {vl}")
+        lines.append(f"{t + 3}.1 heatctl/temp/rl_a {rl:.2f}")
+        lines.append(f"{t + 3}.2 heatctl/valve_actual/valve_a {valve}")
         u = [0.0] * N_INPUTS
         u[U_OUTDOOR], u[U_SOLAR], u[U_INTERNAL] = outdoor, solar, 350.0
-        u[U_HEAT] = sign * power * COP if power >= 250.0 else 0.0
+        u[U_HEAT] = circuit_heat_w(valve, vl, round(rl, 2))
         u[U_GROUND] = 10.0
         x = [sum(F[i][j] * x[j] for j in range(2))
              + sum(G[i][j] * u[j] for j in range(N_INPUTS)) for i in range(2)]
@@ -109,8 +112,8 @@ def test_the_true_model_predicts_its_own_house(truth):
     """The harness's baseline property. If this fails, the harness - not the
     model - is wrong: inputs in the wrong slot, journal time not reaching
     the staleness checks, or the heat input's sign lost on the way in.
-    Mutation-verified: making `heat_input_w` mode-blind again takes the
-    6 h error from ~0 to well over a kelvin."""
+    Mutation-verified: taking abs(VL - RL) in the heat input takes the 6 h
+    error from ~0 to well over a kelvin."""
     _, rp = truth
     assert len(rp.rows) > (HOURS - 1) * 60
     s = score(rp.rows, rp.est.bp, horizons=(3, 6), warmup_h=6.0)
@@ -190,3 +193,29 @@ def test_time_skipped_without_inputs_is_still_predicted_across(monkeypatch):
     outdoor[0] = 8.0
     assert est.step(60.0) is not None
     assert seen == [60.0, 660.0]
+
+
+def test_the_replay_feeds_the_coil_to_the_air_input(tmp_path):
+    """The replay must give the model what the estimator gives it: a fan
+    coil's heat as air-side input, the floors' as slab input."""
+    cfg = {"mqtt": {"host": "127.0.0.1", "base_topic": "heatctl"},
+           "rooms": [{"name": "a", "room_temp_topic": ROOM,
+                      "circuits": [{"sensor": "rl_a", "valve": "valve_a"}]},
+                     {"name": "c", "emitter": "fan_coil",
+                      "circuits": [{"sensor": "rl_c", "valve": "valve_c"}]}],
+           "safety": {"stale_data_timeout_s": 300}}
+    lines = []
+    for k in range(5):
+        t = T0 + k * 60
+        lines += [f"{t + 1}.0 {ROOM} 21.0",
+                  f"{t + 2}.0 heatctl/opt/state " + json.dumps({"outdoor": 5.0, "q_solar_w": 0}),
+                  f"{t + 3}.0 heatctl/temp/vl_total 30.0",
+                  f"{t + 3}.1 heatctl/temp/rl_a 30.0",
+                  f"{t + 3}.2 heatctl/valve_actual/valve_a 20",
+                  f"{t + 3}.3 heatctl/temp/rl_c 26.0",
+                  f"{t + 3}.4 heatctl/valve_actual/valve_c 50"]
+    rp = run(cfg, _params(), [_journal(tmp_path, lines)])
+    u = rp.rows[-1].u
+    coil = circuit_heat_w(50.0, 30.0, 26.0)
+    assert u[U_INTERNAL] == pytest.approx(350.0 + coil)
+    assert u[U_HEAT] == 0.0

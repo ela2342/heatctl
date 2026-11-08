@@ -6139,3 +6139,29 @@ coil included (cooling, fan on, 07-31); the per-room model spreads it over the
 slab rooms only, so their slab->air is overstated by the coil's share - the
 July note put the slab alone at 256-355 W/K on an unmeasured flow split. That
 one needs data (per-room identification with the returns), not a prior.
+
+## 2026-11-08 — The live 2-state estimator takes heat from the water; COP leaves the model
+
+Owner asked whether COP was considered against spread and outdoor
+temperature. The datasheet has a map (W35: 1.52 at −25, 3.40 at 0, 4.26 at +7;
+−0.7 at W45) and the 2026-08-01 measurement was binned by outdoor temperature
+(×1.56 current correction: ~1.9 below 0, ~2.0 at 0-4, ~2.8 at 4-8, ~3.4 at
+8-12 degC) - so the flat 2.66 set this morning overstated heat input by about
+a third at today's 1-3 degC. And that 2.66 rested on the pump-curve flow (an
+upper bound) and a single current-correction factor. Rather than a COP map
+stacked on those, the 2-state estimator now takes heat like the per-room
+model: per circuit, m_dot c_p (VL - RL); floor circuits to the slab, the
+Arbeitszimmer coil to the air. The mode register and the COP leave the heat
+path; the sign is the water's. v1 replay harness updated to match.
+
+Replay 10-27..11-01, 2-state, all of today's corrections:
+
+| heat input | 3 h | 6 h | 12 h | 24 h | 24 h bias |
+|---|---|---|---|---|---|
+| power x COP 2.66 | −0.75 | −1.42 | −2.67 | −7.06 | −2.76 K |
+| water | −0.35 | −0.72 | −1.36 | −3.65 | −1.55 K |
+
+Tests: the power x COP tests replaced by water-based ones (sign both modes,
+coil to air, stale/closed gives nothing, coil reaches the filter step and the
+replay); three mutations survived the first version and got tests. 789 pass.
+Live at the next deploy, with ua_sg, ua_sa_model and ua_ao_air.

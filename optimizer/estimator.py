@@ -34,6 +34,7 @@ import aiomqtt
 
 from . import derived
 from .kalman import KalmanFilter, eye
+from .house import circuit_heat_w
 from .model import (N_INPUTS, U_GROUND, U_HEAT, U_INTERNAL, U_OUTDOOR,
                     U_SOLAR, BuildingParams, discretise, heat_demand_w,
                     eigen_time_constants_h, net_load_w)
@@ -183,6 +184,12 @@ class Estimator:
         # The unit's mode name and when it arrived. Kept apart from
         # `readings` because it is a string, and `Reading` is a number.
         self._mode: tuple[str, float] | None = None
+        # Every circuit with a sensor and a valve, and whether its room is a
+        # fan coil - the heat input is computed per circuit from the water.
+        self.circuits: list[tuple[str, str, bool]] = [
+            (c["sensor"], c["valve"], r.get("emitter", "slab") != "slab")
+            for r in cfg.get("rooms", []) for c in r.get("circuits", [])
+            if c.get("sensor") and c.get("valve")]
         # Every freshness question asks this clock. Live it is the monotonic
         # clock; the replay harness (optimizer/replay.py) substitutes journal
         # time, so a replayed day sees the same staleness the live one did.
@@ -212,35 +219,50 @@ class Estimator:
         sps = [self.room_setpoints[t] for t in topics if t in self.room_setpoints]
         return sum(sps) / len(sps) if sps else None
 
-    def heat_input_w(self) -> float:
-        """Thermal watts into the slab, SIGNED: cooling extracts. See
-        params.yaml `heat_input`.
+    def _circuit_heat(self, coil: bool) -> float:
+        now = self.clock()
 
-        The sign comes from the unit's own mode register (`hp/mode_name`, read
-        back from 0x0004), not from what heatctl asked for - the refrigerant
-        direction is the unit's fact. This was mode-blind until 2026-10-18:
-        on 10-16 the plant cooled at 64-84 Hz for six hours while the filter
-        integrated +1.1 to +3.0 kW of HEAT into the slab (LOGBOOK).
+        def val(topic: str) -> float | None:
+            r = self.readings.get(topic)
+            return r.value if r is not None and r.fresh(self.max_age_s, now) else None
 
-        Only plain `heating` and `cooling` give a sign. In a DHW mode the
-        compressor may be serving the tank, and how much goes to the floor
-        is not observable, so those - and a missing or stale mode - give
-        no input rather than a guessed one: a wrong heat input biases the
-        slab in a way the innovation cannot separate from a real shortfall.
-        The same flat factor serves both directions; it is a prior with a
-        sigma of 1.0 either way, and the heat meter retires it.
-        """
-        p = self.readings.get(f"{self.base}/hp/power_estimate")
-        if p is None or not p.fresh(self.max_age_s, self.clock()) or p.value < self.standby_w:
+        vl = val(f"{self.base}/temp/vl_total")
+        if vl is None:
             return 0.0
-        sign = {"heating": 1.0, "cooling": -1.0}.get(self._fresh_mode(), 0.0)
-        return sign * p.value * self.cop
+        q = 0.0
+        for sensor, valve, is_coil in self.circuits:
+            if is_coil != coil:
+                continue
+            op = val(f"{self.base}/valve_actual/{valve}")
+            rl = val(f"{self.base}/temp/{sensor}")
+            if op is not None and rl is not None:
+                q += circuit_heat_w(op, vl, rl)
+        return q
 
-    def _fresh_mode(self) -> str | None:
-        if self._mode is None:
-            return None
-        name, ts = self._mode
-        return name if self.clock() - ts <= self.max_age_s else None
+    def heat_input_w(self) -> float:
+        """Thermal watts into the FLOORS, SIGNED: cooling extracts.
+
+        From the water, per circuit: `m_dot c_p (VL - RL)`, flow from the
+        valve read-back through D-041's map - the same signal the per-room
+        model uses (optimizer/house.py). The sign is the water's, so it is
+        right in both modes without asking anything.
+
+        Until 2026-11-08 this was compressor power x a flat COP, signed by
+        the unit's mode register. That stacked three uncertainties - the
+        power register (it over-reads mains current ~1.56x), a COP that is
+        nearer 2.0 at 0-4 degC and 3.4 at 8-12 degC (LOGBOOK 2026-08-01 bins)
+        against a flat 3.35, later 2.66 - and DHW modes it could not split.
+        The flow map's own uncertainty remains; it is one, not three.
+
+        A missing supply temperature, or a circuit without a fresh valve and
+        return reading, contributes nothing rather than a guess.
+        """
+        return self._circuit_heat(coil=False)
+
+    def coil_heat_w(self) -> float:
+        """The fan coil's watts, into the AIR: Arbeitszimmer has no slab
+        (D-046), and the 2-state model's slab node is the floors."""
+        return self._circuit_heat(coil=True)
 
     def solar_w(self, point=None) -> float:
         """Solar power through the glazing, per facade, at the forecast hour."""
@@ -412,7 +434,7 @@ class Estimator:
         u = [0.0] * N_INPUTS
         u[U_OUTDOOR] = outdoor
         u[U_SOLAR] = self.solar_w()
-        u[U_INTERNAL] = self.q_int
+        u[U_INTERNAL] = self.q_int + self.coil_heat_w()
         u[U_HEAT] = self.heat_input_w()
         u[U_GROUND] = self.t_ground
 
@@ -871,8 +893,11 @@ class Estimator:
 
     async def run(self) -> None:
         interval = float(self.cfg.get("optimizer", {}).get("interval_s", 60))
-        topics = list(self.room_topics) + [f"{self.base}/hp/power_estimate",
-                                           f"{self.base}/hp/mode_name"]
+        topics = list(self.room_topics) + [f"{self.base}/hp/mode_name",
+                                           f"{self.base}/temp/vl_total"]
+        for sensor, valve, _ in self.circuits:
+            topics += [f"{self.base}/temp/{sensor}",
+                       f"{self.base}/valve_actual/{valve}"]
         topics += list(self._sp_topics)
         if self._dew_topic:
             topics.append(self._dew_topic)

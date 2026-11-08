@@ -561,6 +561,12 @@ heat_input:
     sigma: 0.5
     kind: measured
     note: >
+      NO LONGER USED BY THE MODELS (2026-11-08, later the same day): both the
+      2-state estimator and the per-room model take heat from the water, per
+      circuit, m_dot c_p (VL - RL). Kept for reference. The measured COP is
+      strongly outdoor-dependent (LOGBOOK 2026-08-01 bins: ~2.0 at 0-4 degC,
+      ~3.4 at 8-12 degC after the current correction), which no flat value
+      can stand in for.
       CORRECTED 2026-11-08 from the 3.35 prior to the MEASURED 2.66: the
       2026-08-01 measurement gave 1.69 against a power register that over-read
       mains current ~1.56x; corrected, 2.66 (DECISIONS, "the measured COP

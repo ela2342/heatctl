@@ -14,8 +14,8 @@ tool that anyone can rerun after every parameter change, and this is that
 tool.
 
 WHAT IS REPLAYED. The estimator's own code runs: `Estimator.step()`, its
-filter, its staleness rules, and its signed heat input from the recorded
-`hp/power_estimate` and `hp/mode_name`. The room topics come from CONFIG,
+filter, its staleness rules, and its heat input from the recorded circuit
+returns, supply and valve read-backs (m_dot c_p (VL - RL), since 2026-11-08). The room topics come from CONFIG,
 which should be the LIVE config, because that is what the plant read. Time
 is journal time, through `Estimator.clock`, so a replayed day sees the same
 staleness the live one did.
@@ -118,8 +118,11 @@ class Replay:
 
     def topics(self) -> set[str]:
         b = self.est.base
-        return set(self.est.room_topics) | {
-            f"{b}/hp/power_estimate", f"{b}/hp/mode_name", f"{b}/opt/state"}
+        t = set(self.est.room_topics) | {
+            f"{b}/hp/mode_name", f"{b}/opt/state", f"{b}/temp/vl_total"}
+        for sensor, valve, _ in self.est.circuits:
+            t |= {f"{b}/temp/{sensor}", f"{b}/valve_actual/{valve}"}
+        return t
 
     def _logged_outdoor(self) -> float | None:
         r = self._outdoor
@@ -156,7 +159,7 @@ class Replay:
         u = [0.0] * N_INPUTS
         u[U_OUTDOOR] = self.est.outdoor_c() or 0.0
         u[U_SOLAR] = self.est.solar_w()
-        u[U_INTERNAL] = float(self.est.q_int)
+        u[U_INTERNAL] = float(self.est.q_int) + self.est.coil_heat_w()
         u[U_HEAT] = self.est.heat_input_w()
         u[U_GROUND] = float(self.est.t_ground)
         self.rows.append(Row(t, (f.x[0], f.x[1]), self.est.house_air(),

@@ -153,50 +153,80 @@ def test_process_noise_scales_with_the_step_length():
     assert q3600[1][1] == pytest.approx(0.4 ** 2, rel=1e-9)
 
 
-def test_standby_power_is_not_integrated_into_the_slab_as_heat():
-    """A pump idling at 200 W is not delivering 670 W of heat to the floor.
-    Without this the slab estimate climbs whenever the plant is doing
-    nothing, which is the direction that hides a real heating shortfall."""
+_CIRCUITS = {"rooms": [
+    {"name": "floor", "circuits": [{"sensor": "rl_a", "valve": "valve_a"}]},
+    {"name": "office", "emitter": "fan_coil",
+     "circuits": [{"sensor": "rl_c", "valve": "valve_c"}]}]}
+
+
+def _water(est, vl, rl_a, valve_a=50.0, rl_c=None, valve_c=20.0, ts=None):
     from optimizer.estimator import Reading
-    est = _estimator()
-    est._on_message("heatctl/hp/mode_name", "heating")
-    est.readings["heatctl/hp/power_estimate"] = Reading(200.0)
-    assert est.heat_input_w() == 0.0
-    est.readings["heatctl/hp/power_estimate"] = Reading(1000.0)
-    assert est.heat_input_w() == pytest.approx(3350.0)
+    kw = {} if ts is None else {"ts": ts}
+    est.readings["heatctl/temp/vl_total"] = Reading(vl, **kw)
+    est.readings["heatctl/temp/rl_a"] = Reading(rl_a, **kw)
+    est.readings["heatctl/valve_actual/valve_a"] = Reading(valve_a, **kw)
+    est.readings["heatctl/temp/rl_c"] = Reading(vl if rl_c is None else rl_c, **kw)
+    est.readings["heatctl/valve_actual/valve_c"] = Reading(valve_c, **kw)
 
 
 def test_cooling_takes_heat_out_of_the_slab():
     """2026-10-16, 11:00-15:00: the plant cooled at 64-84 Hz while the
-    filter integrated +1.1 to +3.0 kW of HEAT into the slab, because
-    `heat_input_w` had no idea which way the refrigerant ran. The slab
-    estimate then read warmer the harder the plant cooled - the direction
-    that makes a planner ask for still more cooling. The sign must be the
-    unit's own mode, read back."""
+    filter integrated +1.1 to +3.0 kW of HEAT into the slab, because the
+    heat input had no idea which way the refrigerant ran. Since 2026-11-08
+    the input is the water's own `m_dot c_p (VL - RL)`, so the sign cannot
+    be lost: supply above return heats, supply below return cools."""
+    est = _estimator(_CIRCUITS)
+    _water(est, vl=30.0, rl_a=27.0)
+    assert est.heat_input_w() == pytest.approx(2.0 / 60.0 * 4186.0 * 3.0)
+    _water(est, vl=16.0, rl_a=19.0)
+    assert est.heat_input_w() == pytest.approx(-2.0 / 60.0 * 4186.0 * 3.0)
+
+
+def test_a_fan_coil_heats_the_air_not_the_slab():
+    """The 2-state model's slab is the floors. Arbeitszimmer's coil (D-046)
+    puts its heat into the air, so it is not in `heat_input_w`."""
+    est = _estimator(_CIRCUITS)
+    _water(est, vl=30.0, rl_a=30.0, rl_c=26.0, valve_c=50.0)
+    assert est.heat_input_w() == 0.0
+    assert est.coil_heat_w() == pytest.approx(2.0 / 60.0 * 4186.0 * 4.0)
+
+
+def test_no_water_reading_is_no_heat_not_a_guess():
+    """A stale supply or return, or a valve below the 20 % where water
+    moves (D-041), contributes nothing. Guessing a heat input biases the
+    slab in a way the innovation cannot separate from a real shortfall."""
+    est = _estimator(_CIRCUITS)
+    _water(est, vl=30.0, rl_a=27.0, valve_a=19.0)
+    assert est.heat_input_w() == 0.0
+    _water(est, vl=30.0, rl_a=27.0, ts=-10_000.0)
+    assert est.heat_input_w() == 0.0
+    assert _estimator().heat_input_w() == 0.0          # no circuits configured
     from optimizer.estimator import Reading
-    est = _estimator()
-    est.readings["heatctl/hp/power_estimate"] = Reading(1000.0)
-    est._on_message("heatctl/hp/mode_name", "cooling")
-    assert est.heat_input_w() == pytest.approx(-3350.0)
-    est._on_message("heatctl/hp/mode_name", "heating")
-    assert est.heat_input_w() == pytest.approx(3350.0)
+    _water(est, vl=30.0, rl_a=27.0)                     # supply fresh,
+    est.readings["heatctl/temp/rl_a"] = Reading(27.0, ts=-10_000.0)
+    assert est.heat_input_w() == 0.0                    # ...return stale
 
 
-def test_an_unknown_direction_is_no_input_not_a_guess():
-    """With the mode missing, stale, or a DHW mode whose split between tank
-    and floor is unobservable, the compressor's watts are not attributed to
-    the slab in either direction. Guessing heating is exactly the old
-    defect; guessing cooling is the same defect mirrored."""
+def test_the_coil_heat_reaches_the_models_air_input():
+    """The coil's watts must actually arrive as air-side input in a filter
+    step - computing them and dropping them on the way is the quiet failure."""
     import time as _time
     from optimizer.estimator import Reading
-    est = _estimator()
-    est.readings["heatctl/hp/power_estimate"] = Reading(1000.0)
-    assert est.heat_input_w() == 0.0                    # never heard
-    for name in ("dhw", "dhw+heating", "dhw+cooling", "7"):
-        est._on_message("heatctl/hp/mode_name", name)
-        assert est.heat_input_w() == 0.0, name
-    est._mode = ("heating", _time.monotonic() - est.max_age_s - 1.0)
-    assert est.heat_input_w() == 0.0                    # stale
+    from optimizer.model import U_HEAT, U_INTERNAL
+    cfg = dict(_CIRCUITS)
+    cfg["rooms"] = [dict(r) for r in _CIRCUITS["rooms"]]
+    cfg["rooms"][0]["room_temp_topic"] = "r/floor"
+    est = _estimator(cfg)
+    est.outdoor_c = lambda: 5.0
+    est.readings["r/floor"] = Reading(21.0)
+    _water(est, vl=30.0, rl_a=27.0, rl_c=26.0, valve_c=50.0)
+    assert est.step(60.0) is not None                   # initialises
+    seen = {}
+    real = est.filter.predict
+    est.filter.predict = lambda F, G, u: (seen.update(u=list(u)), real(F, G, u))
+    est.step(60.0)
+    assert seen["u"][U_INTERNAL] == pytest.approx(est.q_int + est.coil_heat_w())
+    assert seen["u"][U_HEAT] == pytest.approx(est.heat_input_w())
 
 
 _SP_ROOMS = {"control": {"default_setpoint_c": 22.0},
