@@ -5939,3 +5939,19 @@ those rooms (+170-280 W after the envelope take-off): real heat sources, or
 heat arriving from neighbours, not the floor. Arbeitszimmer 22.2 with the fan
 on, and its valve has left saturation (46 %): the first room PI acting in its
 range since the flow-floor fix - watch for swinging. Schlafzimmer 19.1.
+
+## 2026-11-08 — The children's rooms' extra heat is people (owner)
+
+Owner: nothing runs in the children's rooms; two children sleep in the eastern
+room and spend most of weekend days there. The eastern room is plan "Kind 2" =
+kind_naomi (config records the mapping; Kind 1 has the west wall). Two sleeping
+children are ~120-160 W sensible, more awake - the filter's unexplained gain
+for kind_naomi after the envelope take-off was +166 W. So occupancy, not a
+model defect, for that room; the 11-06 evening jump fits bedtime with the door
+shut. kind_natalie (Kind 1, empty at night) still ~+280 W and ~23: THEORY, the
+connecting door to Kind 2 open (open doorway ~100 W/K vs ~15 W/K through the
+wall) - asked the owner. Consequences for the model: internal gains follow
+people (bedrooms at night, living areas by day), not a flat 350 W by area; and
+doors switch couplings (DESIGN 6.1 already says so for the void door).
+Control: with both valves shut the plant cannot take those rooms below what
+occupants and neighbours supply.
