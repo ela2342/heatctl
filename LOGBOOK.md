@@ -5973,3 +5973,12 @@ kind_naomi. Its neighbours are all cooler, yet it holds ~23 with no flow for
 the way from the manifold (location not documented; the ground-floor plan
 labels "Heizkreis" along the HWR wall), slab continuity under the walls, or
 sensor placement. Asked the owner for the manifold location / laying plan.
+More ruled out for kind_naomi (owner and data): no pipes pass through it;
+the screed is separated at the walls except the doorways; and no rl_gate
+flush - over 11-08 hk03/hk04 never exceeded 21 % (hk07 24 %). What remains
+is within the model's resolution: the 21 % command may pass a trickle
+(~20-30 W by D-041's provisional calibration, more if water moves below
+20 %); its own loss (envelope share +-15 %, ventilation n = 0.4 a house-wide
+assumption, likely lower for a shut room); south-window sun; sensor placement.
+~166 W in 15.6 m2 = ~10 W/m2. Not chased further without a new measurement
+(floor surface temperature, a second room thermometer).
