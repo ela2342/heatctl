@@ -6259,7 +6259,7 @@ hk11. With the fan off the room cools, its PI opens hk11 to 50 %, and the
 coil passes water with little heat - so the flow floor's remainder goes there
 instead of kind_natalie's floor (hk03 was at 34 %). The neediest-room water
 law ignores the room (no slab). Fan state is an unobserved switched input:
-fan ON 11-07 ~12:00 to 11-08 ~22:40 (see correction below). See the baseline line below for the
+fan ON 11-07 ~12:00 to 11-08 ~22:40. See the baseline line below for the
 moment of the switch.
 Baseline 22:26 (switch-off just after; the "~22:40" above is approximate):
 P05 already 34 (written by the neediest law), compressor 69 Hz, supply 30.2;
