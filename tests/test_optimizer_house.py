@@ -124,7 +124,10 @@ def test_the_real_params_split_back_to_the_house_totals():
     # departure is each room's envelope-side factor (2026-11-08), applied to
     # that room alone and not renormalised.
     side = {n: float(v) for n, v in (p.get("envelope_side_k") or {}).items()}
-    restored = sum(r.ua_ao / (1.0 - side.get(r.name, 0.0)) for r in rooms)
+    # The slab-edge loss moves from the air node to the slab (2026-11-08) and
+    # counts toward the same measured total.
+    restored = sum((r.ua_ao + r.ua_edge) / (1.0 - side.get(r.name, 0.0))
+                   for r in rooms)
     assert restored == pytest.approx(float(p["building"]["ua_ao"]))
     assert sum(r.ua_sa for r in rooms) == pytest.approx(derived.ua_sa(p).value)
     names = {r.name for r in rooms}
@@ -404,3 +407,21 @@ def test_a_sensor_offset_is_taken_off_the_reading(tmp_path):
     rp_.feed(T0 + 2.0, "room/b", "22.0")
     assert rp_.latest["a"].value == pytest.approx(20.8)
     assert rp_.latest["b"].value == pytest.approx(22.0)
+
+
+def test_the_slab_edge_moves_loss_from_air_to_slab_and_keeps_the_total():
+    """The floor's share of the thermal bridges is the slab perimeter losing
+    to OUTDOOR air under the walls. Carried on the air node it was in the
+    wrong place (the returns read below the modelled slabs). It moves to the
+    slabs by heated area, out of the air node, the total unchanged; and in
+    the model it couples the slab to the outdoor temperature."""
+    p = _params()
+    r0 = {r.name: r for r in build_rooms(CFG, p)}
+    p["building"]["ua_slab_edge"] = Param(9.0)
+    r1 = {r.name: r for r in build_rooms(CFG, p)}
+    assert r1["a"].ua_edge == pytest.approx(9.0 * 20.0 / 30.0)
+    assert r1["a"].ua_ao == pytest.approx(r0["a"].ua_ao - r1["a"].ua_edge)
+    assert sum(r.ua_ao + r.ua_edge for r in r1.values()) == pytest.approx(120.0)
+    m = HouseModel(list(r1.values()), 0.3)
+    _, B = m.continuous()
+    assert B[m.slab["a"]][m.U_OUT] == pytest.approx(r1["a"].ua_edge / r1["a"].c_slab)

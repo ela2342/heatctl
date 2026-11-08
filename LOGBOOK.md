@@ -6077,3 +6077,34 @@ pinning the slabs, ground loss is a slab-side term; and 29 is probably
 compensating an understated circuit heat input (flow map 14.5 of 24 l/min).
 Kept at 29 with the note corrected; to be fixed with the flow scale once a
 heat meter exists. Pipe position now known: bottom of the screed.
+
+## 2026-11-08 — Correcting the values the floor exposed: ua_sg 20, COP 2.66, slab edge; a retraction
+
+Owner rejected keeping ua_sg at 29 because a replay preferred it, and asked
+which other guesses need correcting. Applied:
+- `ua_sg` 29 -> 20 W/K (insulation ~23 + soil), kind specified.
+- `assumed_cop` 3.35 -> 2.66: the MEASURED value since the power-register
+  correction (DECISIONS) had never reached params.yaml; the live 2-state
+  estimator overstated heat input ~26 % for three months.
+- `ua_slab_edge` 13.6 W/K: the floor's share of the certificate's
+  thermal-bridge surcharge, the slab perimeter to outdoor air, moved in the
+  per-room model from the air nodes to the slabs (whole-house total unchanged).
+
+Per-room replay 10-27..11-01, ua_sg 20: edge 0 / 13.6 / 27 W/K -> unexplained
+heat 1283 / 1124 / 967 W, 24 h skill −2.22 / −1.71 / −1.36, mean return
+innovation −0.084 / −0.069 / −0.049 K. The edge is what 29 was compensating.
+13.6 taken (certificate-derived), not the replay's preference; ψ for this wall
+base could be 0.3-0.6 W/mK over ~47 m, i.e. up to ~28 W/K - for identification.
+2-state replay with ua_sg 20 and COP 2.66: 24 h −7.66 -> −7.35, still ~3 K cold.
+
+RETRACTED: "the D-041 flow map understates circuit heat (14.5 of the pump's
+24 l/min)". The 24 is pump speed through the spec curve at installation
+delivery; with the manifold throttled to 41 % mean the real flow is lower, so
+24 is an upper bound. The map at all-open gives 20 l/min, consistent with
+D-028's 1.24 m3/h. Unresolved without a meter, not established either way.
+
+Recorded, not changed: the floor path counted twice (in the measured 216 and
+again as ua_sg), ~5 W/K at Fx 0.25, within the 216's sigma; and ua_sa's
+derivation ignoring the ground's share at the 07-31 measurement, ~7 % low.
+Both are candidates for identification. Live effect of ua_sg and COP: layer 2's
+2-state estimator, at the next deploy.

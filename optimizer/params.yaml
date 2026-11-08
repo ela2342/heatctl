@@ -96,21 +96,30 @@ building:
 
   # Slab -> ground. From the as-built floor build-up.
   ua_sg:
-    value: 29.0
+    value: 20.0
     unit: W/K
     sigma: 4.0
     kind: specified
     note: >
-      PROVENANCE CORRECTED 2026-11-08. Owner's as-built floor: 12 cm PU
-      (lambda taken as 0.023), 2 cm XPS pipe mat (lambda ~0.035), then screed
-      and tiles to 24 cm. Insulation alone gives R ~5.8, U ~0.17, ~23 W/K over
-      136.4 m2, and the soil lowers it further; 29 predates the XPS layer.
-      Kept for now: replayed 10-27..11-01, lowering it (22, 18; ground 13)
-      leaves the per-room air-side gains unchanged (-20 W) but WORSENS 12-24 h
-      skill - most likely because it is compensating the circuit heat input,
-      which D-041's flow map puts at 14.5 of the pump's 24 l/min. ua_sg and the
-      flow scale are confounded (DESIGN_ESTIMATION_PLANNING 2.3); fix them
-      together once a heat meter exists, not by tuning to the replay.
+      CORRECTED 2026-11-08 from 29, which predated the XPS layer. Owner's
+      as-built floor: 12 cm PU (lambda taken as 0.023), 2 cm XPS pipe mat
+      (lambda ~0.035), screed and tiles to 24 cm. Insulation alone R ~5.8,
+      U ~0.17, ~23 W/K over 136.4 m2; the soil's own resistance takes it to
+      ~20. Against `t_ground` (deep ground, annual mean). The slab PERIMETER
+      to outdoor air is a separate term, `ua_slab_edge`. A replay preferred
+      29 only while the edge loss was missing (LOGBOOK 2026-11-08).
+
+  ua_slab_edge:
+    value: 13.6
+    unit: W/K
+    sigma: 7.0
+    kind: prior
+    note: >
+      The floor's share of the certificate's thermal-bridge surcharge
+      (0.10 W/m2K x 136.4 m2): the slab perimeter losing to OUTDOOR air under
+      the walls. Part of the measured ua_ao; the per-room model moves it from
+      the air nodes to the slabs (optimizer/house.py), total unchanged. Only
+      the per-room model reads it.
 
   # Everything that is not the slab: air, furniture, internal partitions,
   # plaster. Whole-building C is predicted at ~15,300 Wh/K and measured at
@@ -509,11 +518,17 @@ filter:
 # this block.
 heat_input:
   assumed_cop:
-    value: 3.35
+    value: 2.66
     unit: "-"
-    sigma: 1.0
-    kind: prior
+    sigma: 0.5
+    kind: measured
     note: >
+      CORRECTED 2026-11-08 from the 3.35 prior to the MEASURED 2.66: the
+      2026-08-01 measurement gave 1.69 against a power register that over-read
+      mains current ~1.56x; corrected, 2.66 (DECISIONS, "the measured COP
+      moves 1.69 -> 2.66"). The params kept 3.35 for three months; the live
+      2-state estimator overstated heat input ~26 % whenever the compressor ran.
+      Original note:
       A flat seasonal average standing in for a COP that varies strongly with
       supply temperature and outdoor conditions. THE MODEL'S WEAKEST INPUT and
       the reason q_slab_k_per_h is set as high as it is. The MULTICAL 403

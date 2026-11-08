@@ -68,6 +68,7 @@ class Room:
     q_int: float           # W
     temp_topic: str | None
     circuits: list[tuple[str, str]] = field(default_factory=list)
+    ua_edge: float = 0.0   # slab -> outdoor air, W/K (the slab's perimeter)
 
 
 def build_rooms(cfg: dict, params: dict) -> list[Room]:
@@ -96,6 +97,14 @@ def build_rooms(cfg: dict, params: dict) -> list[Room]:
     # the room's effective ua_ao is (1 - k). Not renormalised: this is a
     # correction to the room, not a redistribution of the house total.
     side = {n: float(v) for n, v in (params.get("envelope_side_k") or {}).items()}
+    # SLAB EDGE. The certificate's thermal-bridge surcharge (0.10 W/m2K over
+    # every element) gives the floor 13.6 W/K, and physically that is the
+    # slab's perimeter losing to outdoor air under the walls. It is part of the
+    # measured ua_ao; carried on the air node it was in the wrong place - the
+    # returns read ~0.1-0.2 K below the modelled slabs on 7 of 9 circuits. Here
+    # it moves to the slabs, by heated area, and leaves the air node: the
+    # whole-house total is unchanged, only where the loss happens moves.
+    ua_edge_total = float(b.get("ua_slab_edge", 0.0) or 0.0)
     ua_sa = (derived.ua_sa(params).value if "ua_sa_identification" in b
              else float(b["ua_sa"]))
     rooms_cfg = [r for r in cfg.get("rooms", []) if r.get("floor_area_m2")]
@@ -141,6 +150,12 @@ def build_rooms(cfg: dict, params: dict) -> list[Room]:
     def env_share(n: str, area: float) -> float:
         return env[n] / env_total if use_env else area / total
 
+    edge_area = sum(heated_of(r) for r in rooms_cfg
+                    if r.get("emitter", "slab") == "slab") + sum(zone_heated.values())
+
+    def edge_of(ha: float) -> float:
+        return ua_edge_total * ha / edge_area if edge_area else 0.0
+
     out = []
     for r in rooms_cfg:
         a = float(r["floor_area_m2"])
@@ -149,7 +164,9 @@ def build_rooms(cfg: dict, params: dict) -> list[Room]:
         out.append(Room(
             name=r["name"], area_m2=a, slab=slab,
             ua_ao=float(b["ua_ao"]) * env_share(r["name"], a)
-            * (1.0 - side.get(r["name"], 0.0)),
+            * (1.0 - side.get(r["name"], 0.0))
+            - (edge_of(heated_of(r)) if slab else 0.0),
+            ua_edge=edge_of(heated_of(r)) if slab else 0.0,
             ua_sa=ua_sa * heated_of(r) / slab_rooms if slab else 0.0,
             ua_sg=float(b["ua_sg"]) * heated_of(r) / slab_area if slab else 0.0,
             c_air=float(b["c_air_wh"]) * share * J_PER_WH,
@@ -166,7 +183,8 @@ def build_rooms(cfg: dict, params: dict) -> list[Room]:
         out.append(Room(
             name=n, area_m2=a, slab=ha > 0.0,
             ua_ao=float(b["ua_ao"]) * env_share(n, a)
-            * (1.0 - side.get(n, 0.0)),
+            * (1.0 - side.get(n, 0.0)) - edge_of(ha),
+            ua_edge=edge_of(ha),
             ua_sa=ua_sa * ha / slab_rooms if ha else 0.0,
             ua_sg=float(b["ua_sg"]) * ha / slab_area if ha else 0.0,
             c_air=float(b["c_air_wh"]) * share * J_PER_WH,
@@ -316,7 +334,8 @@ class HouseModel:
                 s = self.slab[r.name]
                 A[i][i] -= r.ua_sa / r.c_air
                 A[i][s] += r.ua_sa / r.c_air
-                A[s][s] -= (r.ua_sa + r.ua_sg) / r.c_slab
+                A[s][s] -= (r.ua_sa + r.ua_sg + r.ua_edge) / r.c_slab
+                B[s][self.U_OUT] += r.ua_edge / r.c_slab
                 A[s][i] += r.ua_sa / r.c_slab
                 B[s][self.U_GROUND] += r.ua_sg / r.c_slab
                 B[i][self.u_sol[r.name]] += self.f_sol / r.c_air
