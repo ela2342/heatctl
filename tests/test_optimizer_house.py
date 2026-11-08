@@ -17,6 +17,7 @@ import pytest
 from optimizer.house import (HouseFilter, HouseModel, Room, build_couplings,
                              build_rooms, circuit_flow_kg_s, circuit_heat_w)
 from optimizer.model import BuildingParams, discretise
+from optimizer import derived
 from optimizer.params import Param
 from optimizer.replay_rooms import run, score
 
@@ -128,8 +129,13 @@ def test_the_real_params_split_back_to_the_house_totals():
     # counts toward the same measured total.
     restored = sum((r.ua_ao + r.ua_edge) / (1.0 - side.get(r.name, 0.0))
                    for r in rooms)
-    assert restored == pytest.approx(float(p["building"]["ua_ao"]))
-    assert sum(r.ua_sa for r in rooms) == pytest.approx(derived.ua_sa(p).value)
+    # ...and the measured ua_ao less the ground path's share, which the
+    # model carries separately as ua_sg (2026-11-08, derived.ua_ao_air).
+    assert restored == pytest.approx(derived.ua_ao_air(p))
+    assert derived.ua_ao_air(p) == pytest.approx(
+        float(p["building"]["ua_ao"])
+        - float(p["building"]["fx_ground"]) * float(p["building"]["ua_sg"]))
+    assert sum(r.ua_sa for r in rooms) == pytest.approx(derived.ua_sa_model(p).value)
     names = {r.name for r in rooms}
     for a, b in build_couplings(p):
         assert a in names and b in names, (a, b)
@@ -425,3 +431,22 @@ def test_the_slab_edge_moves_loss_from_air_to_slab_and_keeps_the_total():
     m = HouseModel(list(r1.values()), 0.3)
     _, B = m.continuous()
     assert B[m.slab["a"]][m.U_OUT] == pytest.approx(r1["a"].ua_edge / r1["a"].c_slab)
+
+
+def test_the_models_ua_sa_is_the_measurement_as_it_was_taken():
+    """07-31: 3020 W at 1.24 m3/h over 6.17 K - 490 W/K as logged. The models
+    had been computing it from flow_m3_h's 1.44 FALLBACK (568). Their ua_sa
+    now uses the identification's own pump speed, plus what the slab lost to
+    the ground and through its edge at that moment. The cooling-limit ua_sa,
+    whose flow cancels by design, is untouched."""
+    from optimizer import derived
+    from optimizer.params import load_params
+    p = load_params("optimizer/params.yaml")
+    idn = p["building"]["ua_sa_identification"]
+    base = derived.ua_sa_model({**p, "building": {**p["building"],
+                                "ua_sg": Param(0.0), "ua_slab_edge": Param(0.0)}})
+    assert base.value == pytest.approx(3020.0 / 6.17, rel=0.03)
+    assert derived.ua_sa_model(p).value > base.value          # ground share added
+    assert derived.ua_sa(p).value == pytest.approx(
+        568.3, rel=0.01)                                       # cooling path as was
+    assert float(idn["pump_pct"]) == pytest.approx(124.0 / 1.44, rel=0.01)

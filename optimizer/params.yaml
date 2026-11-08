@@ -93,6 +93,31 @@ building:
       unit: degC
       sigma: 0.15
       kind: measured
+    # Added 2026-11-08 so the models' ua_sa is computed from the measurement
+    # as it was taken (derived.ua_sa_model). The flow then was 1.24 m3/h
+    # (LOGBOOK 2026-07-30: "manifold dT 2.10 K at 1.24 m3/h = 3020 W"), i.e.
+    # 86 % pump speed on the proportional curve; derived.ua_sa had been using
+    # flow_m3_h's 1.44 FALLBACK and gave 568 W/K instead of the logged 490.
+    pump_pct:
+      value: 86.1
+      unit: "%"
+      sigma: 5.0
+      kind: measured
+      note: 1.24 / 1.44 m3/h, from the logged flow.
+    # Not recorded at the time; priors, so the ground and slab-edge share of
+    # the measured heat is carried with its honest uncertainty.
+    slab_c:
+      value: 21.0
+      unit: degC
+      sigma: 1.5
+      kind: prior
+      note: Between the water mean and the room, nearer the water in cooling.
+    outdoor_c:
+      value: 28.0
+      unit: degC
+      sigma: 4.0
+      kind: prior
+      note: A late afternoon in a hot spell; not logged.
 
   # Slab -> ground. From the as-built floor build-up.
   ua_sg:
@@ -120,6 +145,19 @@ building:
       the walls. Part of the measured ua_ao; the per-room model moves it from
       the air nodes to the slabs (optimizer/house.py), total unchanged. Only
       the per-room model reads it.
+
+  fx_ground:
+    value: 0.25
+    unit: "-"
+    sigma: 0.15
+    kind: prior
+    note: >
+      How much of the floor-to-ground path the measured whole-house ua_ao
+      already contains, as a fraction of ua_sg (the certificate's temperature
+      correction factor for ground, Fx 0.25). The models carry the ground path
+      explicitly as ua_sg, so their air-to-outdoor coefficient is
+      ua_ao - fx_ground * ua_sg (derived.ua_ao_air) - otherwise the floor is
+      counted twice.
 
   # Everything that is not the slab: air, furniture, internal partitions,
   # plaster. Whole-building C is predicted at ~15,300 Wh/K and measured at

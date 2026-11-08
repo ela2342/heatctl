@@ -6108,3 +6108,34 @@ again as ua_sg), ~5 W/K at Fx 0.25, within the 216's sigma; and ua_sa's
 derivation ignoring the ground's share at the 07-31 measurement, ~7 % low.
 Both are candidates for identification. Live effect of ua_sg and COP: layer 2's
 2-state estimator, at the next deploy.
+
+## 2026-11-08 — The two "recorded, not changed" items, changed; and ua_sa was 16 % high in layer 2
+
+Owner: why not tackle them directly. Done:
+- Floor counted twice: the models' air-to-outdoor is now
+  `derived.ua_ao_air` = ua_ao - fx_ground x ua_sg = 216 - 0.25 x 20 = 211 W/K
+  (`building.fx_ground`, the certificate's Fx for ground). The measured 216
+  stays the whole-house figure; layer 1, which has no ground term, keeps it.
+- ua_sa: checking the derivation found a real error. The 07-31 measurement
+  was 3020 W at 1.24 m3/h over 6.17 K = 490 W/K (logged, and layer 1's value),
+  but `derived.ua_sa` recomputed it from `flow_m3_h`'s 1.44 FALLBACK: 568 W/K
+  in layer 2 since. New `derived.ua_sa_model` uses the identification's own
+  pump speed (86.1 %, stored with it) and adds what the slab lost to ground
+  and edge then (slab ~21 +- 1.5, outdoor ~28 +- 4: priors, not logged) ->
+  510 +- 82 W/K. The cooling-limit `ua_sa` (k, p04_opt, q_max), whose flow
+  cancels by design, is unchanged.
+
+Replay 10-27..11-01 with everything from today:
+
+| model | 3 h | 6 h | 12 h | 24 h |
+|---|---|---|---|---|
+| 2-state (live layer 2) | −0.75 | −1.42 | −2.67 | −7.06 (was −7.66) |
+| per-room | −0.32 | −0.44 | −0.99 | −1.86 (−1.71 before these two) |
+
+Per-room unexplained heat 1129 W (1124). These are corrections of structure,
+not fits; the per-room 24 h moving the other way is noted, not tuned away.
+STILL OPEN, and new: the 490 is room->WATER over all circuits, Arbeitszimmer's
+coil included (cooling, fan on, 07-31); the per-room model spreads it over the
+slab rooms only, so their slab->air is overstated by the coil's share - the
+July note put the slab alone at 256-355 W/K on an unmeasured flow split. That
+one needs data (per-room identification with the returns), not a prior.

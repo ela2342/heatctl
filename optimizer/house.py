@@ -105,7 +105,10 @@ def build_rooms(cfg: dict, params: dict) -> list[Room]:
     # it moves to the slabs, by heated area, and leaves the air node: the
     # whole-house total is unchanged, only where the loss happens moves.
     ua_edge_total = float(b.get("ua_slab_edge", 0.0) or 0.0)
-    ua_sa = (derived.ua_sa(params).value if "ua_sa_identification" in b
+    # The floor's ground path is carried as ua_sg; take its share out of the
+    # measured ua_ao so it is not counted twice (derived.ua_ao_air).
+    ua_ao_air = derived.ua_ao_air(params)
+    ua_sa = (derived.ua_sa_model(params).value if "ua_sa_identification" in b
              else float(b["ua_sa"]))
     rooms_cfg = [r for r in cfg.get("rooms", []) if r.get("floor_area_m2")]
     total = sum(float(r["floor_area_m2"]) for r in rooms_cfg)
@@ -163,7 +166,7 @@ def build_rooms(cfg: dict, params: dict) -> list[Room]:
         share = a / total
         out.append(Room(
             name=r["name"], area_m2=a, slab=slab,
-            ua_ao=float(b["ua_ao"]) * env_share(r["name"], a)
+            ua_ao=ua_ao_air * env_share(r["name"], a)
             * (1.0 - side.get(r["name"], 0.0))
             - (edge_of(heated_of(r)) if slab else 0.0),
             ua_edge=edge_of(heated_of(r)) if slab else 0.0,
@@ -182,7 +185,7 @@ def build_rooms(cfg: dict, params: dict) -> list[Room]:
         ha = zone_heated[n]
         out.append(Room(
             name=n, area_m2=a, slab=ha > 0.0,
-            ua_ao=float(b["ua_ao"]) * env_share(n, a)
+            ua_ao=ua_ao_air * env_share(n, a)
             * (1.0 - side.get(n, 0.0)) - edge_of(ha),
             ua_edge=edge_of(ha),
             ua_sa=ua_sa * ha / slab_rooms if ha else 0.0,

@@ -158,6 +158,43 @@ def ua_sa(p: dict) -> Uncertain:
     u = propagate(_ua_sa, _inputs(p));   return Uncertain(u.value, u.sigma, "W/K")
 
 
+def ua_sa_model(p: dict) -> Uncertain:
+    """Room-to-slab conductance for the THERMAL MODELS, from the 07-31
+    measurement as it was taken.
+
+    Two corrections to `ua_sa`, which the cooling-limit derivations keep
+    using unchanged (their flow cancels by design, see `_k`):
+    - the flow is the flow THEN, from the identification's own pump speed,
+      not `flow_m3_h`'s fallback - 490 W/K as logged, not 568;
+    - the heat that crossed room->slab is the water's plus what the slab
+      lost to the ground and through its edge to outdoor air at that moment:
+      Q_room = Q_water + ua_sg (T_slab - T_ground) + edge (T_slab - T_out).
+    """
+    b, idn = p["building"], p["building"]["ua_sa_identification"]
+    v = _inputs(p, pump_pct=float(idn["pump_pct"])) if "pump_pct" in idn else _inputs(p)
+    v["ua_sg"] = b["ua_sg"]
+    v["edge"] = b.get("ua_slab_edge", Param(0.0))
+    v["t_ground"] = b["t_ground"]
+    v["slab_c"] = idn.get("slab_c", Param(float(idn["water_mean_c"])))
+    v["outdoor_c"] = idn.get("outdoor_c", Param(float(idn["water_mean_c"])))
+
+    def f(x: dict) -> float:
+        q = (_mdot_c(x) * x["manifold_dt_k"]
+             + x["ua_sg"] * (x["slab_c"] - x["t_ground"])
+             + x["edge"] * (x["slab_c"] - x["outdoor_c"]))
+        return q / (x["room_mean_c"] - x["water_mean_c"])
+    u = propagate(f, v)
+    return Uncertain(u.value, u.sigma, "W/K")
+
+
+def ua_ao_air(p: dict) -> float:
+    """Air-to-outdoor conductance for models that carry the ground path
+    explicitly: the measured whole-house ua_ao less the share of ua_sg it
+    already contains (`building.fx_ground`)."""
+    b = p["building"]
+    return float(b["ua_ao"]) - float(b.get("fx_ground", 0.0) or 0.0) * float(b["ua_sg"])
+
+
 def k_spread(p: dict) -> Uncertain:
     u = propagate(_k, _inputs(p));       return Uncertain(u.value, u.sigma, "-")
 

@@ -68,11 +68,11 @@ class Estimator:
         # must still load - a schema change that forces a big-bang rewrite of a
         # safety-adjacent file is one that gets rushed.
         if "ua_sa_identification" in b:
-            ua_sa = derived.ua_sa(params).value
+            ua_sa = derived.ua_sa_model(params).value
         else:
             ua_sa = b["ua_sa"]
         self.bp = BuildingParams(
-            ua_ao=b["ua_ao"], ua_sa=ua_sa, ua_sg=b["ua_sg"],
+            ua_ao=derived.ua_ao_air(params), ua_sa=ua_sa, ua_sg=b["ua_sg"],
             c_air_wh=b["c_air_wh"], c_slab_wh=b["c_slab_wh"],
             f_sol=b["f_sol"])
         self.t_ground = b["t_ground"]
