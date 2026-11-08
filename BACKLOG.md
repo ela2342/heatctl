@@ -105,6 +105,13 @@ them is blocked, and none of them is urgent.
         holds it up. Watch first: P05, `water_sp/target_source`, how many
         valves sit at 20-21 %, kind_natalie (takes the floor's remainder),
         COP at the higher supply.
+        ALSO: the spread is bounded by compressor capacity at full flow, not
+        by a register - F10 (`0x010B`, pump ΔT) is at its minimum 2 K, so the
+        pump stays at 100 % and never throttles (owner: never seen above 5 K;
+        3.7 K at 69 Hz on 11-08). A target whose implied heat flow (490 W/K x
+        (mean - house)) exceeds capacity cannot be reached faster by asking
+        for it; it pins the compressor at full output and lowest COP. The
+        back-off should know the capacity, not only the valves.
 
 ## Milestone 1 - harden layer 1
 
