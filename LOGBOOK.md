@@ -6065,3 +6065,15 @@ unchanged. Replay 10-27..11-01, returns coast, per-room gains:
 
 Void conductance 110 -> 30 W/K moves Arbeitszimmer only 233 -> 211: not the
 cause, not identifiable from this week; stays at its prior.
+
+## 2026-11-08 — Floor insulation: not part of the air-side gap; ua_sg provenance corrected
+
+Owner's floor: 12 cm PU, 2 cm XPS pipe mat, screed + tiles to 24 cm. The XPS
+was missing from the July build-up; insulation-only U ~0.17, ~23 W/K vs the
+model's 29. Replay (returns coast, per-room gains): ua_sg 22 / 18 with ground
+10 / 13 changes the unexplained air-side heat by only −10..−20 W (1296 ->
+1276); 12-24 h skill gets WORSE (24 h −2.01 -> −2.36). Read: with returns
+pinning the slabs, ground loss is a slab-side term; and 29 is probably
+compensating an understated circuit heat input (flow map 14.5 of 24 l/min).
+Kept at 29 with the note corrected; to be fixed with the flow scale once a
+heat meter exists. Pipe position now known: bottom of the screed.
