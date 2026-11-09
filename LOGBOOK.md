@@ -6328,3 +6328,27 @@ operative temperature - roughly the mean of air and mean radiant temperature,
 the warm floor being the largest surface. Implication for the overhaul: air
 setpoints underrate floor heating; with slab estimates from the returns, a
 per-room operative comfort estimate is within reach as a control variable.
+
+## 2026-11-09 — Layer 2 against the null: out of sample, and after a step
+
+Owner asked whether layer 2 beats persistence yet. Everything this weekend was
+scored on 10-27..11-01, so first an UNSEEN week, 11-05..11-08 (all sensors):
+
+| skill | 3 h | 6 h | 12 h | 24 h |
+|---|---|---|---|---|
+| 2-state (live), unseen | −1.32 | −1.42 | −1.37 | −1.86 |
+| per-room, unseen | −0.87 | −1.12 | −0.76 | −0.62 |
+| per-room, tuning week | −0.25 | −0.34 | −0.81 | −1.77 |
+
+A very calm week: persistence RMSE 0.11 K at 3 h, 0.37 K at 24 h; the
+per-room model's 0.21-0.59 K is not bad absolutely but loses. Only
+Arbeitszimmer (fan switched) beats it at 12-24 h. The per-room unexplained
+heat is stable across weeks (Wohnzimmer +415, kids +171 / +247, Schlafzimmer
++126, bathrooms ~0, total ~1.2 kW) - not overfit to the tuning week.
+
+Then the STEP: the night after 11-08's changes (water 28 -> 34, silent off,
+powerful on), 3 h horizon, only n = 3 complete windows (deploy restarts left
+gaps in opt/state): per-room Gaestebad +0.77, Badezimmer +0.65, kind_naomi
++0.16, house −0.09, Wohnzimmer −2.98; 2-state −5.84. Where rooms moved, the
+per-room model beat persistence. Indicative only. Proposed: score step
+response as a standing gate beside calm-week skill (asked the owner).
