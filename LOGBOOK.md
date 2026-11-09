@@ -6352,3 +6352,20 @@ gaps in opt/state): per-room Gaestebad +0.77, Badezimmer +0.65, kind_naomi
 +0.16, house −0.09, Wohnzimmer −2.98; 2-state −5.84. Where rooms moved, the
 per-room model beat persistence. Indicative only. Proposed: score step
 response as a standing gate beside calm-week skill (asked the owner).
+
+## 2026-11-09 21:51 — Bathrooms reached setpoint; the water steps down; a flow-floor defect with a proxied room
+
+Monitoring check (the 13:17 and 19:17 checks did not fire). 1.6 degC, heating,
+no faults, opt ok.
+- Gaestebad 23.6, Badezimmer 23.8: both at setpoint. The neediest room is now
+  Wohnzimmer (room mean 21.71 < 22): direct target 29.4, P05 33 -> 29.
+  Compressor 94 -> 80 Hz, 7.0 A; supply 34.5, return 29.3. The step the trial
+  was waiting for happened during the day.
+- The costs: kind_natalie 24.3, Schlafzimmer 21.2 (setpoint 19, valve shut,
+  up from 19.6 this morning), Arbeitszimmer 23.3 (hk11 now shut at 21 %).
+- DEFECT: kind_naomi's sensor has gone quiet - the room runs on the
+  house-average proxy, so it looks only mildly warm (house avg ~22.7) though
+  its last reading was 25.3. The flow floor ranks rooms by need and gives the
+  remainder to the least-past-setpoint, so with hk11 shut it put it into
+  kind_naomi: hk04 at 46 % - the warmest room in the house gets the water.
+  A proxied room's need is a guess; it should not rank as satisfied-but-close.
