@@ -6308,3 +6308,23 @@ mains current ~1.56x. Owner does not consider it solid and has seen ~10 A
 register readings last winter. Until re-measured, the 1.56 factor - and the
 COP 2.66 derived with it - should be treated as unverified. (The models no
 longer use either since today.)
+
+## 2026-11-09 07:16 — First night on the neediest law, silent mode off, powerful mode on
+
+1-1.5 degC outside, heating, no faults, Gaestebad setting the water all night.
+Compressor 85-94 Hz, 8-10 A (register) throughout - never throttled: return
+29.8 -> 31.2 against P05 34 -> 33, the floors absorbed everything. Seven
+defrosts at ~52 min intervals (01:37 ... 06:48). Gaestebad 22.0 -> 22.8,
+Badezimmer 22.5 -> 23.0 (the point of the trial); Schlafzimmer 20.0 -> 19.6;
+kind_naomi 23.7 -> 24.3 with its valve shut (neighbours: the Diele on hk02 at
+34-35 supply, and Wohnzimmer); kind_natalie +0.2; Wohnzimmer room mean only
+20.7 -> 20.9; Arbeitszimmer 22.1 -> 21.4 (fan off). hk11 carried the floor's
+remainder at 46 %, kids/Schlafzimmer at 21 %. Owner: leave it until Gaestebad
+reaches 23.5, then watch the target step down.
+
+OWNER OBSERVATION (comfort): Wohnzimmer's floor feels warm barefoot and the
+room is "much more comfy" although its thermometer barely climbed. That is
+operative temperature - roughly the mean of air and mean radiant temperature,
+the warm floor being the largest surface. Implication for the overhaul: air
+setpoints underrate floor heating; with slab estimates from the returns, a
+per-room operative comfort estimate is within reach as a control variable.
