@@ -6369,3 +6369,6 @@ no faults, opt ok.
   remainder to the least-past-setpoint, so with hk11 shut it put it into
   kind_naomi: hk04 at 46 % - the warmest room in the house gets the water.
   A proxied room's need is a guess; it should not rank as satisfied-but-close.
+kind_naomi's sensor (roomtemp/kind_naomi, a Shelly via the HA bridge) last
+reported at 15:32 (25.3); kind_natalie's, same bridge, at 21:54 - so a device
+problem (battery, WiFi), not the bridge.
