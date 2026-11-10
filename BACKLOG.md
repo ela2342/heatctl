@@ -112,6 +112,13 @@ them is blocked, and none of them is urgent.
         (mean - house)) exceeds capacity cannot be reached faster by asking
         for it; it pins the compressor at full output and lowest COP. The
         back-off should know the capacity, not only the valves.
+        AND A DEADBAND (2026-11-10): overnight the source flipped between
+        Gaestebad and Wohnzimmer on 0.1 K dips; a 3.4 m2 room 0.1 K under its
+        setpoint took the house water from 29 to 31 and the compressor from 80
+        to 94 Hz. A room should be clearly under (e.g. >= 0.3 K) to set it.
+        Also seen: a room on the house-average proxy (kind_naomi, sensor
+        silent) ranked as "nearly satisfied" and took the flow floor's
+        remainder at 25.3 last reading - proxied rooms should rank last.
 
   - [ ] **BEFORE THE COOLING SEASON: silent mode is OFF (owner, 2026-11-08).**
         Switched off for heating, where it capped the compressor at R30 = 70 Hz.

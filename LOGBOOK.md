@@ -6372,3 +6372,18 @@ no faults, opt ok.
 kind_naomi's sensor (roomtemp/kind_naomi, a Shelly via the HA bridge) last
 reported at 15:32 (25.3); kind_natalie's, same bridge, at 21:54 - so a device
 problem (battery, WiFi), not the bridge.
+
+## 2026-11-10 07:47 — The neediest source flips on 0.1 K; kind_naomi still silent
+
+1.4 degC, heating, no faults, opt ok. Gaestebad 23.4 - 0.1 K under its 23.5
+- is the neediest room again: direct target 31.2, P05 31 (29 last night),
+compressor back to 94 Hz, 9.5 A. Overnight the source switched between
+Gaestebad and Wohnzimmer (room mean 21.89 now, just under 22): a 0.1 K dip in
+a 3.4 m2 room moves the whole house's water by ~2 K and the compressor by
+~15 Hz. The back-off needs a DEADBAND on "below setpoint" at least (e.g. a
+room must be >= 0.3 K under to set the water) - BACKLOG.
+kind_naomi still on the house-average proxy (sensor silent since 11-09 15:32).
+hk04 back to 21 %; the floor's remainder now goes to kind_natalie (22.4, 0.4 K
+over - least past setpoint): hk03 50 %. kind_natalie 24.3 -> 22.4 overnight.
+Schlafzimmer 21.2 -> 21.6 (setpoint 19, valve shut), Arbeitszimmer 24.0 (fan
+off, valve shut), Badezimmer 23.9 (hk06 46 %), Wohnzimmer raw 23.2.
