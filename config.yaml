@@ -296,7 +296,7 @@ valves:
 rooms:
   - name: gaestebad
     label: "Gästebad"
-    setpoint_c: 23.5
+    setpoint_c: 23.0   # owner 2026-11-10 ("the whole house seems a bit overheated"); was 23.5
     floor_area_m2: 3.43   # WC/Du
     circuits: [{sensor: rl_hk01, valve: valve_hk01}]
     # DIRECT TO THE PLANT BROKER since 2026-08-23, through the normaliser
@@ -395,7 +395,7 @@ rooms:
     room_temp_topic: "roomtemp/kind_naomi"   # Shelly H&T G3, via the HA bridge
   - name: badezimmer
     label: "Badezimmer"
-    setpoint_c: 23.5
+    setpoint_c: 23.0   # owner 2026-11-10 ("the whole house seems a bit overheated"); was 23.5
     floor_area_m2: 8.94   # Bad
     circuits: [{sensor: rl_hk06, valve: valve_hk06}]
     # DIRECT TO THE PLANT BROKER since 2026-08-22, through the normaliser
@@ -449,7 +449,12 @@ rooms:
     # target - down, so the bathrooms run slightly cooler; and BEFORE THE
     # COOLING SEASON this has to be revisited, or the August distortion
     # returns.
-    setpoint_c: 19.0
+    #
+    # 19.0 -> 21.0 on 2026-11-10, owner: "the whole house seems a bit
+    # overheated. Let's bring our setpoints to some more realistic values."
+    # The room ran 20-21.6 against 19 for days with its valve shut - neighbour
+    # heat from the bathrooms - so 19 was not being held anyway.
+    setpoint_c: 21.0
     floor_area_m2: 11.08   # Schlafen
     circuits: [{sensor: rl_hk07, valve: valve_hk07}]
     room_temp_topic: "roomtemp/schlafzimmer"   # Shelly H&T G3, via the HA bridge

@@ -6387,3 +6387,18 @@ hk04 back to 21 %; the floor's remainder now goes to kind_natalie (22.4, 0.4 K
 over - least past setpoint): hk03 50 %. kind_natalie 24.3 -> 22.4 overnight.
 Schlafzimmer 21.2 -> 21.6 (setpoint 19, valve shut), Arbeitszimmer 24.0 (fan
 off, valve shut), Badezimmer 23.9 (hk06 46 %), Wohnzimmer raw 23.2.
+
+## 2026-11-10 — Setpoints: Schlafzimmer 21, bathrooms 23.0; kind_naomi's sensor dead (power)
+
+Owner: "the whole house seems to be a bit overheated. Let's bring our
+setpoints to some more realistic values." Schlafzimmer 19 -> 21 (it ran
+20-21.6 with its valve shut, neighbour heat), Badezimmer and Gaestebad
+23.5 -> 23.0. Live by set/setpoint (read back), live config (backup
+`config.yaml.bak-20261110-setpoints`), repo config. Effect on the neediest
+law: the bathrooms at 23.4-23.9 are now 0.4-0.9 K OVER, so neither sets the
+water; Wohnzimmer (room mean ~21.9) is the candidate.
+
+kind_naomi's Shelly has a power-connection problem (owner): now dead, and the
+earlier fluctuations may have been it rebooting. THEORY to revisit: some of
+what the filter called kind_naomi's unexplained heat (+166 / +247 W) and the
+11-06 19:00 jump to 25.5 may be sensor artefacts, not the room.
