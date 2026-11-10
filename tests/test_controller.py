@@ -1507,3 +1507,78 @@ async def test_a_floor_limited_room_does_not_set_the_water(controller, cfg):
                                      {"gaestebad": 20.0}, 20.0, time.monotonic())
     pub = {t: v for t, v, _ in ctl.plane.published}
     assert pub["water_sp/target_source"] == "balance"
+
+
+# ---------- cascade experiment (prepared 2026-11-10, OFF by default) ----------
+
+def _cascade_ready(ctl, room="gaestebad", target=30.0):
+    ctl.cascade_enabled = True
+    ctl._room_slab_target[room] = (target, time.monotonic())
+
+
+async def test_the_cascade_is_off_unless_switched_on(controller):
+    """Prepared as an experiment for the owner to run; until the flag is set
+    nothing about the valves may change."""
+    ctl = controller(temps={"rl_hk01": 24.0, "rl_hk02": 24.0, "rl_hk03": 24.0,
+                            "vl_total": 30.0}, room_temps={"gaestebad": 21.0})
+    assert ctl.cascade_enabled is False
+    # Everything else the cascade needs is in place, so only the flag holds
+    # it back (the first version left the target unset and passed vacuously).
+    ctl._room_slab_target["gaestebad"] = (30.0, time.monotonic())
+    called = []
+    ctl._cascade_inner = lambda *a: called.append(a) or 50.0
+    ctl.io.touch(time.monotonic())
+    await ctl.step(1.0)
+    assert not called
+
+
+async def test_the_inner_loop_holds_the_circuit_water_mean_on_target(controller):
+    """Water mean below target -> open; above -> close. Only while the return
+    is trustworthy (MEASURE); held otherwise, and a stagnant reading is never
+    integrated."""
+    from heatctl.rl_gate import MEASURE, HOLD
+    ctl = controller(temps={"rl_hk01": 24.0, "rl_hk02": 24.0, "rl_hk03": 24.0,
+                            "vl_total": 30.0}, room_temps={"gaestebad": 21.0},
+                     control={"mode": "heating"})
+    st = ctl.io.state
+    ctl.rl_gate.action = lambda v, now: MEASURE
+    st.temps["rl_hk01"], st.temps["vl_total"] = 24.0, 30.0     # mean 27 < 30
+    lo = ctl._cascade_inner("valve_hk01", "rl_hk01", st, 30.0, 60.0, 0.0)
+    assert lo > 0.0
+    ctl.cascade_pids["rl_hk01"].reset()
+    # The WATER MEAN is the controlled quantity, not the return: return 28 is
+    # below the 30 target, but the mean (28+34)/2 = 31 is above it -> close.
+    st.temps["rl_hk01"], st.temps["vl_total"] = 28.0, 34.0
+    assert ctl._cascade_inner("valve_hk01", "rl_hk01", st, 30.0, 60.0, 0.0) == 0.0
+    i_before = ctl.cascade_pids["rl_hk01"]._i
+    ctl.rl_gate.action = lambda v, now: HOLD
+    ctl._cascade_inner("valve_hk01", "rl_hk01", st, 30.0, 60.0, 0.0)
+    assert ctl.cascade_pids["rl_hk01"]._i == i_before
+
+
+async def test_the_outer_trim_integrates_clamps_and_stops_when_pinned(controller):
+    """Room 1 K short -> the target trims up by outer_ki per hour, never past
+    outer_trim_max_k, and not at all while every circuit is already pinned
+    fully open (anti-windup). A room without its own reading, or without a
+    fresh target, falls back to the room PI (None)."""
+    ctl = controller(temps={"rl_hk01": 24.0, "rl_hk02": 24.0, "rl_hk03": 24.0,
+                            "vl_total": 30.0}, room_temps={"gaestebad": 21.0},
+                     control={"mode": "heating"})
+    _cascade_ready(ctl)
+    room = next(r for r in ctl.rooms if r["name"] == "gaestebad")
+    ctl.room_setpoints["gaestebad"] = 22.0
+    now = time.monotonic()
+    t1 = ctl._cascade_target(room, 21.0, "sensor", 3600.0, now)
+    assert t1 == pytest.approx(30.0 + ctl.cascade_outer_ki * 3600.0)
+    for k in range(50):
+        ctl._cycle += 1
+        ctl._cascade_target(room, 21.0, "sensor", 3600.0, now)
+    assert ctl.cascade_trim["gaestebad"] == pytest.approx(ctl.cascade_trim_max)
+    ctl.cascade_trim["gaestebad"] = 0.0
+    ctl._cascade_last["valve_hk01"] = ctl.dist.full_open_pct      # pinned open
+    ctl._cycle += 1
+    ctl._cascade_target(room, 21.0, "sensor", 3600.0, now)
+    assert ctl.cascade_trim["gaestebad"] == 0.0
+    assert ctl._cascade_target(room, 21.0, "house_avg", 60.0, now) is None
+    ctl._room_slab_target["gaestebad"] = (30.0, now - 3600.0)       # stale
+    assert ctl._cascade_target(room, 21.0, "sensor", 60.0, now) is None

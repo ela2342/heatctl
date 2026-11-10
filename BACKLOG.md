@@ -149,6 +149,12 @@ them is blocked, and none of them is urgent.
         to be measured some day. Note the August "1.56x over-read" finding is
         disputed by the owner and NOT applied.
 
+  - [ ] **READY TO RUN: slab-target cascade on the valves (owner's idea,
+        prepared 2026-11-10).** `control.cascade`, off by default; protocol,
+        observables, success and abort criteria in docs/EXPERIMENT_CASCADE.md.
+        Waiting for the owner's time. Suggested first run: one room
+        (`rooms: [badezimmer]`).
+
 ## Milestone 1 - harden layer 1
 
 - [ ] DEFERRED, deliberately: put the dew-point margin on a proper footing.

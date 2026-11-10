@@ -6429,3 +6429,16 @@ container; back in heating. First cycle: no room >= 0.3 K under setpoint
 (Wohnzimmer room mean ~21.9), so target_source "balance", direct target 27.3,
 P05 29 -> 27 pending confirmation. The neediest law now leads only when a
 room is clearly short and not floor-limited.
+
+## 2026-11-10 — Cascade experiment prepared (off)
+
+Owner's idea, to run when there is time: an inner loop per circuit holding
+the circuit water mean (VL+RL)/2 on the room's slab target while the return is
+trustworthy (rl_gate), an outer loop per room trimming that target slowly from
+room-air error (0.5 K/K·h, ±3 K, anti-windup). Valves only; water law, flow
+floor, safety unchanged. `control.cascade.enabled: false`;
+docs/EXPERIMENT_CASCADE.md has the protocol. Tests: off unless switched on,
+inner direction on the water mean (not the return), no integration of a
+stagnant reading, outer clamp and anti-windup, proxy/stale fallback; six
+mutations caught (two only after tightening vacuous tests). Ships dormant with
+the next deploy.

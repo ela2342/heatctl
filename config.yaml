@@ -794,6 +794,19 @@ control:
     # with a throttled condenser fan is a high-pressure trip.
     fan_cap_min: 400
 
+  # CASCADE EXPERIMENT - OFF. docs/EXPERIMENT_CASCADE.md has the protocol.
+  # Inner loop per circuit: the circuit's water mean (VL+RL)/2 held on the
+  # room's slab target while its return is trustworthy (rl_gate). Outer loop
+  # per room: slow integral trim on room air error added to that target.
+  # Valves only; the water law is unchanged. Toggle = this flag + restart.
+  cascade:
+    enabled: false
+    rooms: []                   # empty = every slab room with its own sensor
+    inner: {kp: 15.0, ki: 0.01, kd: 0.0, out_min: 0.0, out_max: 100.0}
+    outer_ki_k_per_kh: 0.5      # K of target per K of air error per hour
+    outer_trim_max_k: 3.0
+    target_max_age_s: 300
+
   water_setpoint:
     enabled: true
     # WHICH TARGET THE WATER FOLLOWS. `balance`: D-051's capacity-weighted

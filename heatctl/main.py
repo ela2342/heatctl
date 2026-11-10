@@ -91,6 +91,32 @@ class Controller:
                 self.circuit_pids[circ["sensor"]] = PID(
                     pc["kp"], pc["ki"], pc["kd"], pc["out_min"], pc["out_max"])
 
+        # CASCADE EXPERIMENT (docs/EXPERIMENT_CASCADE.md), OFF unless
+        # `control.cascade.enabled`. Inner: per circuit, hold the circuit's
+        # water mean (VL+RL)/2 on the room's slab target while its return is
+        # trustworthy. Outer: per room, a slow integral trim on room air error
+        # added to that target. Prepared 2026-11-10 at the owner's request, to
+        # run when the owner has time; changes the valves only.
+        cc = c.get("cascade") or {}
+        self.cascade_enabled = bool(cc.get("enabled", False))
+        self.cascade_rooms = set(cc.get("rooms") or [])     # empty = all eligible
+        ci = cc.get("inner") or {"kp": 15.0, "ki": 0.01, "kd": 0.0,
+                                 "out_min": 0.0, "out_max": 100.0}
+        self.cascade_outer_ki = float(cc.get("outer_ki_k_per_kh", 0.5)) / 3600.0
+        self.cascade_trim_max = float(cc.get("outer_trim_max_k", 3.0))
+        self.cascade_target_max_age_s = float(cc.get("target_max_age_s", 300.0))
+        self.cascade_pids: dict[str, PID] = {
+            circ["sensor"]: PID(ci["kp"], ci["ki"], ci.get("kd", 0.0),
+                                ci.get("out_min", 0.0), ci.get("out_max", 100.0))
+            for room in self.rooms for circ in room["circuits"] if circ.get("sensor")}
+        self.cascade_trim: dict[str, float] = {r["name"]: 0.0 for r in self.rooms}
+        # The feedforward slab target per room, refreshed by the energy shadow
+        # once a minute: (target, monotonic time).
+        self._room_slab_target: dict[str, tuple[float, float]] = {}
+        self._cascade_stepped: dict[str, int] = {}
+        self._cascade_last: dict[str, float] = {}
+        self._cascade_pub: dict[str, float] = {}
+
         # Where the per-circuit return target comes from - see
         # _effective_return_sp() for why tracking the system return is the
         # useful choice and a fixed absolute number mostly is not.
@@ -232,7 +258,8 @@ class Controller:
         """
         self.mode = mode
         inv = mode == "cooling"
-        for pid in (*self.room_pids.values(), *self.circuit_pids.values()):
+        for pid in (*self.room_pids.values(), *self.circuit_pids.values(),
+                    *getattr(self, "cascade_pids", {}).values()):
             pid.invert = inv
             if reset:
                 pid.reset()
@@ -731,8 +758,15 @@ class Controller:
                 if not valve:
                     continue
                 sensor = circ["sensor"]
+                cascade_published = self._cascade_pub
+                casc = (self._cascade_target(room, room_t, src, dt, now)
+                        if self.cascade_enabled and self.mode != "off" else None)
                 if self.mode == "off":
                     proposed = self.off_valve_pct
+                elif casc is not None:
+                    proposed = self._cascade_inner(valve, sensor, state, casc,
+                                                   dt, now)
+                    cascade_published[n] = casc
                 elif room_out is not None:
                     # Room air drives the valve directly; RL is not consulted,
                     # so its validity is irrelevant on this path.
@@ -742,6 +776,13 @@ class Controller:
                         valve, sensor, state, return_sp, dt, now)
                 demands[valve] = (proposed, sensor)
                 needs[valve] = room_need
+
+        if self.cascade_enabled:
+            for n, tgt in self._cascade_pub.items():
+                await self.plane.publish(f"cascade/{n}/target", f"{tgt:.2f}")
+                await self.plane.publish(f"cascade/{n}/trim",
+                                         f"{self.cascade_trim[n]:+.2f}")
+            self._cascade_pub.clear()
 
         # Normalise across ALL circuits before safety sees anything: the
         # distribution is a property of the whole manifold, not of one room.
@@ -1061,6 +1102,8 @@ class Controller:
                                  # decides the mode (D-046).
                                  slab_floor_c=self.safety.cooling_supply_limit(now))
             rooms.append(e)
+            if e.target_c is not None:
+                self._room_slab_target[n] = (e.target_c, now)
             base = f"energy/{n}"
             await self.plane.publish(f"{base}/valid", "1" if e.valid else "0")
             await self.plane.publish(f"{base}/reason", e.reason)
@@ -1157,6 +1200,65 @@ class Controller:
         await self.plane.publish(
             "energy/house_blocked_wh",
             "unknown" if blocked is None else f"{blocked:.0f}")
+
+    def _cascade_target(self, room: dict, room_t: float | None, src: str,
+                        dt: float, now: float) -> float | None:
+        """The cascade's slab target for a room, or None to use the room PI.
+
+        Feedforward (the energy model's target, as the water law uses it) plus
+        the outer loop's slow integral trim on room air error. Eligible only
+        for slab rooms with their own air reading and a fresh target. The trim
+        does not integrate while every circuit of the room is pinned at the
+        limit the error pushes toward (anti-windup), and is clamped to
+        `outer_trim_max_k`. Called once per circuit; integrates once per room
+        per cycle.
+        """
+        n = room["name"]
+        if self.cascade_rooms and n not in self.cascade_rooms:
+            return None
+        if not self.energy.has_slab(n) or room_t is None or src != "sensor":
+            return None
+        tgt = self._room_slab_target.get(n)
+        if tgt is None or now - tgt[1] > self.cascade_target_max_age_s:
+            return None
+        if self._cascade_stepped.get(n) != self._cycle:
+            self._cascade_stepped[n] = self._cycle
+            err = self.room_setpoints[n] - room_t
+            if self.mode == "cooling":
+                err = -err
+            circs = [c["valve"] for c in room["circuits"] if c.get("valve")]
+            last = [self._cascade_last.get(v) for v in circs]
+            full, lo = self.dist.full_open_pct, self.dist.open_threshold_pct
+            pinned_up = last and all(x is not None and x >= full - 1.0 for x in last)
+            pinned_dn = last and all(x is not None and x <= lo + 1.0 for x in last)
+            if not ((err > 0 and pinned_up) or (err < 0 and pinned_dn)):
+                t = self.cascade_trim[n] + self.cascade_outer_ki * err * dt
+                self.cascade_trim[n] = max(-self.cascade_trim_max,
+                                           min(self.cascade_trim_max, t))
+        sign = -1.0 if self.mode == "cooling" else 1.0
+        return tgt[0] + sign * self.cascade_trim[n]
+
+    def _cascade_inner(self, valve: str, sensor: str, state, target: float,
+                       dt: float, now: float) -> float:
+        """Inner loop: the circuit's water mean (VL+RL)/2 onto `target`.
+
+        Same validity rules as the return fallback (rl_gate): measure only
+        while the circuit has flowed long enough, flush when it has been held
+        too long, otherwise hold - and never integrate a stagnant reading.
+        """
+        rl, vl = state.temps.get(sensor), state.temps.get("vl_total")
+        if rl is None or vl is None:
+            return self.safety.failsafe_pct       # lost knowledge -> fail open
+        action = self.rl_gate.action(valve, now)
+        if action is MEASURE:
+            out = self.cascade_pids[sensor].step(target, (vl + rl) / 2.0, dt)
+            self.rl_gate.note_control(valve, out)
+        elif action is FLUSH:
+            out = self.rl_gate.flush_pct
+        else:
+            out = self.rl_gate.held(valve, self.safety.failsafe_pct)
+        self._cascade_last[valve] = out
+        return out
 
     def _return_control(self, valve: str, sensor: str, state,
                         return_sp: float, dt: float, now: float) -> float:
