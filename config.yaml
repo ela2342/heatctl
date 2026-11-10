@@ -803,6 +803,14 @@ control:
     # 1-2 K short for weeks. A back-off for when too many valves want to close
     # is expected to be needed (BACKLOG). Revert = `balance` + restart.
     target: neediest
+    # Safeguards for `neediest` (2026-11-10, from the trial's first two days):
+    # a room must be this far past setpoint to set the water (the source
+    # flipped on 0.1 K dips, ~2 K of water and ~15 Hz each time)...
+    neediest_deadband_c: 0.3
+    # ...and a room whose circuits are all fully open yet pass less than this
+    # supply-return difference is floor-limited and may not lead (Gaestebad,
+    # 3.4 m2, set the water for the house at 1.4-2.5 K).
+    neediest_min_dt_k: 2.0
     # THE DIRECT LAW (D-051). The setpoint is computed, not walked:
     #   P0x = T_target - spread_ratio/2 * (T_target - T_set)
     # with T_target / T_set the capacity-weighted house slab target and room

@@ -1446,3 +1446,64 @@ async def test_the_water_follows_the_neediest_room_when_configured(controller, c
          for n in ("gaestebad", "wohnzimmer")], dict(ctl.room_setpoints))
     assert seen[-1][1] == pytest.approx(house[1], abs=0.01)
     assert seen[-1][1] != pytest.approx(ctl.room_setpoints["gaestebad"], abs=0.5)
+
+
+async def test_a_fully_open_circuit_at_small_spread_is_floor_limited(controller, cfg):
+    """A room whose circuits are all at full opening yet pass under
+    `neediest_min_dt_k` of supply-return difference is floor-limited: more
+    water mainly heats everyone else. Not floor-limited if a valve is not
+    fully open or the spread is large."""
+    ctl = controller(temps={"rl_hk01": 29.0, "rl_hk02": 24.0, "rl_hk03": 24.0,
+                            "vl_total": 30.0},
+                     room_temps={"gaestebad": 21.0}, control={"mode": "heating"},
+                     rooms=_energy_rooms(cfg["rooms"]))
+    full = ctl.dist.full_open_pct
+    state = ctl.io.state
+    state.valves_readback_pct.update({"valve_hk01": full, "valve_hk02": full,
+                                      "valve_hk03": full})
+    sat = ctl._saturated_rooms(state)
+    assert "gaestebad" in sat                       # 1 K at full opening
+    assert "wohnzimmer" not in sat                  # 6 K: drawing heat
+    state.valves_readback_pct["valve_hk01"] = full - 10.0
+    assert "gaestebad" not in ctl._saturated_rooms(state)
+
+
+async def test_a_proxied_room_takes_the_floor_remainder_last(controller):
+    """2026-11-09: kind_naomi's sensor died at 25.3; on the house-average
+    proxy it looked nearly satisfied and the flow floor poured its remainder
+    into it. A proxied room's need is a guess: it must rank last."""
+    from heatctl.main import PROXY_NEED
+    ctl = controller(temps={"rl_hk01": 24.0, "rl_hk02": 24.0, "rl_hk03": 24.0,
+                            "vl_total": 30.0},
+                     room_temps={"gaestebad": 23.0}, control={"mode": "heating"})
+    seen = {}
+    real = ctl.demand.enforce_flow_floor
+
+    def spy(commanded, need=None):
+        seen.update(need or {})
+        return real(commanded, need)
+
+    ctl.demand.enforce_flow_floor = spy
+    ctl.io.touch(time.monotonic())
+    await ctl.step(1.0)
+    # wohnzimmer has no sensor in the synthetic config -> house_avg proxy
+    assert seen["valve_hk02"] == PROXY_NEED and seen["valve_hk03"] == PROXY_NEED
+    assert seen["valve_hk01"] != PROXY_NEED
+
+
+async def test_a_floor_limited_room_does_not_set_the_water(controller, cfg):
+    """The saturation test must reach the water law: with gaestebad short but
+    floor-limited (fully open, 1 K supply-return), it may not lead, and with
+    no other room short the law falls back to the balance."""
+    ctl = controller(temps={"rl_hk01": 29.0, "rl_hk02": 24.0, "rl_hk03": 24.0,
+                            "vl_total": 30.0},
+                     room_temps={"gaestebad": 20.0}, control={"mode": "heating"},
+                     rooms=_energy_rooms(cfg["rooms"]))
+    ctl.water_target_law = "neediest"
+    ctl.plane.outdoor_forecast = 2.0
+    full = ctl.dist.full_open_pct
+    ctl.io.state.valves_readback_pct.update({"valve_hk01": full})
+    await ctl._publish_energy_shadow(ctl.io.state, dict(ctl.room_setpoints),
+                                     {"gaestebad": 20.0}, 20.0, time.monotonic())
+    pub = {t: v for t, v, _ in ctl.plane.published}
+    assert pub["water_sp/target_source"] == "balance"

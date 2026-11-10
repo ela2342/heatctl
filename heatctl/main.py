@@ -42,6 +42,11 @@ from .setpoint import SetpointController
 log = logging.getLogger("heatctl")
 
 
+# Flow-floor ranking for a room whose air is the house-average proxy: below
+# any real room's need, so it takes the floor's remainder last.
+PROXY_NEED = -1.0e6
+
+
 class Controller:
     def __init__(self, cfg: dict):
         self.cfg = cfg
@@ -132,8 +137,13 @@ class Controller:
         self.water_sp = SetpointController(cfg)
         # balance (D-051) | neediest (owner trial, 2026-11-08). See
         # `EnergyDemand.neediest_slab_target`.
-        self.water_target_law = str(
-            (c.get("water_setpoint") or {}).get("target", "balance"))
+        ws = c.get("water_setpoint") or {}
+        self.water_target_law = str(ws.get("target", "balance"))
+        # Neediest-law safeguards (2026-11-10): how far past setpoint a room
+        # must be to lead, and the supply-return difference below which a
+        # fully open room counts as floor-limited. See neediest_slab_target.
+        self.neediest_deadband_c = float(ws.get("neediest_deadband_c", 0.3))
+        self.neediest_min_dt_k = float(ws.get("neediest_min_dt_k", 2.0))
         # Frequency ceiling: takes as much spread as the dew point allows.
         # Spread is how the plant delivers capacity, so this MAXIMISES it under
         # a constraint rather than minimising it - see capacity.py.
@@ -708,6 +718,13 @@ class Controller:
                 room_need = targets[n] - room_t
                 if self.mode == "cooling":
                     room_need = -room_need
+                # A room on the house-average PROXY has no known need: its
+                # number is the house's, not its own. 2026-11-09: kind_naomi's
+                # sensor died at 25.3, the proxy (~22.7) made it look nearly
+                # satisfied, and the floor gave it its remainder at 46 %. Rank
+                # it after every room with a real reading.
+                if src == "house_avg":
+                    room_need = PROXY_NEED
 
             for circ in room["circuits"]:
                 valve = circ.get("valve")
@@ -891,6 +908,32 @@ class Controller:
             return float(hpm.decode(reg, raw)), "hp_register"
         return None, "none"
 
+    def _saturated_rooms(self, state) -> set[str]:
+        """Slab rooms whose every circuit is fully open (the distribution's
+        `full_open_pct`) yet passes only a small supply-return difference
+        (`water_setpoint.neediest_min_dt_k`): their floor is the limit, not
+        the water, so they may not set the house water (neediest law)."""
+        vl = state.temps.get("vl_total")
+        if vl is None:
+            return set()
+        full = self.dist.full_open_pct
+        out = set()
+        for room in self.rooms:
+            circs = [c for c in room["circuits"] if c.get("valve") and c.get("sensor")]
+            if not circs:
+                continue
+            dts = []
+            for c in circs:
+                op = state.valves_readback_pct.get(c["valve"])
+                rl = state.temps.get(c["sensor"])
+                if op is None or rl is None or op < full - 1.0:
+                    dts = None
+                    break
+                dts.append(vl - rl if self.mode != "cooling" else rl - vl)
+            if dts and sum(dts) / len(dts) < self.neediest_min_dt_k:
+                out.add(room["name"])
+        return out
+
     def _room_air(self, name: str, outdoor: float | None) -> float | None:
         """A room's air temperature AS CONTROL SEES IT: the room's mean.
 
@@ -1067,8 +1110,10 @@ class Controller:
         # see which room is setting the water.
         water_target, source = house, "balance"
         if self.water_target_law == "neediest":
-            need = self.energy.neediest_slab_target(rooms, targets,
-                                                    room_temps, self.mode)
+            need = self.energy.neediest_slab_target(
+                rooms, targets, room_temps, self.mode,
+                deadband_c=self.neediest_deadband_c,
+                saturated=self._saturated_rooms(state))
             if need is not None:
                 # The TARGET is the neediest room's, but the reference the
                 # law's spread is computed against stays the HOUSE setpoint:

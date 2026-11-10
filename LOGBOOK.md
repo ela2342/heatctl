@@ -6402,3 +6402,21 @@ kind_naomi's Shelly has a power-connection problem (owner): now dead, and the
 earlier fluctuations may have been it rebooting. THEORY to revisit: some of
 what the filter called kind_naomi's unexplained heat (+166 / +247 W) and the
 11-06 19:00 jump to 25.5 may be sensor artefacts, not the room.
+
+## 2026-11-10 — Neediest-law safeguards built; energy accounting; buffer tank coming
+
+Owner agreed to the trial's conclusions and asked for the safeguards:
+- deadband: a room must be >= 0.3 K past setpoint to set the water
+  (`water_setpoint.neediest_deadband_c`);
+- floor-limited rooms may not lead: all circuits fully open at under 2.0 K
+  supply-return (`neediest_min_dt_k`, `Controller._saturated_rooms`);
+- a room on the house-average proxy ranks LAST in the flow floor
+  (`PROXY_NEED`).
+Plus the spread reference fix (fc7834b). Tests for each, five mutations
+caught (one needed a wiring test). Not yet deployed.
+Owner decisions: the heat pump's reported current x 230 V is its consumption
+(the 1.56x factor not applied); and the 1000 L buffer tank is being connected
+(no date) - it will make the flow floor unnecessary. Both in BACKLOG.
+Owner also asked to prepare a cascade (inner loop on slab temperature from the
+returns, outer loop on room air steering the slab target) as a switched-off
+experiment ready to run - in progress.

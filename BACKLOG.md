@@ -134,6 +134,21 @@ them is blocked, and none of them is urgent.
         cooling. capacity.py already refuses to act without both conditions
         (it reports "silent mode or fan cap not configured").
 
+  - [ ] **The 1000 L buffer tank is being connected (owner, 2026-11-10; no
+        date).** Decoupling the heat pump's flow from the manifold removes the
+        reason for the flow floor (Er03 protection by mean valve opening), and
+        with it the remainder-allocation trade-offs of 2026-11-03..10. Until the
+        switch, keep improving the existing plant. When it comes: the flow
+        floor, `min_open_pct`, D-041's role in Er03 protection and the
+        DESIGN.md buffer model (5-node stratified tank, WP-A..) all need
+        revisiting; the heat pump then charges the tank and the manifold draws
+        from it.
+
+  - [ ] **Energy accounting: the heat pump's reported current x 230 V is its
+        consumption (owner decision, 2026-11-10).** Ballpark accepted; the error
+        to be measured some day. Note the August "1.56x over-read" finding is
+        disputed by the owner and NOT applied.
+
 ## Milestone 1 - harden layer 1
 
 - [ ] DEFERRED, deliberately: put the dew-point margin on a proper footing.

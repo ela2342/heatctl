@@ -549,3 +549,24 @@ def test_the_neediest_room_below_setpoint_sets_the_water():
     # nobody wants heat -> None, and the caller falls back to the balance
     warm = {k: 30.0 for k in air}
     assert e.neediest_slab_target(rooms, sps, warm, "heating") is None
+
+
+def test_a_room_must_be_clearly_short_and_not_floor_limited_to_lead():
+    """2026-11-10: the source flipped between two rooms on 0.1 K dips, each
+    flip moving the house water ~2 K; and a 3.4 m2 room whose circuit was
+    already fully open at 1.4-2.5 K supply-return set the water for 140 m2.
+    A room must be past the deadband, and not floor-limited, to lead."""
+    from heatctl.energy import RoomEnergy
+    e = EnergyDemand.__new__(EnergyDemand)
+    e.emitters = {"small": "slab", "big": "slab"}
+    rooms = [RoomEnergy("small", None, 36.0, None, None, None, False, "x"),
+             RoomEnergy("big", None, 31.0, None, None, None, False, "x")]
+    sps = {"small": 23.5, "big": 22.0}
+    air = {"small": 23.4, "big": 21.0}               # small only 0.1 K short
+    assert e.neediest_slab_target(rooms, sps, air, "heating",
+                                  deadband_c=0.3)[2] == "big"
+    air = {"small": 22.0, "big": 21.0}               # small clearly short...
+    assert e.neediest_slab_target(rooms, sps, air, "heating",
+                                  deadband_c=0.3)[2] == "small"
+    assert e.neediest_slab_target(rooms, sps, air, "heating", deadband_c=0.3,
+                                  saturated={"small"})[2] == "big"  # ...but floor-limited

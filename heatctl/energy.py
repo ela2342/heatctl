@@ -383,7 +383,9 @@ class EnergyDemand:
     def neediest_slab_target(self, rooms: list[RoomEnergy],
                              setpoints: dict[str, float],
                              room_temps: dict[str, float],
-                             mode: str) -> tuple[float, float, str] | None:
+                             mode: str, deadband_c: float = 0.0,
+                             saturated: set[str] | None = None
+                             ) -> tuple[float, float, str] | None:
         """The water-mean target of the room that needs the most, among slab
         rooms that still want the current mode: (target, setpoint, room).
 
@@ -402,19 +404,31 @@ class EnergyDemand:
         anything. None when no room wants the mode; the caller falls back to
         the balanced target.
 
-        NOT YET BUILT, and expected to be needed: a back-off when too many
-        valves want to close (BACKLOG).
+        TWO SAFEGUARDS, from the trial's first two days (2026-11-10):
+        - `deadband_c`: a room must be CLEARLY past its setpoint to lead. The
+          source flipped between Gaestebad and Wohnzimmer on 0.1 K dips, and
+          each flip moved the house water ~2 K and the compressor ~15 Hz.
+        - `saturated`: rooms whose circuits are already fully open at a small
+          supply-return difference may not lead. Gaestebad (3.4 m2) set the
+          water for the whole house while its own circuit took 200-350 W at
+          1.4-2.5 K: its floor, not the water, was the limit, so raising the
+          water mainly heated everyone else.
+
+        NOT YET BUILT, and expected to be needed: a back-off when the implied
+        heat exceeds capacity or too many valves want to close (BACKLOG).
         """
+        saturated = saturated or set()
         best = None
         for r in rooms:
             if (r.target_c is None or not self.has_slab(r.name)
-                    or r.name not in setpoints or r.name not in room_temps):
+                    or r.name not in setpoints or r.name not in room_temps
+                    or r.name in saturated):
                 continue
-            below = room_temps[r.name] < setpoints[r.name]
-            if mode == "heating" and below:
+            under = setpoints[r.name] - room_temps[r.name]   # + = too cold
+            if mode == "heating" and under > deadband_c:
                 if best is None or r.target_c > best[0]:
                     best = (r.target_c, setpoints[r.name], r.name)
-            elif mode == "cooling" and not below:
+            elif mode == "cooling" and -under > deadband_c:
                 if best is None or r.target_c < best[0]:
                     best = (r.target_c, setpoints[r.name], r.name)
         return best
