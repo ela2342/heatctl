@@ -6420,3 +6420,12 @@ Owner decisions: the heat pump's reported current x 230 V is its consumption
 Owner also asked to prepare a cascade (inner loop on slab temperature from the
 returns, outer loop on room air steering the slab target) as a switched-off
 experiment ready to run - in progress.
+
+## 2026-11-10 08:29 — Deployed 3be4b45: neediest-law safeguards and the spread fix
+
+Mode off 08:26:15, compressor 50 -> 0 Hz by 08:27:29; deployed (defaults for
+the two new parameters, no live-config edit); PROXY_NEED confirmed in the
+container; back in heating. First cycle: no room >= 0.3 K under setpoint
+(Wohnzimmer room mean ~21.9), so target_source "balance", direct target 27.3,
+P05 29 -> 27 pending confirmation. The neediest law now leads only when a
+room is clearly short and not floor-limited.
