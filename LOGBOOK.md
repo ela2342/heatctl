@@ -6442,3 +6442,23 @@ inner direction on the water mean (not the return), no integration of a
 stagnant reading, outer clamp and anti-windup, proxy/stale fallback; six
 mutations caught (two only after tightening vacuous tests). Ships dormant with
 the next deploy.
+
+## 2026-11-10 — COP estimate, before and after silent mode off (owner's accounting)
+
+Electrical = compressor current register x 230 V (owner decision; no 1.56x).
+Thermal two ways: pump curve (1.44 m3/h x pump %) x (LW - RW), an upper bound;
+D-041 valve-map flow (~14 l/min) x (VL - RL_total), a lower one. Energy-
+weighted over running minutes, defrosts included (negative heat).
+
+| period | Hz | P_el | COP valve-map | COP pump-curve |
+|---|---|---|---|---|
+| silent, 70 Hz cap, 11-05..11-08 22:33 | 56 | 0.83 kW | 2.83 | 5.01 |
+| silent off + powerful, 11-08 22:33..11-09 | 83 | 1.79 kW | 2.02 | 4.10 |
+
+Outdoor 1.5-1.9 degC both. The datasheet (3.4 at A0/W35) sits between the
+columns: the pump curve is implausibly high, so the real flow is below it -
+nearer 17-20 l/min than 14 (D-028: 20.7 all-open). Flow-independent: the
+higher frequency cost 18-29 % of COP, electricity x2.2 for ~1.6-1.75x heat,
+a MARGINAL COP of ~1.3-3.3 on the extra heat. Argues for letting the
+compressor come back down once rooms are satisfied - the deadband (live since
+08:29) already returned the law to the balance.
