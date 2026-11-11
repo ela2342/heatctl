@@ -6521,3 +6521,15 @@ kind_natalie / kind_naomi targets 27.0 -> 22.7 / 23.0, Schlafzimmer 20.7 ->
 glazed facades, roof, gallery). House slab target only 28.08 -> 27.82
 (Saturday 15:00: -> 27.60): ~0.2-0.4 K on the return. Wohnzimmer's 43 %
 weight nearly cancels the bedrooms. RIGHT, but not what cools the house.
+
+## 2026-11-11 22:47 — All setpoints -0.5 K (owner, interim relief)
+
+Owner approved all three: deploy the layer-1 energy change, lower setpoints
+0.5 K now, build the slow house-level correction for review. Setpoints live at
+22:47 (read back): bathrooms 22.5, Schlafzimmer 19.5, all others 21.5. Live
+config edited off-box in a private temp dir and validated before writing
+(backup `config.yaml.bak-20261111-energy`); it now also carries the
+envelope shares and `control.energy.occupancy`. An earlier attempt failed
+safely - /tmp/jr had gone, the copy landed in the repo directory, the edit
+aborted and the unmodified file was written back; verified byte-identical to
+the backup, the copy removed, nothing staged.
