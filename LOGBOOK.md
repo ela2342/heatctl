@@ -6533,3 +6533,14 @@ envelope shares and `control.energy.occupancy`. An earlier attempt failed
 safely - /tmp/jr had gone, the copy landed in the repo directory, the edit
 aborted and the unmodified file was written back; verified byte-identical to
 the backup, the copy removed, nothing staged.
+
+## 2026-11-11 22:52 — Deployed 31dbdf6..e44f80a: layer-1 envelope shares and occupancy gains
+
+Mode off 22:49:22, 0 Hz by 22:49:59; deployed (the dormant cascade code ships
+with it, `cascade.enabled: false`); back in heating. With the -0.5 K
+setpoints: house slab target 26.2 (22:30) -> 24.24, direct target 23.75, P05
+25 -> ~24. Per room: Wohnzimmer 31.6, bathrooms 26.1-26.7, kind_natalie 19.2,
+Schlafzimmer 16.7, kind_naomi 13.1 - that last on the house-average proxy
+(sensor dead), where the recovery term turns ~1.5 K of proxied excess into
+-3.3 K of target; meaningless as a temperature, pulls the house target down at
+~16 % weight. Next: the slow house-level correction, for review.
