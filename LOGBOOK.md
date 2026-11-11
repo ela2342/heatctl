@@ -6462,3 +6462,20 @@ higher frequency cost 18-29 % of COP, electricity x2.2 for ~1.6-1.75x heat,
 a MARGINAL COP of ~1.3-3.3 on the extra heat. Argues for letting the
 compressor come back down once rooms are satisfied - the deadband (live since
 08:29) already returned the law to the balance.
+
+## 2026-11-11 22:18 — Three rooms on the proxy; the floor's remainder lands in Schlafzimmer
+
+Monitoring check (none ran since 11-10 07:47). 3.6 degC, heating, compressor
+80 Hz / 6.8 A, P05 29; neediest source Wohnzimmer (room mean 21.65, 0.35 K
+under - past the 0.3 deadband), direct target 28.8. No faults, opt ok.
+Sensors: kind_natalie's Shelly silent since 11-10 22:16; kind_naomi's
+flickering (989 messages today, last 18:42 at 27.4 - power issue, unreliable);
+Gaestebad's (direct to the plant, -93 dBm on 11-06) last at 16:51, two wakes
+missed. Those three rooms run on the house-average proxy and rank LAST in the
+flow floor - so its remainder goes to the least-past-setpoint SENSED room:
+Schlafzimmer, 22.6 against 21, hk07 at 50 %; and hk11 at 45 % (Arbeitszimmer
+24.7, fan off). The proxy ranking did what it was built for, and showed its
+cost: with most rooms unknown, the water lands in the known warm ones. The
+flow floor itself is the problem the buffer tank will remove.
+Aside: roomtemp/badezimmer (HA copy, not used by the plant) reads 25.1 against
+the plant's 23.3 for the same room - two devices, not investigated.
