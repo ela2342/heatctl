@@ -656,3 +656,77 @@ def test_a_setpoint_outside_the_band_is_corrected_despite_hysteresis(sp):
     c = sp()
     writes = run(c, (15.0, 15.0), 10_000, 12_000, current=15.0, limit=15.4)
     assert writes and writes[0][1] == 16.0
+
+
+# ---------- slow house trim (built 2026-11-11 for review, OFF by default) ----------
+
+def _trim(sp, **ht):
+    c = sp(house_trim={"enabled": True, "ki_k_per_k_day": 1.0, "max_k": 2.0, **ht})
+    c.observe_house_target((28.0, 22.0), 0.0)
+    return c
+
+
+def _feed(c, dev, seconds, mode="heating", t0=0.0, step=60.0):
+    t = t0
+    while t < t0 + seconds:
+        c._house_t = t                      # keep the target fresh
+        c.observe_house_deviation(dev, t, mode)
+        t += step
+    return t
+
+
+def test_the_house_trim_is_off_unless_switched_on(sp):
+    """Built for the owner's review: until enabled it must not move the law."""
+    c = sp()
+    c.observe_house_target((28.0, 22.0), 0.0)
+    base = c.direct_value(0.0)
+    _feed(c, -1.0, 86400.0)
+    assert c.house_trim == 0.0
+    assert c.direct_value(86400.0 - 60.0) == pytest.approx(base)
+
+
+def test_a_house_too_warm_for_a_day_gets_about_a_kelvin_colder_water_target(sp):
+    """The measured fault: under the balance the house ran ~0.7 K warm, a
+    steady offset the integrator-free law cannot remove. One kelvin warm for
+    a day is ~1 K of trim at 1 K/K/day, in the COLDER direction, in heating
+    and (same sign) in cooling; never past max_k."""
+    for mode in ("heating", "cooling"):
+        c = _trim(sp)
+        base = c.direct_value(0.0)
+        t = _feed(c, -1.0, 86400.0, mode)
+        assert c.house_trim == pytest.approx(-1.0, abs=0.02), mode
+        c._house_t = t
+        assert c.direct_value(t) < base
+        _feed(c, -1.0, 5 * 86400.0, mode, t0=t)
+        assert c.house_trim == pytest.approx(-2.0)
+
+
+def test_a_gap_is_a_pause_not_a_step_and_a_mode_change_starts_over(sp):
+    """Ten hours without a deviation must not be integrated as ten hours: at
+    most 10 min at once. A mode change resets the trim."""
+    c = _trim(sp)
+    c.observe_house_deviation(-1.0, 0.0, "heating")
+    c.observe_house_deviation(-1.0, 36000.0, "heating")
+    assert c.house_trim == pytest.approx(-600.0 / 86400.0)
+    c.reset_house_trim()
+    assert c.house_trim == 0.0
+
+
+def test_the_trim_does_not_wind_up_against_the_band(sp):
+    """With the law already at the bottom of the heating band, a house that
+    is still too warm cannot be helped by more negative trim - freeze."""
+    c = _trim(sp)
+    c.observe_house_target((18.0, 22.0), 0.0)     # law at 18.7, below heating_min 20
+    _feed(c, -1.0, 86400.0)
+    assert c.house_trim == 0.0
+
+
+def test_switching_the_trim_off_takes_it_out_of_the_law_at_once(sp):
+    """Turned off after running, the law must be the plain D-051 value again
+    immediately - not carry the learned trim until a restart."""
+    c = _trim(sp)
+    base = c.direct_value(0.0)
+    t = _feed(c, -1.0, 86400.0)
+    c.house_trim_enabled = False
+    c._house_t = t
+    assert c.direct_value(t) == pytest.approx(base)

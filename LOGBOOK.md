@@ -6544,3 +6544,18 @@ Schlafzimmer 16.7, kind_naomi 13.1 - that last on the house-average proxy
 (sensor dead), where the recovery term turns ~1.5 K of proxied excess into
 -3.3 K of target; meaningless as a temperature, pulls the house target down at
 ~16 % weight. Next: the slow house-level correction, for review.
+
+## 2026-11-11 — Slow house-level trim built for review (OFF)
+
+The third of the owner's three: `water_setpoint.house_trim` (enabled: false).
+Integrates the floor-area-weighted (setpoint - air) of slab rooms with their
+OWN reading (proxied rooms excluded - their reading is the house average) at
+1 K per K per day, clamped +-2 K, added to the direct law's water-mean target;
+same sign in both modes (too warm -> colder water); at most 10 min integrated
+per observation (a gap is a pause); frozen at the band limit in the pushing
+direction; reset on a mode change; not persisted. Published as
+water_sp/house_trim and water_sp/house_dev when on. Answers the steady ~+0.7 K
+offset the integrator-free D-051 law leaves. Tests: off unless on, sign and
+rate in both modes, clamp, gap, anti-windup, switch-off takes it out at once,
+proxied rooms excluded; six mutations caught (four first looked uncaught
+because the -k filter did not select the tests). Awaiting the owner's review.

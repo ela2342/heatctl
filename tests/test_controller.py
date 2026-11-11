@@ -1582,3 +1582,21 @@ async def test_the_outer_trim_integrates_clamps_and_stops_when_pinned(controller
     assert ctl._cascade_target(room, 21.0, "house_avg", 60.0, now) is None
     ctl._room_slab_target["gaestebad"] = (30.0, now - 3600.0)       # stale
     assert ctl._cascade_target(room, 21.0, "sensor", 60.0, now) is None
+
+
+async def test_the_house_trim_hears_only_rooms_with_their_own_reading(controller, cfg):
+    """A proxied room's reading is the house average; feeding it to the trim
+    would let the trim integrate its own output."""
+    ctl = controller(temps={"rl_hk01": 24.0, "rl_hk02": 24.0, "rl_hk03": 24.0,
+                            "vl_total": 30.0},
+                     room_temps={"gaestebad": 21.0}, control={"mode": "heating"},
+                     rooms=_energy_rooms(cfg["rooms"]))
+    ctl.water_sp.house_trim_enabled = True
+    ctl.plane.outdoor_forecast = 2.0
+    seen = []
+    ctl.water_sp.observe_house_deviation = lambda d, now, mode: seen.append(d)
+    ctl._room_src = {"gaestebad": "sensor", "wohnzimmer": "house_avg"}
+    await ctl._publish_energy_shadow(ctl.io.state, dict(ctl.room_setpoints),
+                                     {"gaestebad": 21.0, "wohnzimmer": 25.0},
+                                     23.0, time.monotonic())
+    assert seen[-1] == pytest.approx(ctl.room_setpoints["gaestebad"] - 21.0)

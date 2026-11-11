@@ -256,6 +256,8 @@ class Controller:
         duplicated in __init__ and on_command, and __init__ was missing the
         invert half - hence one function, called from both.
         """
+        if getattr(self, "mode", None) != mode and hasattr(self, "water_sp"):
+            self.water_sp.reset_house_trim()
         self.mode = mode
         inv = mode == "cooling"
         for pid in (*self.room_pids.values(), *self.circuit_pids.values(),
@@ -1169,6 +1171,24 @@ class Controller:
                 water_target, source = (need[0], ref), need[2]
         self.water_sp.observe_house_target(water_target, now)
         await self.plane.publish("water_sp/target_source", source)
+        # THE SLOW HOUSE TRIM's input: floor-area-weighted (setpoint - air)
+        # over slab rooms with their OWN reading - a proxied room's reading is
+        # the house average, which would feed the trim its own output.
+        num = den = 0.0
+        for r in self.rooms:
+            nme = r["name"]
+            if (nme in room_temps and self.energy.has_slab(nme)
+                    and self._room_src.get(nme) == "sensor"):
+                a_r = self.energy.areas.get(nme, 0.0)
+                num += a_r * (targets[nme] - room_temps[nme])
+                den += a_r
+        dev = num / den if den > 0 else None
+        self.water_sp.observe_house_deviation(dev, now, self.mode)
+        if self.water_sp.house_trim_enabled:
+            await self.plane.publish("water_sp/house_dev",
+                                     "unknown" if dev is None else f"{dev:+.2f}")
+            await self.plane.publish("water_sp/house_trim",
+                                     f"{self.water_sp.house_trim:+.2f}")
         x = self.water_sp.direct_value(now)
         await self.plane.publish(
             "water_sp/direct_target", "unknown" if x is None else f"{x:.2f}")

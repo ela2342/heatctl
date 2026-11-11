@@ -867,6 +867,14 @@ control:
     # supply-return difference is floor-limited and may not lead (Gaestebad,
     # 3.4 m2, set the water for the house at 1.4-2.5 K).
     neediest_min_dt_k: 2.0
+    # SLOW HOUSE TRIM (built 2026-11-11 for the owner's review; OFF): adds the
+    # integral of the floor-area-weighted house air deviation to the water-
+    # mean target, ~1 K per K per day, clamped. Answers the steady offset the
+    # direct law leaves (measured ~+0.7 K warm). Same sign in both modes.
+    house_trim:
+      enabled: false
+      ki_k_per_k_day: 1.0
+      max_k: 2.0
     # THE DIRECT LAW (D-051). The setpoint is computed, not walked:
     #   P0x = T_target - spread_ratio/2 * (T_target - T_set)
     # with T_target / T_set the capacity-weighted house slab target and room

@@ -197,6 +197,24 @@ class SetpointController:
         self._house_t: float | None = None
         self._pending: tuple[float, float] | None = None   # (value, since)
 
+        # SLOW HOUSE-LEVEL TRIM on the direct law's target (2026-11-11, owner:
+        # "the whole house is way too hot"). The law has no integrator by
+        # design (D-051), so a wrong ua_ao, gains or solar share becomes a
+        # STEADY air offset - measured ~+0.7 K warm under the balance. This
+        # trim integrates the house's floor-area-weighted air deviation at a
+        # time constant of about a day and adds it to the water-mean target,
+        # clamped. D-051's windup argument is about integrators that act on
+        # the slab's hour-scale; at ~1 K per K per DAY the slab has long since
+        # answered. Same sign in both modes: too warm -> colder water. Not
+        # persisted (restart == safe state, it starts at 0); reset on a mode
+        # change. Off unless `house_trim.enabled`.
+        ht = s.get("house_trim") or {}
+        self.house_trim_enabled = bool(ht.get("enabled", False))
+        self.house_trim_ki = float(ht.get("ki_k_per_k_day", 1.0)) / 86400.0
+        self.house_trim_max = float(ht.get("max_k", 2.0))
+        self.house_trim = 0.0
+        self._trim_t: float | None = None
+
     def observe_spread(self, spread: float | None) -> None:
         """Feed the measured leaving/return delta-T. None means "not running".
 
@@ -281,7 +299,37 @@ class SetpointController:
                 or now - self._house_t > self.target_max_age_s):
             return None
         t, sp = self._house
+        if self.house_trim_enabled:
+            t += self.house_trim
         return t - self.spread_ratio / 2.0 * (t - sp)
+
+    def observe_house_deviation(self, dev: float | None, now: float,
+                                mode: str) -> None:
+        """Integrate the house's air deviation (setpoint - air, + = too cold)
+        into the slow trim. No deviation, or a gap, is a pause, not a step:
+        at most 10 min is integrated at once. Frozen while the law already
+        sits at its band limit in the direction the deviation pushes."""
+        if not self.house_trim_enabled or dev is None or mode not in ("heating", "cooling"):
+            self._trim_t = None
+            return
+        if self._trim_t is None:
+            self._trim_t = now
+            return
+        dt = min(600.0, max(0.0, now - self._trim_t))
+        self._trim_t = now
+        x = self.direct_value(now)
+        if x is not None:
+            lo, hi = self._bounds(mode)
+            if (dev > 0 and x >= hi) or (dev < 0 and x <= lo):
+                return
+        t = self.house_trim + self.house_trim_ki * dev * dt
+        self.house_trim = max(-self.house_trim_max, min(self.house_trim_max, t))
+
+    def reset_house_trim(self) -> None:
+        """A mode change starts the trim over: what heating learned about the
+        house's offset says nothing about cooling."""
+        self.house_trim = 0.0
+        self._trim_t = None
 
     def overcharged(self, mode: str) -> bool:
         """Is the slab past target in the direction this mode charges it?
