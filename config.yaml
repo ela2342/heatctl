@@ -298,6 +298,12 @@ rooms:
     label: "Gästebad"
     setpoint_c: 23.0   # owner 2026-11-10 ("the whole house seems a bit overheated"); was 23.5
     floor_area_m2: 3.43   # WC/Du
+    # Share of the house envelope conductance from the per-room take-off
+    # off the plans (2026-11-05/11; layer 2's `envelope_share`, the hall's
+    # 0.121 spread over these rooms by renormalising). Replaces the split
+    # by floor area in layer 1's energy model. Every room has one or none
+    # are used.
+    envelope_share: 0.0203
     circuits: [{sensor: rl_hk01, valve: valve_hk01}]
     # DIRECT TO THE PLANT BROKER since 2026-08-23, through the normaliser
     # (D-047). This was the LAST Controme Raumcontroller in the control path,
@@ -324,6 +330,7 @@ rooms:
     label: "Wohnzimmer"
     setpoint_c: 22.0
     floor_area_m2: 42.11   # Wohnen/Essen
+    envelope_share: 0.3974
     circuits:
       # hk02 HEATS THE DIELE (owner, 2026-11-08), the hall between the
       # children's rooms and the Gaestebad - not this room. It is listed here
@@ -380,6 +387,7 @@ rooms:
     label: "Kinderzimmer Natalie"
     setpoint_c: 22.0
     floor_area_m2: 16.33   # plan "Kind 1": W + S glazing, the room with TWO
+    envelope_share: 0.0785
                            # windows, which is how the occupant identifies it
     circuits: [{sensor: rl_hk03, valve: valve_hk03}]
     # THE LAST ROOM TO GET A SENSOR, 2026-08-19. Shelly H&T G3, externally
@@ -391,12 +399,14 @@ rooms:
     label: "Kinderzimmer Naomi"
     setpoint_c: 22.0
     floor_area_m2: 15.61   # plan "Kind 2": S glazing only, one window
+    envelope_share: 0.0496
     circuits: [{sensor: rl_hk04, valve: valve_hk04}]
     room_temp_topic: "roomtemp/kind_naomi"   # Shelly H&T G3, via the HA bridge
   - name: badezimmer
     label: "Badezimmer"
     setpoint_c: 23.0   # owner 2026-11-10 ("the whole house seems a bit overheated"); was 23.5
     floor_area_m2: 8.94   # Bad
+    envelope_share: 0.0521
     circuits: [{sensor: rl_hk06, valve: valve_hk06}]
     # DIRECT TO THE PLANT BROKER since 2026-08-22, through the normaliser
     # (D-047). The old `roomtemp/badezimmer` path went silent - two messages in
@@ -459,12 +469,14 @@ rooms:
     # the house-average proxy ranking last.
     setpoint_c: 20.0
     floor_area_m2: 11.08   # Schlafen
+    envelope_share: 0.0851
     circuits: [{sensor: rl_hk07, valve: valve_hk07}]
     room_temp_topic: "roomtemp/schlafzimmer"   # Shelly H&T G3, via the HA bridge
   - name: arbeitszimmer
     label: "Arbeitszimmer"
     setpoint_c: 22.0
     floor_area_m2: 31.20   # plan "Arbeit/Gaeste"
+    envelope_share: 0.196
     # NOT A SLAB ROOM. It is on the OG and its emitter is a fan coil, so it has
     # neither the floor build-up nor the mass. Both matter: `c_slab_wh` is
     # 63.7 Wh/(m2 K) x 136.40 m2, and that 136.40 is the GROUND FLOOR slab -
@@ -796,6 +808,30 @@ control:
     # Refuse to touch the ceiling unless that has been raised - a frequency cap
     # with a throttled condenser fan is a high-pressure trip.
     fan_cap_min: 400
+
+  # LAYER 1 ENERGY MODEL (heatctl/energy.py). Defaults for the building
+  # totals live in the code; this block carries what the plant learned in
+  # November 2026.
+  energy:
+    # INTERNAL GAINS THAT FOLLOW PEOPLE (owner's account, 2026-11-08/11):
+    # base load by floor area plus people per room by time of day. Replaces
+    # the flat q_internal_w (350 W by area), which put the gains in the wrong
+    # rooms at the wrong hours. Same values as optimizer/params.yaml
+    # `occupancy`, duplicated on purpose (layer 1 may not read layer 2).
+    occupancy:
+      base_w: 200.0
+      w_asleep: 70.0
+      w_awake: 90.0
+      schedule:        # [days, from_h, to_h, persons, asleep|awake]
+        kind_natalie:
+          - [all, 21, 7, 2, asleep]
+          - [weekday, 15, 21, 2, awake]
+          - [weekend, 7, 21, 2, awake]
+        schlafzimmer:
+          - [all, 22, 7, 2, asleep]
+        wohnzimmer:
+          - [weekday, 18, 22, 2, awake]
+          - [weekend, 9, 22, 2, awake]
 
   # CASCADE EXPERIMENT - OFF. docs/EXPERIMENT_CASCADE.md has the protocol.
   # Inner loop per circuit: the circuit's water mean (VL+RL)/2 held on the

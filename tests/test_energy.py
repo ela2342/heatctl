@@ -570,3 +570,53 @@ def test_a_room_must_be_clearly_short_and_not_floor_limited_to_lead():
                                   deadband_c=0.3)[2] == "small"
     assert e.neediest_slab_target(rooms, sps, air, "heating", deadband_c=0.3,
                                   saturated={"small"})[2] == "big"  # ...but floor-limited
+
+
+# ---------- envelope shares and occupancy in layer 1 (2026-11-11) ----------
+
+def _rooms_cfg(shares=None, occupancy=None):
+    rooms = [{"name": "a", "floor_area_m2": 20.0, "circuits": []},
+             {"name": "b", "floor_area_m2": 20.0, "circuits": []}]
+    if shares:
+        for r in rooms:
+            if r["name"] in shares:
+                r["envelope_share"] = shares[r["name"]]
+    cfg = {"rooms": rooms, "control": {"energy": {}}}
+    if occupancy:
+        cfg["control"]["energy"]["occupancy"] = occupancy
+    return cfg
+
+
+def test_layer_one_splits_the_envelope_by_its_take_off_all_or_none():
+    """The children's rooms have no roof; by floor area they were charged one.
+    With `envelope_share` on every room the split follows the take-off,
+    renormalised; with it on only some rooms, floor area for all."""
+    e = EnergyDemand(_rooms_cfg({"a": 0.1, "b": 0.3}))
+    assert e.envelope_share("a") == pytest.approx(0.25)
+    assert e.envelope_share("b") == pytest.approx(0.75)
+    # Same floor area, different envelope: the room losing more needs the
+    # warmer slab - which only holds if the targets USE the share.
+    ra = e.room("a", 22.0, 3.0, None, None, room_c=22.0, mode="heating")
+    rb = e.room("b", 22.0, 3.0, None, None, room_c=22.0, mode="heating")
+    assert rb.target_c > ra.target_c + 1.0
+    e = EnergyDemand(_rooms_cfg({"a": 0.1}))
+    assert e.envelope_share("a") == pytest.approx(0.5)
+
+
+def test_layer_one_puts_the_people_where_the_schedule_says():
+    """Two children asleep in a room at night are ~140 W there, not a flat
+    share of 350 W spread by area; the base load still goes by area."""
+    import time as _t
+    occ = {"base_w": 200.0, "w_asleep": 70.0, "w_awake": 90.0,
+           "schedule": {"a": [["all", 21, 7, 2, "asleep"]]}}
+    e = EnergyDemand(_rooms_cfg(occupancy=occ))
+    e.localtime = lambda: _t.struct_time((2026, 11, 11, 23, 0, 0, 2, 315, 0))
+    assert e.internal_gain_w("a") == pytest.approx(100.0 + 140.0)
+    assert e.internal_gain_w("b") == pytest.approx(100.0)
+    e.localtime = lambda: _t.struct_time((2026, 11, 11, 12, 0, 0, 2, 315, 0))
+    assert e.internal_gain_w("a") == pytest.approx(100.0)
+    # ...and a room with more gains needs a LOWER slab target
+    e.localtime = lambda: _t.struct_time((2026, 11, 11, 23, 0, 0, 2, 315, 0))
+    ra = e.room("a", 22.0, 3.0, None, None, room_c=22.0, mode="heating")
+    rb = e.room("b", 22.0, 3.0, None, None, room_c=22.0, mode="heating")
+    assert ra.target_c < rb.target_c

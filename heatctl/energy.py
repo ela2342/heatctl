@@ -20,6 +20,7 @@ about that is the caller's job.
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass
 
 
@@ -202,6 +203,12 @@ class EnergyDemand:
         # one - so this is explicitly a first approximation, replaced per room
         # once the survey areas are entered and refined by identification.
         self.areas: dict[str, float] = {}
+        # ENVELOPE SHARE per room, where config gives one (`rooms[].
+        # envelope_share`, 2026-11-11): the per-room take-off off the plans
+        # (outside walls, windows, roof; the children's rooms have NO roof),
+        # renormalised over the configured rooms. Only when every room with
+        # a floor area has one - otherwise floor area for all, never a mix.
+        self.envelope: dict[str, float] = {}
         # EMITTER TYPE, because area alone does not tell you whether a room has
         # thermal storage. Arbeitszimmer is 31.20 m2 on the OG with a fan coil:
         # applying `c_slab_wh_per_m2` to it invented 1987 Wh/K - 24 % of the
@@ -219,7 +226,27 @@ class EnergyDemand:
             if a:
                 self.areas[room["name"]] = float(a)
                 self.emitters[room["name"]] = room.get("emitter", "slab")
+                if room.get("envelope_share") is not None:
+                    self.envelope[room["name"]] = float(room["envelope_share"])
         self.total_area = sum(self.areas.values())
+        if set(self.envelope) != set(self.areas) or sum(self.envelope.values()) <= 0:
+            self.envelope = {}
+        else:
+            tot = sum(self.envelope.values())
+            self.envelope = {n: v / tot for n, v in self.envelope.items()}
+
+        # INTERNAL GAINS THAT FOLLOW PEOPLE (2026-11-11). `occupancy`: a base
+        # load (appliances, standby, lighting) by floor area, plus a per-room
+        # schedule of people - the owner's account: both children in
+        # kind_natalie at night and weekend days, the parents in schlafzimmer
+        # at night. The flat q_internal_w by floor area put the house's gains
+        # in the wrong rooms at the wrong hours; layer 2's filter found the
+        # missing heat exactly in the occupied bedrooms at night. Without the
+        # block, q_internal_w by area as before. Duplicated from
+        # optimizer/house.py `occupancy_w` on purpose: layer 1 may not import
+        # layer 2.
+        self.occupancy = c.get("occupancy") or {}
+        self.localtime = time.localtime
 
         # Layer 2 refinements, empty until it publishes.
         self._ntu: dict[str, float] = {}
@@ -242,6 +269,34 @@ class EnergyDemand:
     def has_slab(self, name: str) -> bool:
         """Does this room store energy in a floor slab we can aim at?"""
         return self.emitters.get(name, "slab") == "slab"
+
+    def envelope_share(self, name: str) -> float:
+        """This room's share of the house envelope conductance: the take-off
+        when configured, else floor area."""
+        if self.envelope:
+            return self.envelope.get(name, 0.0)
+        return self.room_share(name)
+
+    def internal_gain_w(self, name: str) -> float:
+        """Internal gains in this room now, W: base load by area plus the
+        people the schedule puts here (see `occupancy` in __init__)."""
+        occ = self.occupancy
+        if not occ:
+            return self.q_int_w * self.room_share(name)
+        base = float(occ.get("base_w", self.q_int_w)) * self.room_share(name)
+        lt = self.localtime()
+        hour, weekend = lt.tm_hour + lt.tm_min / 60.0, lt.tm_wday >= 5
+        w = {"asleep": float(occ.get("w_asleep", 70.0)),
+             "awake": float(occ.get("w_awake", 90.0))}
+        people = 0.0
+        for days, h0, h1, n, state in (occ.get("schedule") or {}).get(name, []):
+            if days == "weekday" and weekend or days == "weekend" and not weekend:
+                continue
+            h0, h1 = float(h0), float(h1)
+            inside = h0 <= hour < h1 if h0 < h1 else (hour >= h0 or hour < h1)
+            if inside:
+                people += float(n) * w[state]
+        return base + people
 
     def room_share(self, name: str) -> float:
         """Fraction of the house this room represents, by floor area."""
@@ -297,9 +352,10 @@ class EnergyDemand:
 
         target = slab_target_c(
             setpoint_c, outdoor_c,
-            ua_ao=self.ua_ao * share, ua_sa=self.ua_sa * share,
+            ua_ao=self.ua_ao * self.envelope_share(name),
+            ua_sa=self.ua_sa * share,
             q_sol_w=self._q_sol.get(name, 0.0),
-            q_int_w=self.q_int_w * share,
+            q_int_w=self.internal_gain_w(name),
             room_c=room_c, c_air_wh=self.c_air_wh * share,
             tau_recover_h=self.tau_recover_h)
 

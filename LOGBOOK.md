@@ -6504,3 +6504,20 @@ Still true and next: even the balance overstates the need (measured ~0.7 K
 warm), because layer 1's energy model splits envelope by floor area and has a
 flat 350 W of gains; the per-room envelope and occupancy work lives only in
 layer 2 so far.
+
+## 2026-11-11 — Layer 1 gets the per-room envelope and occupancy (built, not deployed)
+
+Owner: "go ahead and build it". `heatctl/energy.py`: per-room envelope
+shares (`rooms[].envelope_share`, layer 2's take-off values, the hall's 0.121
+spread by renormalising; all rooms or none) and internal gains that follow
+people (`control.energy.occupancy`: base 200 W by area + the owner's schedule,
+70 W asleep / 90 W awake; duplicated from layer 2 on purpose). Tests: shares
+used in the targets, all-or-none, schedule across midnight and weekend, more
+gains -> lower target; four mutations caught (one after tightening).
+
+Effect computed for 11-11 23:00 (3.6 degC, that evening's room temperatures):
+kind_natalie / kind_naomi targets 27.0 -> 22.7 / 23.0, Schlafzimmer 20.7 ->
+18.6, bathrooms ~1 K lower, Wohnzimmer 30.2 -> 33.6 (its real envelope: two
+glazed facades, roof, gallery). House slab target only 28.08 -> 27.82
+(Saturday 15:00: -> 27.60): ~0.2-0.4 K on the return. Wohnzimmer's 43 %
+weight nearly cancels the bedrooms. RIGHT, but not what cools the house.
