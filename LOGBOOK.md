@@ -6487,3 +6487,20 @@ Live by set/setpoint (read back), live config (backup
 hk07 fully open (the floor's remainder). At 20 its need (-2.6 K) ties within
 TIE_K with Arbeitszimmer's (-2.7), so the remainder should now be shared
 between hk07 and hk11 instead of going to hk07 first.
+
+## 2026-11-11 22:30 — Owner: "the whole house is way too hot" - water law back to balance
+
+The neediest trial ends after three days. Wohnzimmer led (room mean 21.65,
+0.35 K under, Shelly raw 22.8) while every other sensed room was over its
+setpoint and three rooms were blind on the proxy; compressor 80 Hz. Owner
+rejected re-enabling silent mode ("not solving anything") and chose the law.
+Live config `water_setpoint.target: balance` (backup
+`config.yaml.bak-20261111-balance`), repo config to match; mode off 22:28:04,
+0 Hz 22:29:18, `docker restart heatctl` 22:30:02 (config only - the dormant
+cascade code was NOT shipped). The FAILSAFE/cycle_error at 22:29:56 is the old
+process being stopped mid-write. First cycle: target_source balance, direct
+target 25.4 (house slab target 26.2) - P05 29 -> 25 pending confirmation.
+Still true and next: even the balance overstates the need (measured ~0.7 K
+warm), because layer 1's energy model splits envelope by floor area and has a
+flat 350 W of gains; the per-room envelope and occupancy work lives only in
+layer 2 so far.

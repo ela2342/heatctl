@@ -818,7 +818,11 @@ control:
     # 2026-11-08, ON TRIAL: the balance left the bathrooms - valves fully open -
     # 1-2 K short for weeks. A back-off for when too many valves want to close
     # is expected to be needed (BACKLOG). Revert = `balance` + restart.
-    target: neediest
+    # REVERTED 2026-11-11, owner: "the whole house is way too hot". Wohnzimmer
+    # (room mean 0.35 K under) led while every other sensed room was over,
+    # three rooms were blind on the proxy, and even the balance overstates the
+    # need (~0.7 K warm, ~1.2 kW of gains missing from the model).
+    target: balance
     # Safeguards for `neediest` (2026-11-10, from the trial's first two days):
     # a room must be this far past setpoint to set the water (the source
     # flipped on 0.1 K dips, ~2 K of water and ~15 Hz each time)...
