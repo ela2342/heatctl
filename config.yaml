@@ -454,7 +454,10 @@ rooms:
     # overheated. Let's bring our setpoints to some more realistic values."
     # The room ran 20-21.6 against 19 for days with its valve shut - neighbour
     # heat from the bathrooms - so 19 was not being held anyway.
-    setpoint_c: 21.0
+    # 21.0 -> 20.0 on 2026-11-11, owner. The room sat at 22.6 that evening,
+    # its valve fully open: the flow floor's remainder, with three rooms on
+    # the house-average proxy ranking last.
+    setpoint_c: 20.0
     floor_area_m2: 11.08   # Schlafen
     circuits: [{sensor: rl_hk07, valve: valve_hk07}]
     room_temp_topic: "roomtemp/schlafzimmer"   # Shelly H&T G3, via the HA bridge

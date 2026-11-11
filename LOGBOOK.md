@@ -6479,3 +6479,11 @@ cost: with most rooms unknown, the water lands in the known warm ones. The
 flow floor itself is the problem the buffer tank will remove.
 Aside: roomtemp/badezimmer (HA copy, not used by the plant) reads 25.1 against
 the plant's 23.3 for the same room - two devices, not investigated.
+
+## 2026-11-11 — Schlafzimmer setpoint 21 -> 20 (owner)
+
+Live by set/setpoint (read back), live config (backup
+`config.yaml.bak-20261111-schlaf20`), repo config. The room was at 22.6 with
+hk07 fully open (the floor's remainder). At 20 its need (-2.6 K) ties within
+TIE_K with Arbeitszimmer's (-2.7), so the remainder should now be shared
+between hk07 and hk11 instead of going to hk07 first.
