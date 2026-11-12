@@ -242,3 +242,27 @@ def test_every_thermostat_can_still_be_commanded(plane):
         if "/climate/" in topic:
             assert conf["temperature_command_topic"].startswith("heatctl/set/setpoint/")
             assert "min_temp" in conf and "max_temp" in conf
+
+
+def test_a_retained_room_reading_without_expiry_is_not_fresh(plane):
+    """2026-11-12: after a restart the broker replayed HA's retained
+    roomtemp/kind_natalie (silent for two days) and kind_naomi (a self-heated
+    28.5), and arrival-time freshness took both for live readings. A retained
+    room reading is believed only from the normaliser's expiring topics; a
+    live (non-retained) message is believed from anywhere."""
+    p = plane()
+    topic = next(t for t in p.room_topics if not t.startswith("sensors/room/"))
+    room = p.room_topics[topic]
+    p._dispatch(topic, "28.5", retain=True)
+    assert p.room_temp(room) is None
+    p._dispatch(topic, "21.0", retain=False)
+    assert p.room_temp(room) == 21.0
+
+
+def test_a_retained_reading_from_the_normaliser_is_believed(plane):
+    """The normaliser republishes retained WITH an MQTT 5 expiry, so the
+    broker never replays a stale one - its retained value is a reading."""
+    p = plane()
+    p.room_topics["sensors/room/x/temperature_c"] = "x"
+    p._dispatch("sensors/room/x/temperature_c", "22.4", retain=True)
+    assert p.room_temp("x") == 22.4

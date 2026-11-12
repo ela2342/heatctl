@@ -108,6 +108,11 @@ class ControlPlane:
         # logged. Layer 2 cannot send it - the topic is under `sensors/`, which
         # only the normaliser may write - but the clamp does not depend on that
         # remaining true.
+        # Room-temperature topics whose retained values the broker EXPIRES
+        # (the normaliser's contract) - the only retained room readings that
+        # may be believed. See _dispatch.
+        self.trusted_retained_prefix = str(
+            m.get("trusted_retained_prefix", "sensors/room/"))
         self.room_max_age_topics = {
             f"sensors/room/{r['name']}/max_age_s": r["name"]
             for r in cfg["rooms"]}
@@ -383,6 +388,19 @@ class ControlPlane:
             return
         room = self.room_topics.get(topic)
         if room is not None:
+            # A RETAINED room reading is trusted only from a topic whose
+            # retained value EXPIRES - the normaliser's (normaliser/main.py:
+            # retained with an MQTT 5 message expiry, so the broker never
+            # replays a stale one). Anything else retained is replayed on every
+            # reconnect with no age, and freshness here is judged by ARRIVAL:
+            # 2026-11-12, after a restart, the HA-bridged roomtemp/kind_natalie
+            # (silent for two days) and kind_naomi (a self-heated 28.5) both
+            # came back as fresh "sensor" readings. Such a replay is ignored;
+            # the room waits for its next live message.
+            if retain and not topic.startswith(self.trusted_retained_prefix):
+                log.info("ignoring retained room reading %s = %r (no expiry: "
+                         "could be any age)", topic, payload)
+                return
             v = extract(payload, self.room_temp_key.get(room))
             if v is None:
                 log.warning("bad room temp on %s: %r", topic, payload)

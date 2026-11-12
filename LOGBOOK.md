@@ -6639,3 +6639,19 @@ owner suspected), and kind_naomi's runs on battery - so no room uses the slab
 proxy tonight. First cycle: house deviation -1.78 K (floor-area-weighted, too
 warm), trim +0.00 and starting to integrate (~-1.8 K/day, clamp -2 K);
 balance, direct target 24.4, house slab target 25.05, P05 26 -> 24 pending.
+
+## 2026-11-12 — Retained room readings without expiry are replayed as fresh (fixed in code, not deployed)
+
+Right after the deploy, kind_natalie (23.8, silent since 11-10 22:16) and
+kind_naomi (28.5, the self-heated phantom) showed source "sensor": the broker
+replays HA's RETAINED roomtemp/* on every reconnect, and the plane judges
+freshness by arrival. The normaliser's sensors/room/* are retained WITH an
+MQTT 5 expiry (normaliser/main.py) and are fine; the HA-bridged topics have
+none. Tonight harmless - the replays age out within the room's staleness
+window, the trim integrates ~0.05 K meanwhile - but it recurs at every
+restart, and it is exactly how a dead sensor's last value feeds the trim.
+Fix (`ControlPlane._dispatch`): a retained room reading is believed only
+under `mqtt.trusted_retained_prefix` ("sensors/room/"); others wait for a live
+message. Tests both ways, two mutations caught. Ships with the next deploy.
+Cleaner still on the HA side: publish roomtemp/* without retain, or with an
+expiry - owner's HA config.
