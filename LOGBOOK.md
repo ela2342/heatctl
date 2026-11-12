@@ -6587,3 +6587,19 @@ on the house-average proxy: ranked last in the flow floor, excluded from the
 house trim's input. When it returns on battery it should sleep as designed,
 so its readings stop self-heating; revisit the filter's kind_naomi numbers
 (+166 / +247 W unexplained, the 11-06 jump) against clean data then.
+
+## 2026-11-12 13:47 — Compressor down to 32 Hz; Badezimmer's valve wide open 0.5 K over setpoint (PI windup)
+
+2.5 degC, heating, compressor 32 Hz / 2.1 A, supply 27.0 / return 25.7 -
+the return has reached P05 26 and the unit throttles: the efficient operating
+point at last. Balance, direct target 26.0, house slab target 26.9. Gaestebad
+back on its sensor (22.4 vs 22.5, hk01 50 %); kind_natalie still silent;
+kind_naomi disconnected (proxy). Slowly cooling: Badezimmer 23.3 -> 23.0,
+Schlafzimmer 22.4 -> 22.2, Wohnzimmer room mean 21.31 -> 21.39, Arbeitszimmer
+23.4. Shut-ish rooms 26 % (hk03/04/07), hk11 33 %.
+WRONG: Badezimmer is 0.5 K OVER its 22.5 and hk06 is at 50 %. The 11-05
+finding in action: the room PI's integral may grow to out_max + |p| (~125 %)
+while saturated, and the bathroom sat below setpoint for weeks; with the
+setpoint lowered 23.5 -> 22.5 it now has to unwind, ~14 h at 0.5 K over,
+before the valve starts closing. The anti-windup fix (clamp the integral to
+the output range / conditional integration) is small and overdue.
