@@ -6627,3 +6627,15 @@ Return temp should give you a proxy."
   asked zero on the house average; its 23 % is distribution's minimum and its
   heat is neighbours plus ~28 degC supply, which the trim addresses.
 Tests for each; mutations caught after one extra wiring test.
+
+## 2026-11-12 22:16 — Deployed f90d6f1: anti-windup, house trim ON, slab proxy
+
+Mode off 22:13:25, 0 Hz 22:14:02; live config: `house_trim` block added,
+enabled (backup `config.yaml.bak-20261112-trim`), edited off-box and
+validated; deployed; `_slab_proxy` confirmed in the container; back in
+heating. All seven rooms on their OWN sensors again - kind_natalie's Shelly
+reports again since kind_naomi's was disconnected (the shared power problem the
+owner suspected), and kind_naomi's runs on battery - so no room uses the slab
+proxy tonight. First cycle: house deviation -1.78 K (floor-area-weighted, too
+warm), trim +0.00 and starting to integrate (~-1.8 K/day, clamp -2 K);
+balance, direct target 24.4, house slab target 25.05, P05 26 -> 24 pending.
