@@ -6683,3 +6683,12 @@ still publishes heatctl/set/setpoint/{gaestebad,wohnzimmer} every minute from
 the legacy Mini Server's targets. Silent now (server unreachable since the
 outage), but if it returns it overrides the owner's setpoints for those rooms
 within a minute.
+
+## 2026-11-12 — Legacy wall-unit bridge disabled in HA (owner)
+
+`automation.heatctl_bridge_legacy_wall_unit_room_temps_to_mqtt` turned OFF
+(entity state, not a config change - it survives HA restarts and is undone by
+turning it back on). It republished the legacy Mini Server's targets as
+heatctl/set/setpoint/{gaestebad,wohnzimmer} every minute, which would have
+overridden the owner's setpoints within a minute had the server come back;
+the plant reads both rooms from their own Shellys, so it did nothing useful.
