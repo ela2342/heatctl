@@ -6578,3 +6578,12 @@ awake H&T self-heats (CLAUDE.md: why it sleeps) - so 25-28.5 is likely
 sensor heat, not the room. Before enabling the house trim this room must be
 excluded or fixed: at -7 K and 16 % weight it would drag the water down on a
 phantom.
+
+## 2026-11-12 — kind_naomi's sensor disconnected (owner); battery tonight
+
+Owner disconnected it "to stabilize the others" - it shares a power problem
+with them - and will run it on battery from tonight. Until then kind_naomi is
+on the house-average proxy: ranked last in the flow floor, excluded from the
+house trim's input. When it returns on battery it should sleep as designed,
+so its readings stop self-heating; revisit the filter's kind_naomi numbers
+(+166 / +247 W unexplained, the 11-06 jump) against clean data then.
