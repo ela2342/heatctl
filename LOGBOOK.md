@@ -6559,3 +6559,22 @@ offset the integrator-free D-051 law leaves. Tests: off unless on, sign and
 rate in both modes, clamp, gap, anti-windup, switch-off takes it out at once,
 proxied rooms excluded; six mutations caught (four first looked uncaught
 because the -k filter did not select the tests). Awaiting the owner's review.
+
+## 2026-11-12 07:47 — First morning on balance + new energy model + setpoints -0.5
+
+2.7 degC, heating, compressor 74 Hz / 5.5 A, supply 30.5 / return 26.3, P05 26
+(balance, direct target 25.3, house slab target 26.1). No faults, opt ok.
+Rooms vs the new setpoints: Wohnzimmer room mean 21.31 (21.5), Badezimmer 23.3
+(22.5), Schlafzimmer 22.4 (19.5), Arbeitszimmer 23.4 (21.5); Gaestebad and
+kind_natalie on the proxy. Still warm everywhere but Wohnzimmer.
+Valves: Wohnzimmer and hk02 at 50, EVERY other circuit ~35 % - with only
+Wohnzimmer wanting heat, and only a little, the peak demand is small and
+distribution's eps (5) gives zero-demand rooms eps/(peak+eps) of the span:
+D-017's "everything satisfied -> everything open" by design, which then needs
+the WATER to be near room temperature - and it is not (supply 30.5).
+kind_naomi reads 28.5 on "sensor": its Shelly is back intermittently on a bad
+power connection. THEORY: a device that keeps rebooting stays awake, and an
+awake H&T self-heats (CLAUDE.md: why it sleeps) - so 25-28.5 is likely
+sensor heat, not the room. Before enabling the house trim this room must be
+excluded or fixed: at -7 K and 16 % weight it would drag the water down on a
+phantom.
