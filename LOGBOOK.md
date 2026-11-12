@@ -6655,3 +6655,31 @@ under `mqtt.trusted_retained_prefix` ("sensors/room/"); others wait for a live
 message. Tests both ways, two mutations caught. Ships with the next deploy.
 Cleaner still on the HA side: publish roomtemp/* without retain, or with an
 expiry - owner's HA config.
+
+## 2026-11-12 22:33 — HA bridge fixed: roomtemp/* no longer retained; heartbeat gated on real reports
+
+Owner: "Fix HA." Four HA automations (heatctl: Schlafzimmer / Kinderzimmer
+Naomi / Badezimmer / Kinderzimmer Natalie room temperature to MQTT) published
+roomtemp/* with retain: true and a 2-minute heartbeat that republished the
+ENTITY's state - which HA keeps after a sensor dies. Changed (via the HA API,
+best-practice guide read first):
+- retain: false;
+- an extra condition: the entity's last_REPORTED within 9000 s. Tested first:
+  a sleeping H&T reports on a 0.5 K change or every 2 h, so Schlafzimmer's
+  51-minute silence was legitimate and a 15-minute bound would have been wrong;
+  2.5 h = its own heartbeat plus slack. (No native condition for "last
+  reported"; `for:` measures last CHANGED, the wrong signal for a sleeping
+  sensor - template accepted, tested.)
+- descriptions updated. The stored retained values were cleared through HA's
+  own MQTT connection (empty retained publish, 22:32:54-57, seen in the
+  journal). An attempt with another broker account was denied as credential
+  exploration and not pursued; the `homeassistant` account's clears reached
+  only gaestebad/wohnzimmer (ACL), unused topics.
+CORRECTION: I wrote into the Natalie automation that its externally powered
+H&T might self-heat; owner: it suspends between readings and the room really
+is warm. Removed.
+Not changed, flagged to the owner: "heatctl: bridge legacy wall units to MQTT"
+still publishes heatctl/set/setpoint/{gaestebad,wohnzimmer} every minute from
+the legacy Mini Server's targets. Silent now (server unreachable since the
+outage), but if it returns it overrides the owner's setpoints for those rooms
+within a minute.
