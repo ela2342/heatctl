@@ -25,9 +25,20 @@ class PID:
         if self.invert:
             e = -e
         p = self.kp * e
-        self._i += self.ki * e * dt
-        # anti-windup: clamp integrator to a sensible band
-        self._i = max(self.out_min - abs(p), min(self.out_max + abs(p), self._i))
+        # ANTI-WINDUP, tightened 2026-11-12. The integral used to be clamped
+        # to out_max + |p|, which let a long-saturated loop bank ~125 % and
+        # then hold the valve fully open for hours after the error reversed
+        # (Badezimmer, 0.5 K over its lowered setpoint at 50 %). Now: do not
+        # integrate further INTO saturation, and bound the integral to the
+        # output range itself, so a reversal leaves the rail at once.
+        i_new = self._i + self.ki * e * dt
+        # Grow the integral only until P + I reaches the limit (never shrink
+        # it on that account - only the error does that).
+        if e > 0:
+            i_new = min(i_new, max(self._i, self.out_max - p))
+        elif e < 0:
+            i_new = max(i_new, min(self._i, self.out_min - p))
+        self._i = max(self.out_min, min(self.out_max, i_new))
         d = 0.0
         if self.kd and self._last_pv is not None and dt > 0:
             dpv = (pv - self._last_pv) / dt

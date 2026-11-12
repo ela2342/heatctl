@@ -298,6 +298,19 @@ class EnergyDemand:
                 people += float(n) * w[state]
         return base + people
 
+    def room_air_from_slab(self, name: str, slab_c: float,
+                           outdoor_c: float) -> float | None:
+        """The air temperature a room settles at with its slab at `slab_c`:
+        the steady balance ua_sa (slab - air) + gains = ua_ao (air - out),
+        with the room's own shares and gains. The inverse of what
+        `slab_target_c` computes forward. None for a room without a slab."""
+        if not self.has_slab(name) or self.room_share(name) <= 0:
+            return None
+        ua_sa = self.ua_sa * self.room_share(name)
+        ua_ao = self.ua_ao * self.envelope_share(name)
+        gains = self.internal_gain_w(name) + self._q_sol.get(name, 0.0)
+        return (ua_sa * slab_c + ua_ao * outdoor_c + gains) / (ua_sa + ua_ao)
+
     def room_share(self, name: str) -> float:
         """Fraction of the house this room represents, by floor area."""
         if not self.total_area or name not in self.areas:

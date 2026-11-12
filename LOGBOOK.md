@@ -6603,3 +6603,27 @@ while saturated, and the bathroom sat below setpoint for weeks; with the
 setpoint lowered 23.5 -> 22.5 it now has to unwind, ~14 h at 0.5 K over,
 before the valve starts closing. The anti-windup fix (clamp the integral to
 the output range / conditional integration) is small and overdue.
+
+## 2026-11-12 — Anti-windup fixed; house trim on; slab proxy for dead-sensor rooms
+
+Owner: "Go" (anti-windup and the house trim); "Natalie room is very warm.
+Return temp should give you a proxy."
+- PID anti-windup (all room PIs and return PIDs): the integral grows only until
+  P + I reaches the limit and is bounded to the output range (was out_max +
+  |p|, ~125 %). Regression test: a week 1 K short, then the setpoint lowered
+  and the room 0.5 K over - leaves the rail on the first step; fails on the
+  old code. The first attempt (no integration while the trial saturates) was
+  too strict - it stopped the integral short of saturation; the existing test
+  caught it.
+- House trim: `water_setpoint.house_trim.enabled: true`.
+- SLAB PROXY: a room without a fresh air reading but with a trustworthy return
+  in the last 2 h (rl_gate MEASURE; the hourly flush provides one) is
+  estimated from its floor - slab from the return with NTU 1.6 (a ~ 0.8)
+  taking the supply's share out, then the room's steady balance
+  (`EnergyDemand.room_air_from_slab`) - source "slab_proxy", ahead of the house
+  average; published as room/<n>/temp_est. Recorded on the CONTROL path: the
+  first version stored it in the energy shadow and the shadow-isolation test
+  caught it. It will not cool kind_natalie by itself - the room PI already
+  asked zero on the house average; its 23 % is distribution's minimum and its
+  heat is neighbours plus ~28 degC supply, which the trim addresses.
+Tests for each; mutations caught after one extra wiring test.

@@ -30,7 +30,7 @@ from .backends.base import make_backend
 from .capacity import CapacityController
 from .demand import DemandController
 from .distribution import Distributor
-from .energy import EnergyDemand
+from .energy import EnergyDemand, slab_estimate_c
 from . import heatpump_map as hpm
 from .heatpump import HeatPump
 from .mqtt_plane import ControlPlane
@@ -116,6 +116,15 @@ class Controller:
         self._cascade_stepped: dict[str, int] = {}
         self._cascade_last: dict[str, float] = {}
         self._cascade_pub: dict[str, float] = {}
+        # SLAB PROXY for a room whose air sensor is dead (2026-11-12, owner:
+        # "Natalie room is very warm. Return temp should give you a proxy").
+        # The last TRUSTWORTHY return (rl_gate: flowing long enough - the
+        # hourly flush guarantees one) with the supply at that moment,
+        # (rl, vl, monotonic time). See `_slab_proxy`.
+        self._room_rl_valid: dict[str, tuple[float, float, float]] = {}
+        ce = c.get("energy") or {}
+        self.slab_proxy_max_age_s = float(ce.get("slab_proxy_max_age_s", 7200.0))
+        self.slab_proxy_ntu = float(ce.get("slab_proxy_ntu", 1.6))
 
         # Where the per-circuit return target comes from - see
         # _effective_return_sp() for why tracking the system return is the
@@ -706,10 +715,24 @@ class Controller:
 
         for room in self.rooms:
             n = room["name"]
+            # The room's last TRUSTWORTHY return, for the slab proxy - noted
+            # here on the control path where rl_gate is consulted anyway, not
+            # in the energy shadow, which stays publish-only.
+            meas = [state.temps[c["sensor"]] for c in room["circuits"]
+                    if c.get("valve") and c.get("sensor") in state.temps
+                    and self.rl_gate.action(c["valve"], now) is MEASURE]
+            vl_now = state.temps.get("vl_total")
+            if meas and vl_now is not None:
+                self._room_rl_valid[n] = (sum(meas) / len(meas), vl_now, now)
             room_t = self._room_air(n, outdoor_now)
             src = "sensor"
-            if room_t is None and house_mean is not None:
-                room_t, src = house_mean, "house_avg"
+            if room_t is None:
+                est = self._slab_proxy(n, outdoor_now, now)
+                if est is not None:
+                    room_t, src = est, "slab_proxy"
+                    await self.plane.publish(f"room/{n}/temp_est", f"{est:.2f}")
+                elif house_mean is not None:
+                    room_t, src = house_mean, "house_avg"
             room_out: float | None = None
             if room_t is not None:
                 # Reset on a source change. An integrator built against one
@@ -976,6 +999,26 @@ class Controller:
             if dts and sum(dts) / len(dts) < self.neediest_min_dt_k:
                 out.add(room["name"])
         return out
+
+    def _slab_proxy(self, name: str, outdoor: float | None,
+                    now: float) -> float | None:
+        """A dead-sensor room's air, from its own floor: the slab behind its
+        last trustworthy return, through the room's steady balance
+        (`EnergyDemand.room_air_from_slab`). Better than the house average,
+        which makes every blind room look the same.
+
+        The return is read while water flows, so it sits between slab and
+        supply; `slab_proxy_ntu` (1.6, a ~ 0.8, the per-room replay's typical
+        exchange) takes the supply's share back out. Uncorrected it would read
+        a cold room flushed with warm water as warm and keep it shut - the
+        lock-out D-009 is about. None when no trustworthy return is recent.
+        """
+        got = self._room_rl_valid.get(name)
+        if got is None or outdoor is None or now - got[2] > self.slab_proxy_max_age_s:
+            return None
+        rl, vl, _ = got
+        slab = slab_estimate_c(rl, vl, self.slab_proxy_ntu)
+        return self.energy.room_air_from_slab(name, slab, outdoor)
 
     def _room_air(self, name: str, outdoor: float | None) -> float | None:
         """A room's air temperature AS CONTROL SEES IT: the room's mean.

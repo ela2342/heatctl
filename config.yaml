@@ -872,7 +872,7 @@ control:
     # mean target, ~1 K per K per day, clamped. Answers the steady offset the
     # direct law leaves (measured ~+0.7 K warm). Same sign in both modes.
     house_trim:
-      enabled: false
+      enabled: true             # owner 2026-11-12: "Go"
       ki_k_per_k_day: 1.0
       max_k: 2.0
     # THE DIRECT LAW (D-051). The setpoint is computed, not walked:

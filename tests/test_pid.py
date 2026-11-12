@@ -7,6 +7,8 @@ regression that caught exactly that in the wiring.
 """
 from __future__ import annotations
 
+import pytest
+
 from heatctl.pid import PID
 
 
@@ -93,3 +95,19 @@ def test_zero_dt_does_not_divide_by_zero():
     pid = PID(kp=1.0, ki=1.0, kd=1.0)
     pid.step(21.0, 20.0, 1.0)
     pid.step(21.0, 20.0, 0.0)                    # must not raise
+
+
+def test_a_small_reversal_after_long_saturation_comes_off_the_rail_at_once():
+    """2026-11-12: Badezimmer sat below setpoint for weeks, its PI pinned at
+    100 %. The integral was clamped only to out_max + |p| (~125 % at 1 K),
+    so when the setpoint dropped 1 K and the room stood 0.5 K OVER, the output
+    stayed 100 % for hours while the integral unwound - the valve fully open
+    in a room already too warm. The integral is now bounded to the output
+    range and does not integrate further into saturation, so the first step
+    with the error reversed already leaves the rail."""
+    pid = PID(kp=25.0, ki=0.005, out_min=0.0, out_max=100.0)
+    for _ in range(7 * 86400 // 60):                 # a week, 1 K too cold
+        pid.step(23.5, 22.5, 60.0)
+    assert pid.step(23.5, 22.5, 60.0) == pytest.approx(100.0)
+    out = pid.step(22.5, 23.0, 60.0)                 # setpoint lowered, 0.5 K over
+    assert out < 100.0, out

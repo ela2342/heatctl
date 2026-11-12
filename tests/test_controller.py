@@ -1048,6 +1048,10 @@ class TestEnergyShadow:
             # found by mutating it; none of them were visible from a green run.
             for v in ("valve_hk01", "valve_hk02", "valve_hk03"):
                 c.rl_gate.record_command(v, 100.0, now - 3600)
+            # The slab proxy (2026-11-12) legitimately uses floor areas on the
+            # CONTROL path; this test is about the SHADOW, so take the proxy
+            # out of both plants and the comparison stays about the shadow.
+            c.slab_proxy_max_age_s = 0.0
         return plain, shadow
 
     async def test_the_shadow_path_moves_no_valve(self, controller):
@@ -1600,3 +1604,53 @@ async def test_the_house_trim_hears_only_rooms_with_their_own_reading(controller
                                      {"gaestebad": 21.0, "wohnzimmer": 25.0},
                                      23.0, time.monotonic())
     assert seen[-1] == pytest.approx(ctl.room_setpoints["gaestebad"] - 21.0)
+
+
+_SYNTH_ROOMS = [
+    {"name": "gaestebad", "room_temp_topic": "roomtemp/gaestebad",
+     "circuits": [{"sensor": "rl_hk01", "valve": "valve_hk01"}]},
+    {"name": "wohnzimmer",
+     "circuits": [{"sensor": "rl_hk02", "valve": "valve_hk02"},
+                  {"sensor": "rl_hk03", "valve": "valve_hk03"}]},
+]
+
+
+async def test_a_dead_sensor_room_is_estimated_from_its_own_floor(controller):
+    """2026-11-12, owner: "Natalie room is very warm. Return temp should give
+    you a proxy." A room without a fresh air reading but with a recent
+    TRUSTWORTHY return is estimated from its slab (source slab_proxy), ahead
+    of the house average; the supply's share is taken out of the return
+    (ntu), so it reads cooler than the raw return would say; a stale return
+    falls back to the house average."""
+    ctl = controller(temps={"rl_hk01": 24.0, "rl_hk02": 27.0, "rl_hk03": 27.0,
+                            "vl_total": 30.0},
+                     room_temps={"gaestebad": 21.0}, control={"mode": "heating"},
+                     rooms=_energy_rooms(_SYNTH_ROOMS))
+    now = time.monotonic()
+    ctl.plane.outdoor_forecast = 3.0
+    ctl._room_rl_valid["wohnzimmer"] = (27.0, 30.0, now)
+    est = ctl._slab_proxy("wohnzimmer", 3.0, now)
+    raw = ctl.energy.room_air_from_slab("wohnzimmer", 27.0, 3.0)
+    assert est is not None and est < raw
+    ctl.io.touch(now)
+    await ctl.step(1.0)
+    assert ctl._room_src["wohnzimmer"] == "slab_proxy"
+    assert ctl.plane.topic("room/wohnzimmer/temp_est") is not None
+    ctl._room_rl_valid["wohnzimmer"] = (27.0, 30.0, now - 3 * 3600)
+    assert ctl._slab_proxy("wohnzimmer", 3.0, now) is None
+
+
+async def test_the_control_path_notes_a_rooms_trustworthy_return(controller):
+    """The proxy's input must be gathered on the control path whenever
+    rl_gate trusts a circuit (MEASURE) - and not when it does not."""
+    ctl = controller(temps={"rl_hk01": 24.0, "rl_hk02": 26.0, "rl_hk03": 28.0,
+                            "vl_total": 30.0},
+                     room_temps={"gaestebad": 21.0}, control={"mode": "heating"},
+                     rooms=_energy_rooms(_SYNTH_ROOMS))
+    now = time.monotonic()
+    for v in ("valve_hk02", "valve_hk03"):
+        ctl.rl_gate.record_command(v, 100.0, now - 3600)    # flowing an hour
+    ctl.io.touch(now)
+    await ctl.step(1.0)
+    rl, vl, _ = ctl._room_rl_valid["wohnzimmer"]
+    assert rl == pytest.approx(27.0) and vl == pytest.approx(30.0)

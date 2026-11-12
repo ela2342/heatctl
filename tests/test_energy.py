@@ -620,3 +620,17 @@ def test_layer_one_puts_the_people_where_the_schedule_says():
     ra = e.room("a", 22.0, 3.0, None, None, room_c=22.0, mode="heating")
     rb = e.room("b", 22.0, 3.0, None, None, room_c=22.0, mode="heating")
     assert ra.target_c < rb.target_c
+
+
+def test_the_room_air_from_a_slab_is_the_inverse_of_the_slab_target():
+    """A dead-sensor room's air is estimated from its floor through the same
+    steady balance `slab_target_c` uses forward: feed it the target for a
+    setpoint (no recovery term) and it must give the setpoint back; a warmer
+    slab must read warmer."""
+    from heatctl.energy import slab_target_c
+    e = EnergyDemand(_rooms_cfg({"a": 0.1, "b": 0.3}))
+    share, env = e.room_share("a"), e.envelope_share("a")
+    t = slab_target_c(21.5, 3.0, ua_ao=e.ua_ao * env, ua_sa=e.ua_sa * share,
+                      q_int_w=e.internal_gain_w("a"))
+    assert e.room_air_from_slab("a", t, 3.0) == pytest.approx(21.5, abs=1e-6)
+    assert e.room_air_from_slab("a", t + 2.0, 3.0) > 21.5
