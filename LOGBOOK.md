@@ -6707,3 +6707,19 @@ kind_naomi on slab_proxy: estimate 21.83 from its floor (its last reading was
 the self-heated 28.5) - the proxy's first live use; as the room least past
 setpoint it takes the floor's remainder (hk04 45 %). kind_natalie on the
 house-average proxy (no trustworthy return lately, valve at 21 %).
+
+## 2026-11-13 08:00 — Interim -0.5 K reverted (owner); the hourly flush does not reach room-PI circuits
+
+Setpoints back to bathrooms 23.0, Schlafzimmer 20.0, others 22.0 - live (read
+back), live config (backup `config.yaml.bak-20261113-setpoints`, edited
+off-box and validated), repo config. The house trim takes the remaining
+offset from here.
+
+Owner asked whether the hourly 5-minute flush should give the slab proxy its
+data for closed rooms. It exists (rl_gate: re-open to flush_pct after
+flush_interval_s without a trustworthy return), but its FLUSH output is only
+applied on the return-control path and in the (off) cascade. Every room on a
+room PI - and since 08-06 that includes sensorless rooms via the house-average
+proxy - never flushes; 11-08's valve history (hk03/04/07 never above 21-24 %)
+shows it. So kind_natalie, on the proxy with its valve shut, never produces a
+trustworthy return and the slab proxy cannot replace the house average there.

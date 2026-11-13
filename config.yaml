@@ -296,7 +296,7 @@ valves:
 rooms:
   - name: gaestebad
     label: "Gästebad"
-    setpoint_c: 22.5   # owner 2026-11-11: all -0.5 K ("house way too hot"); was 23.0
+    setpoint_c: 23.0   # owner 2026-11-13: interim -0.5 K of 11-11 reverted (house trim now on)
     floor_area_m2: 3.43   # WC/Du
     # Share of the house envelope conductance from the per-room take-off
     # off the plans (2026-11-05/11; layer 2's `envelope_share`, the hall's
@@ -328,7 +328,7 @@ rooms:
     room_humidity_topic: "sensors/room/gaestebad/humidity_pct"
   - name: wohnzimmer
     label: "Wohnzimmer"
-    setpoint_c: 21.5   # owner 2026-11-11: all -0.5 K ("house way too hot"); was 22.0
+    setpoint_c: 22.0   # owner 2026-11-13: interim -0.5 K of 11-11 reverted (house trim now on)
     floor_area_m2: 42.11   # Wohnen/Essen
     envelope_share: 0.3974
     circuits:
@@ -385,7 +385,7 @@ rooms:
     room_humidity_topic: "sensors/room/wohnzimmer/humidity_pct"
   - name: kind_natalie
     label: "Kinderzimmer Natalie"
-    setpoint_c: 21.5   # owner 2026-11-11: all -0.5 K ("house way too hot"); was 22.0
+    setpoint_c: 22.0   # owner 2026-11-13: interim -0.5 K of 11-11 reverted (house trim now on)
     floor_area_m2: 16.33   # plan "Kind 1": W + S glazing, the room with TWO
     envelope_share: 0.0785
                            # windows, which is how the occupant identifies it
@@ -397,14 +397,14 @@ rooms:
     room_temp_topic: "roomtemp/kind_natalie"
   - name: kind_naomi
     label: "Kinderzimmer Naomi"
-    setpoint_c: 21.5   # owner 2026-11-11: all -0.5 K ("house way too hot"); was 22.0
+    setpoint_c: 22.0   # owner 2026-11-13: interim -0.5 K of 11-11 reverted (house trim now on)
     floor_area_m2: 15.61   # plan "Kind 2": S glazing only, one window
     envelope_share: 0.0496
     circuits: [{sensor: rl_hk04, valve: valve_hk04}]
     room_temp_topic: "roomtemp/kind_naomi"   # Shelly H&T G3, via the HA bridge
   - name: badezimmer
     label: "Badezimmer"
-    setpoint_c: 22.5   # owner 2026-11-11: all -0.5 K ("house way too hot"); was 23.0
+    setpoint_c: 23.0   # owner 2026-11-13: interim -0.5 K of 11-11 reverted (house trim now on)
     floor_area_m2: 8.94   # Bad
     envelope_share: 0.0521
     circuits: [{sensor: rl_hk06, valve: valve_hk06}]
@@ -467,14 +467,14 @@ rooms:
     # 21.0 -> 20.0 on 2026-11-11, owner. The room sat at 22.6 that evening,
     # its valve fully open: the flow floor's remainder, with three rooms on
     # the house-average proxy ranking last.
-    setpoint_c: 19.5   # owner 2026-11-11: all -0.5 K ("house way too hot"); was 20.0
+    setpoint_c: 20.0   # owner 2026-11-13: interim -0.5 K of 11-11 reverted (house trim now on)
     floor_area_m2: 11.08   # Schlafen
     envelope_share: 0.0851
     circuits: [{sensor: rl_hk07, valve: valve_hk07}]
     room_temp_topic: "roomtemp/schlafzimmer"   # Shelly H&T G3, via the HA bridge
   - name: arbeitszimmer
     label: "Arbeitszimmer"
-    setpoint_c: 21.5   # owner 2026-11-11: all -0.5 K ("house way too hot"); was 22.0
+    setpoint_c: 22.0   # owner 2026-11-13: interim -0.5 K of 11-11 reverted (house trim now on)
     floor_area_m2: 31.20   # plan "Arbeit/Gaeste"
     envelope_share: 0.196
     # NOT A SLAB ROOM. It is on the OG and its emitter is a fan coil, so it has
