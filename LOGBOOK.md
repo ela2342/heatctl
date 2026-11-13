@@ -6723,3 +6723,19 @@ room PI - and since 08-06 that includes sensorless rooms via the house-average
 proxy - never flushes; 11-08's valve history (hk03/04/07 never above 21-24 %)
 shows it. So kind_natalie, on the proxy with its valve shut, never produces a
 trustworthy return and the slab proxy cannot replace the house average there.
+
+## 2026-11-13 — Blind rooms are flushed; deploying it with the retained-reading filter
+
+Owner: "Build, and then deploy both." A room on the house-average or slab
+proxy whose circuit rl_gate marks FLUSH (an hour without a trustworthy return)
+now gets flush_pct, applied AFTER distribution (a flush entering distribution
+as a 100 % demand would become the peak and rescale every room) and before
+the flow floor and safety. Rooms with their own sensor are never flushed.
+Cost ~5 min/h at full flow, ~40-50 W averaged into that room; gain: its own
+slab every hour for the proxy. Test: two arrangements so each valve under
+test sits below a flush when nothing flushes it - the first version had the
+flushed valve at 100 anyway, and a second assumed the flush leaves other
+circuits untouched, which the flow floor rightly does not (the flush's flow
+counts toward it); three mutations caught, including flush-before-
+distribution. Deploys with 5e4ac6d (retained room readings without expiry
+ignored).

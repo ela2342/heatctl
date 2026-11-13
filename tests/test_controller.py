@@ -1654,3 +1654,51 @@ async def test_the_control_path_notes_a_rooms_trustworthy_return(controller):
     await ctl.step(1.0)
     rl, vl, _ = ctl._room_rl_valid["wohnzimmer"]
     assert rl == pytest.approx(27.0) and vl == pytest.approx(30.0)
+
+
+async def test_a_blind_room_is_flushed_and_a_sensed_one_is_not(controller):
+    """2026-11-13: rl_gate's hourly flush only ever reached the return-control
+    path, so a sensorless room on a room PI never produced a trustworthy
+    return and the slab proxy never got a reading. A room on the house-average
+    proxy that is due a flush gets one, at flush_pct and AFTER distribution
+    (so the other circuits are not rescaled by it); a room with its own
+    sensor is never flushed. Two arrangements, so each valve under test sits
+    well below a flush when nothing flushes it (the first version of this
+    test had the flushed valve at 100 anyway, and passed against a mutant
+    that never flushed)."""
+    async def run(gb_sp, wz_sp, due):
+        outs = []
+        for flush_on in (False, True):
+            c = controller(temps={"rl_hk01": 24.0, "rl_hk02": 24.0,
+                                  "rl_hk03": 24.0, "vl_total": 30.0},
+                           room_temps={"gaestebad": 24.0},
+                           control={"mode": "heating"})
+            c.room_setpoints["gaestebad"], c.room_setpoints["wohnzimmer"] = gb_sp, wz_sp
+            now = time.monotonic()
+            for v in ("valve_hk01", "valve_hk02", "valve_hk03"):
+                c.rl_gate._circuit(v).last_trusted = now - 7200 if v in due else now
+                c.rl_gate._circuit(v).open_since = None
+            if not flush_on:
+                c.rl_gate.flush_interval_s = 1e9
+            # The flush's flow legitimately relieves the flow floor (it then
+            # lifts other circuits less); take the floor out so "not
+            # rescaled" tests distribution alone.
+            c.demand.min_open_pct = 0.0
+            c.io.touch(now)
+            await c.step(1.0)
+            outs.append((c, c.io.last_write))
+        return outs
+
+    # A: blind Wohnzimmer satisfied (house avg 24 vs 20), sensed Gaestebad the
+    # peak at a MODERATE demand (24 vs 25), so a flush that entered
+    # distribution as a 100 % demand would rescale everyone. hk02 due a
+    # flush, hk03 not.
+    (b, w0), (c, w) = await run(25.0, 20.0, {"valve_hk02"})
+    assert c._room_src["wohnzimmer"] == "house_avg"
+    assert w0["valve_hk02"] < c.rl_gate.flush_pct
+    assert w["valve_hk02"] == c.rl_gate.flush_pct             # blind: flushed
+    assert w["valve_hk03"] == w0["valve_hk03"]                # not due: unrescaled
+    # B: sensed Gaestebad satisfied (24 vs 21), due a flush - never flushed.
+    (b, w0), (c, w) = await run(21.0, 30.0, {"valve_hk01"})
+    assert w0["valve_hk01"] < c.rl_gate.flush_pct
+    assert w["valve_hk01"] == w0["valve_hk01"]                # sensed: never

@@ -628,6 +628,7 @@ class Controller:
         now = time.monotonic()
         demands: dict[str, tuple[float, str]] = {}
         needs: dict[str, float | None] = {}
+        flush_now: set[str] = set()
 
         # House demand / source engagement. Computed from the PREVIOUS cycle's
         # valve positions, which is correct: the flow proxy describes the
@@ -786,6 +787,15 @@ class Controller:
                 cascade_published = self._cascade_pub
                 casc = (self._cascade_target(room, room_t, src, dt, now)
                         if self.cascade_enabled and self.mode != "off" else None)
+                # FLUSH A BLIND ROOM (2026-11-13). rl_gate asks for a flush
+                # when a circuit has gone flush_interval_s without a
+                # trustworthy return, but only the return-control path used to
+                # honour it - so a sensorless room on a room PI never flushed,
+                # and the slab proxy never got its reading. Applied after
+                # distribution (below), so it does not rescale other rooms.
+                if (self.mode != "off" and src in ("house_avg", "slab_proxy")
+                        and self.rl_gate.action(valve, now) is FLUSH):
+                    flush_now.add(valve)
                 if self.mode == "off":
                     proposed = self.off_valve_pct
                 elif casc is not None:
@@ -836,6 +846,13 @@ class Controller:
         #
         # Safety still runs after this and can still force a circuit shut.
         commanded = raw if self.mode == "off" else self.dist.apply(raw)
+        # Blind rooms due a flush get it here, AFTER distribution: a flush
+        # value among the demands would have become the peak and rescaled
+        # every other room. Before the flow floor and safety, which still
+        # apply.
+        for v in flush_now:
+            if v in commanded:
+                commanded[v] = max(commanded[v], self.rl_gate.flush_pct)
 
         # Pump minimum flow. Runs AFTER distribution (it needs the final
         # openings) and BEFORE safety (which must still be able to force a
