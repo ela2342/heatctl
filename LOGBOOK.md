@@ -6746,3 +6746,20 @@ children's valves sat at 27 %, just under rl_gate's 27.5 %). Never-trusted now
 counts as due (`RLGate.never_trusted`). Test + mutation; the house-average
 leakage test now starts from trusted circuits so the first flush does not
 confound its question. Redeploying.
+
+## 2026-11-13 08:35 — The slab proxy reads LOW and opens a warm room: needs switching off
+
+After the 08:26 redeploy the flushes ran and all three blind rooms went to
+slab_proxy: kind_natalie 20.95, Gaestebad 20.67, kind_naomi 22.77. Wrong by
+1-3 K, low: kind_natalie is warm (owner; last reading 23.8), Gaestebad's own
+sensor read 21.8 that morning. Cause: `room_air_from_slab` inverts layer 1's
+steady balance (slab, outdoor, gains) with NO neighbour coupling, and these
+rooms are heated through walls and ceiling by the hall, Wohnzimmer and
+Arbeitszimmer; from a ~24 degC floor it concludes ~20-21 degC air. It acts:
+kind_natalie's PI sees 1 K too cold and opened hk03 to 50 %.
+My attempt to switch it off live (slab_proxy_max_age_s: 0 + restart) was
+blocked as an unapproved production change; asked the owner. Repo: default
+now 0 (off), with a test; the flush for blind rooms stays (it keeps the
+floor temperature measured and harms nothing). Lesson: I deployed a
+room-temperature estimate without first comparing it against rooms whose
+real temperature was known - Gaestebad's sensor would have shown the bias.

@@ -1632,6 +1632,7 @@ async def test_a_dead_sensor_room_is_estimated_from_its_own_floor(controller):
                      room_temps={"gaestebad": 21.0}, control={"mode": "heating"},
                      rooms=_energy_rooms(_SYNTH_ROOMS))
     now = time.monotonic()
+    ctl.slab_proxy_max_age_s = 7200.0          # off by default since 11-13
     ctl.plane.outdoor_forecast = 3.0
     ctl._room_rl_valid["wohnzimmer"] = (27.0, 30.0, now)
     est = ctl._slab_proxy("wohnzimmer", 3.0, now)
@@ -1724,3 +1725,15 @@ async def test_a_blind_room_gets_its_first_flush_right_after_a_restart(controlle
     await ctl.step(1.0)
     assert ctl._room_src["wohnzimmer"] == "house_avg"
     assert ctl.io.last_write["valve_hk02"] == ctl.rl_gate.flush_pct
+
+
+async def test_the_slab_proxy_is_off_by_default(controller):
+    """2026-11-13: its first live use read blind rooms 1-3 K low (no
+    neighbour coupling in layer 1's balance) and opened a warm room's valve.
+    Until the estimate is trustworthy it must not drive anything."""
+    ctl = controller(temps={"rl_hk01": 24.0, "rl_hk02": 27.0, "rl_hk03": 27.0,
+                            "vl_total": 30.0},
+                     room_temps={"gaestebad": 21.0}, control={"mode": "heating"})
+    now = time.monotonic()
+    ctl._room_rl_valid["wohnzimmer"] = (27.0, 30.0, now)
+    assert ctl._slab_proxy("wohnzimmer", 3.0, now) is None

@@ -123,7 +123,13 @@ class Controller:
         # (rl, vl, monotonic time). See `_slab_proxy`.
         self._room_rl_valid: dict[str, tuple[float, float, float]] = {}
         ce = c.get("energy") or {}
-        self.slab_proxy_max_age_s = float(ce.get("slab_proxy_max_age_s", 7200.0))
+        # OFF BY DEFAULT since 2026-11-13: its first live use read blind rooms
+        # 1-3 K LOW (kind_natalie 20.95 against a warm room at ~24; Gaestebad
+        # 20.7 against a real 21.8) - layer 1's steady balance has no
+        # neighbour coupling, and these rooms are heated through walls and
+        # ceiling. A low estimate opens the valve of a warm room. 0 = never
+        # used; set a positive age only once the estimate is trustworthy.
+        self.slab_proxy_max_age_s = float(ce.get("slab_proxy_max_age_s", 0.0))
         self.slab_proxy_ntu = float(ce.get("slab_proxy_ntu", 1.6))
 
         # Where the per-circuit return target comes from - see
