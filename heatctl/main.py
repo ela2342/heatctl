@@ -793,9 +793,14 @@ class Controller:
                 # honour it - so a sensorless room on a room PI never flushed,
                 # and the slab proxy never got its reading. Applied after
                 # distribution (below), so it does not rescale other rooms.
-                if (self.mode != "off" and src in ("house_avg", "slab_proxy")
-                        and self.rl_gate.action(valve, now) is FLUSH):
-                    flush_now.add(valve)
+                if self.mode != "off" and src in ("house_avg", "slab_proxy"):
+                    act = self.rl_gate.action(valve, now)
+                    # Never trusted since start (every circuit, after a
+                    # restart) is due too: rl_gate says HOLD then, and a room
+                    # PI has no fail-open to produce the first reading.
+                    if act is FLUSH or (act is not MEASURE
+                                        and self.rl_gate.never_trusted(valve)):
+                        flush_now.add(valve)
                 if self.mode == "off":
                     proposed = self.off_valve_pct
                 elif casc is not None:

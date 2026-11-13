@@ -6739,3 +6739,10 @@ circuits untouched, which the flow floor rightly does not (the flush's flow
 counts toward it); three mutations caught, including flush-before-
 distribution. Deploys with 5e4ac6d (retained room readings without expiry
 ignored).
+FOLLOW-UP, same morning: after a restart no circuit is trusted and rl_gate
+answers HOLD, not FLUSH - the return path fails open and gets its reading
+that way, but a blind room on a room PI would never get a FIRST flush (the
+children's valves sat at 27 %, just under rl_gate's 27.5 %). Never-trusted now
+counts as due (`RLGate.never_trusted`). Test + mutation; the house-average
+leakage test now starts from trusted circuits so the first flush does not
+confound its question. Redeploying.

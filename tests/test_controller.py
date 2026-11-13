@@ -998,6 +998,11 @@ class TestHouseAverageFallback:
         # Gästebad is driven far below the house temperature, as if someone
         # had dialled it down to force its own circuit open.
         ctl.room_setpoints["gaestebad"] = 28.0
+        # Circuits already trusted: since 2026-11-13 a blind room's never-
+        # trusted circuit is flushed open right after start, which would
+        # confound this test's question (setpoint leakage), not answer it.
+        for v in ("valve_hk01", "valve_hk02", "valve_hk03"):
+            ctl.rl_gate._circuit(v).last_trusted = time.monotonic()
         for _ in range(30):
             ctl.io.touch(time.monotonic())
             await ctl.step(1.0)
@@ -1702,3 +1707,20 @@ async def test_a_blind_room_is_flushed_and_a_sensed_one_is_not(controller):
     (b, w0), (c, w) = await run(21.0, 30.0, {"valve_hk01"})
     assert w0["valve_hk01"] < c.rl_gate.flush_pct
     assert w["valve_hk01"] == w0["valve_hk01"]                # sensed: never
+
+
+async def test_a_blind_room_gets_its_first_flush_right_after_a_restart(controller):
+    """After a restart no circuit has been trusted yet and rl_gate answers HOLD,
+    not FLUSH - fine for the return path, which fails open, but a blind room
+    on a room PI would then never get a first reading (its valve parked at
+    27 %, just under rl_gate's 27.5 % threshold, 2026-11-13). Never trusted
+    counts as due."""
+    ctl = controller(temps={"rl_hk01": 24.0, "rl_hk02": 24.0, "rl_hk03": 24.0,
+                            "vl_total": 30.0},
+                     room_temps={"gaestebad": 24.0}, control={"mode": "heating"})
+    ctl.room_setpoints["gaestebad"], ctl.room_setpoints["wohnzimmer"] = 25.0, 20.0
+    assert ctl.rl_gate.never_trusted("valve_hk02")
+    ctl.io.touch(time.monotonic())
+    await ctl.step(1.0)
+    assert ctl._room_src["wohnzimmer"] == "house_avg"
+    assert ctl.io.last_write["valve_hk02"] == ctl.rl_gate.flush_pct

@@ -142,6 +142,13 @@ class RLGate:
             return FLUSH
         return HOLD
 
+    def never_trusted(self, valve: str) -> bool:
+        """True until this circuit has had one trustworthy reading since start.
+        `action` answers HOLD in that state (the return-control path then
+        fails open and gets a reading that way); a caller with no fail-open
+        of its own - a blind room on a room PI - treats it as due a flush."""
+        return self._circuit(valve).last_trusted is None
+
     def held(self, valve: str, default: float) -> float:
         """Last control output taken while RL was trustworthy, else `default`."""
         h = self._circuit(valve).held
