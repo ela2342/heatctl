@@ -6692,3 +6692,18 @@ turning it back on). It republished the legacy Mini Server's targets as
 heatctl/set/setpoint/{gaestebad,wohnzimmer} every minute, which would have
 overridden the owner's setpoints within a minute had the server come back;
 the plant reads both rooms from their own Shellys, so it did nothing useful.
+
+## 2026-11-13 07:47 — The house has cooled; the trim is small and turning; the slab proxy is in use
+
+3.8 degC, heating, compressor 64 Hz / 4.9 A, supply 30.5 / return 27.2, P05 27
+(balance, direct target 27.6, house slab target 28.95 - up as rooms cooled and
+their recovery terms grew). No faults, opt ok.
+Rooms vs the interim setpoints: Wohnzimmer room mean 20.82 (21.5, raw 21.9),
+Gaestebad 21.8 (22.5), Badezimmer 22.3 (22.5) - now UNDER; Schlafzimmer 21.3
+(19.5) and Arbeitszimmer 23.1 (21.5) still over. House deviation +0.20 K
+(slightly cold overall): trim -0.06 and turning back - it barely acted; the
+cooling came from the lower setpoints, the new targets and the windup fix.
+kind_naomi on slab_proxy: estimate 21.83 from its floor (its last reading was
+the self-heated 28.5) - the proxy's first live use; as the room least past
+setpoint it takes the floor's remainder (hk04 45 %). kind_natalie on the
+house-average proxy (no trustworthy return lately, valve at 21 %).
